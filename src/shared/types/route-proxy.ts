@@ -2,7 +2,7 @@
  * 路由代理模块类型定义
  * 输入: 无 (纯类型定义)
  * 输出: 路由代理相关 TypeScript 类型、接口、常量、工具函数
- * 定位: 类型定义层 - 本地 HTTP 代理 + 模型注册表 + 端点测试 + 统计分析
+ * 定位: 类型定义层 - 本地 HTTP 代理 + 模型注册表 + 统计分析（端点测试类型仅做兼容 re-export）
  */
 
 import {
@@ -11,6 +11,9 @@ import {
   type BuiltinCliType,
   type CliTargetProtocol,
 } from './cli-config';
+import type { EndpointTestTargetState } from './endpoint-test';
+
+export * from './endpoint-test';
 
 // ============= 基础枚举 =============
 
@@ -627,67 +630,6 @@ export interface RouteModelRegistryConfig {
   displayItems: RouteModelDisplayItem[];
   vendorPriorities: Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
   lastAggregatedAt?: number;
-}
-
-// ============= 端点测试 =============
-
-export const ENDPOINT_TEST_PROTOCOLS = [
-  'anthropic-messages',
-  'openai-responses',
-  'openai-chat-completions',
-] as const;
-
-export type EndpointTestProtocol = (typeof ENDPOINT_TEST_PROTOCOLS)[number];
-
-export type EndpointTestTarget =
-  | { kind: 'managed'; siteId: string; accountId: string }
-  | { kind: 'direct'; configId: string };
-
-export interface EndpointTestApiKeyOption {
-  id: string;
-  label: string;
-  group?: string;
-  models?: string[];
-}
-
-export interface EndpointTestResult {
-  success: boolean;
-  endpoint: string;
-  apiKeyId: string;
-  apiKeyLabel: string;
-  model: string;
-  testedAt: number;
-  latencyMs: number;
-  statusCode?: number;
-  summary?: string;
-  error?: string;
-}
-
-export interface EndpointTestSelectionState {
-  apiKeyId: string | null;
-  model: string | null;
-  latest?: EndpointTestResult;
-}
-
-export interface EndpointTestTargetState {
-  targetKey: string;
-  protocols: Partial<Record<EndpointTestProtocol, EndpointTestSelectionState>>;
-  updatedAt: number;
-}
-
-export interface EndpointTestStateView {
-  target: EndpointTestTarget;
-  targetKey: string;
-  apiKeys: EndpointTestApiKeyOption[];
-  models: string[];
-  protocols: Record<EndpointTestProtocol, EndpointTestSelectionState>;
-}
-
-export interface EndpointTestSelectionInput {
-  target: EndpointTestTarget;
-  protocol: EndpointTestProtocol;
-  apiKeyId: string;
-  model: string;
 }
 
 // ============= 分析统计 =============

@@ -31,6 +31,7 @@ import {
   listRouteSessionCandidates,
   mergeRouteSessionRecords,
   normalizeRouteInstanceCollections,
+  restoreRouteInstance,
   rollbackRouteSessionRule,
   updateRouteInstance,
   type RouteSessionListScope,
@@ -42,12 +43,14 @@ import type {
   RouteRule,
   RouteRequestLogQuery,
   RouteHistoryBucketsQuery,
-  EndpointTestSelectionInput,
-  EndpointTestTarget,
   RouteSessionOverride,
   RouteSessionExtractionRule,
   RouteInstanceUpdate,
 } from '../../shared/types/route-proxy';
+import type {
+  EndpointTestSelectionInput,
+  EndpointTestTarget,
+} from '../../shared/types/endpoint-test';
 import { scanSavedSessionRecordsWithDiagnostics } from '../config-file-profile-service';
 import { routeStateAffinityService } from '../route-state-affinity-service';
 
@@ -332,6 +335,18 @@ export function registerRouteHandlers() {
       const archived = archiveRouteInstance(config, instanceId);
       if (archived) await unifiedConfigManager.saveConfig();
       return ok({ archived });
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:restore-route-instance', async (_, instanceId: string) => {
+    try {
+      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+      if (!config) throw new Error('会话路由配置不可用');
+      const instance = restoreRouteInstance(config, instanceId);
+      await unifiedConfigManager.saveConfig();
+      return ok(instance);
     } catch (e: any) {
       return err(e.message);
     }

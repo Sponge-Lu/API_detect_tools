@@ -53,6 +53,9 @@
 | `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位重新读取基础账号信息并在 access token 无效时重建；统一识别认证失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
 | `src/main/api-service.ts` | 站点检测、HTTP 请求、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测，并在检测缓存落盘后触发站点每日快照采集 |
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
+| `src/main/upstream-credential-resolver.ts` | 中性解析托管/直连真实上游 Base URL、API Key 与鉴权方案，不启动路由、选择通道或写入路由运行态 |
+| `src/main/api-key-identity.ts` | 生成稳定 API Key 标识，供路由、端点测试与配置服务共享 |
+| `src/main/endpoint-test-state-service.ts` | 独立维护端点测试 sidecar 选择与最新结果，不参与 Route runtime / stats / analytics |
 | `src/main/custom-cli-config-service.ts` | 直连接入点持久化与旧四 CLI 上游协议迁移，并为模型注册表生成虚拟通道标识 |
 | `src/main/config-file-profile-service.ts` | v3 配置方案、可用目标与模型域、单卡片 revision、结构化合并/覆盖、真实文件事务及增量对话记录扫描 |
 | `src/main/route-session-service.ts` | 以 `agentId + runtimeSlotId + sessionId` 管理 RouteInstance，解析 Codex/Claude Code/OpenCode 原生父子谱系，按客户端规范化模型共享父卡或创建稳定副编号子卡，并负责 ARMED 原子绑定与生命周期 |
@@ -62,7 +65,7 @@
 | `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 按入站 pathname 接收 Messages、Chat Completions 与 Responses 的通用本地网关，在请求体解析后关联运行时会话身份，并执行模型映射、会话覆盖、故障转移和必要的双向协议转换；上游失败按类别记账（仅请求侧致命记 `neutral`，不改变转移行为），凭证/模型/配额确证不可用时按阶梯时长首次即禁用该路径，全通道失败吸收为可重试 503；隐藏提供模型发现、CORS 预检、根探测和精确 Token 计数契约 |
 | `src/main/protocol-sse-transformer.ts` | 独立的跨协议增量 SSE 状态机，负责六个有向协议转换的分片解析、事件生命周期、工具/usage/error/terminal 透传 |
 | `src/main/streaming-protocol-validator.ts` | 三标准协议的有界增量 SSE 校验器，按实际下游字节验证帧、生命周期、输出、usage 与工具参数，不重建完整响应体 |
-| `src/main/endpoint-test-service.ts` | 手动执行 Messages、Responses 与 Chat Completions 非流式生成测试，保存每个接入目标/端点的最新选择、结果与测试时间 |
+| `src/main/endpoint-test-service.ts` | 通过中性凭证层直连上游执行 Messages、Responses 与 Chat Completions 非流式生成测试，不依赖任何路由模块，并保存每个接入目标/端点的最新选择、结果与测试时间 |
 | `src/main/route-history-service.ts` | 站点管理 History 列时间桶聚合服务，按实际请求端点分别聚合 48h / 2h 成功率轨道，并规范化 Messages、Responses 与 Chat Completions 路径 |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
 | `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV/导出使用 plaintext portable 2 文件包；恢复后 reconcile 隔离 Profile slot |
@@ -86,7 +89,7 @@
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；按日志中的 Agent 动态筛选并以 Logo + 名称展示首列，Token 固定两行展示输入/输出与缓存写/读 |
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色 |
-| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab2 资源布局、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
+| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab1 信息表单、Tab2 资源布局与 Tab3 端点测试共享紧凑视觉规格、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
 | `src/renderer/components/Route/*` | 路由页内部区块（含 `#N` / `#N.M` 父子会话编号、模型重定向优先级色点、服务器/统计面板及 History 条形图） |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
@@ -96,7 +99,7 @@
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
 | `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
 | `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
-| `src/renderer/utils/routeSessionOrdinal.ts` | 为父 RouteInstance 分配稳定主编号，并以持久化 childOrdinal 生成异模型子卡 `#N.M` 编号 |
+| `src/renderer/utils/routeSessionOrdinal.ts` | 为父 RouteInstance 分配稳定主编号，并以持久化 childOrdinal 生成异模型子卡 `#N.M` 编号；客户端+编号哈希取色的会话色板（sessionColorForSession） |
 | `src/renderer/utils/routeLatency.ts` | 从 latencyHistogram 桶估算 P90/P99 延迟分位数，样本 <20 时返回 null；命名导出桶解析与百分位算法供 routeTtfb 复用 |
 | `src/renderer/utils/routeLogAxis.ts` | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射 + 默认刻度 (1s/3s/5s/10s/30s/60s/120s) |
 | `src/renderer/utils/routeModelDistribution.ts` | 按 canonicalModel 聚合 RouteAnalyticsBucket 生成模型热力分布项（含成功率），并提供 squarified treemap 布局 |
@@ -110,7 +113,8 @@
 | 模块 | 作用 |
 |------|------|
 | `src/shared/types/site.ts` | 站点、账户、浏览器 Profile 选择与绑定、账户级 CLI 配置、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、API Key 活跃状态归一化、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
-| `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由、端点测试与分析统计类型 |
+| `src/shared/types/endpoint-test.ts` | 独立手动上游端点测试目标、协议、选择状态与结果类型 |
+| `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由与分析统计类型；兼容 re-export 端点测试类型 |
 | `src/shared/config/builtin-client-configs.ts` | Claude Code、Codex、OpenCode、Grok Build 完整配置的共享唯一来源 |
 | `src/shared/types/config-file-profile.ts` | 版本化配置方案、含协议元数据的目标目录、应用模式、文件事务和对话记录诊断类型 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` 主题预设与旧值归一化 |
@@ -167,7 +171,7 @@
 ### Route 工作台
 
 1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / analytics`，通过 `endpoint-test:*` IPC 读写手动端点测试状态。
-2. 主进程由 `route-proxy-service`、`endpoint-test-service`、`route-analytics-service` 与 `route-history-service` 负责运行时行为。端点测试通过 loopback 路由的 target lock 精确选择目标，不发送 CLI marker/User-Agent/originator，也不写入路由统计与 History。
+2. 主进程由 `route-proxy-service`、`endpoint-test-service`、`route-analytics-service` 与 `route-history-service` 负责运行时行为。端点测试通过中性 `upstream-credential-resolver` 获取真实目标后直接请求上游；不导入路由通道/代理/target-lock 模块，不发送 CLI marker/User-Agent/originator，也不写入路由统计与 History。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
 
 ### 数据总览
@@ -187,11 +191,11 @@
 
 ## 近期结构变化（v3.0.5 相对 v2.1.24）
 
-- 新增 `src/main/endpoint-test-service.ts`、`src/main/route-target-lock.ts`
+- 新增 `src/main/endpoint-test-service.ts`、`src/main/upstream-credential-resolver.ts`、`src/main/api-key-identity.ts`、`src/main/route-target-lock.ts`
 - 新增 `src/main/custom-cli-config-service.ts`
 - 新增 `src/main/custom-cli-model-service.ts`
 - 新增 `src/main/route-history-service.ts`
-- 新增 `src/__tests__/endpoint-test-service.test.ts`、`src/__tests__/endpoint-test-panel.test.tsx`
+- 新增 `src/__tests__/endpoint-test-service.test.ts`、`src/__tests__/upstream-credential-resolver.test.ts`、`src/__tests__/endpoint-test-panel.test.tsx`
 - 新增 `src/__tests__/route-proxy-service.test.ts`
 - 新增 `src/__tests__/route-rule-engine.test.ts`
 - 新增 `src/main/route-analytics-service.ts`

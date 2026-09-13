@@ -341,9 +341,12 @@ function filterChannelsByPriorityConfig(
 }
 
 async function resolveChannelTargets(channels: ResolvedChannel[]): Promise<ResolvedChannel[]> {
-  return Promise.all(
-    channels.map(async channel => {
+  const resolved: Array<ResolvedChannel | null> = await Promise.all(
+    channels.map(async (channel): Promise<ResolvedChannel | null> => {
       const resolvedTarget = await resolveChannelTarget(channel);
+      if (!resolvedTarget) {
+        return null;
+      }
       return {
         ...channel,
         targetProtocol: resolvedTarget.targetProtocol,
@@ -351,6 +354,7 @@ async function resolveChannelTargets(channels: ResolvedChannel[]): Promise<Resol
       };
     })
   );
+  return resolved.filter((channel): channel is ResolvedChannel => channel !== null);
 }
 
 function normalizeHeaderValue(value: string | string[] | undefined): string {
@@ -444,6 +448,18 @@ function fingerprintRouteCredential(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
+function fingerprintRouteIdentity(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return createHash('sha256').update(value).digest('hex').slice(0, 8);
+}
+
+function normalizeRouteDiagnosticCategory(
+  value: string | undefined,
+  allowed: readonly string[]
+): string | undefined {
+  return value ? (allowed.includes(value) ? value : 'other') : undefined;
+}
+
 function resolveCanonicalModelFromRegistry(
   routing: Pick<RoutingConfig, 'modelRegistry'>,
   rawModel: string | null
@@ -490,6 +506,27 @@ export function detectMarkedRouteCliType(
 
 function getRequestPathname(requestUrl: string | undefined): string {
   return (requestUrl || '/').split('?')[0] || '/';
+}
+
+function getRouteDiagnosticPath(pathname: string): string {
+  const routePath = [
+    CLAUDE_COUNT_TOKENS_PATH,
+    '/v1/responses/compact',
+    '/v1/responses/input_tokens',
+    '/v1/messages/batches',
+    '/v1/chat/completions',
+    '/v1/responses',
+    '/v1/messages',
+    '/v1/models',
+    ...OPENAI_STATEFUL_ROUTE_PREFIXES,
+  ].find(path => pathname === path || pathname.startsWith(`${path}/`));
+  return routePath
+    ? pathname === routePath
+      ? routePath
+      : `${routePath}/:resource`
+    : pathname === '/'
+      ? '/'
+      : 'other';
 }
 
 function buildRouteModelDiscoveryResponse(
@@ -2124,13 +2161,6 @@ function buildTargetLockUpstreamAttemptExhaustedErrorText(): string {
 }
 
 type UpstreamAuthScheme = 'native' | 'bearer' | 'x-api-key';
-const SENSENOVA_UPSTREAM_HOST = 'token.sensenova.cn';
-
-function resolveUpstreamAuthScheme(targetBaseUrl: string): UpstreamAuthScheme {
-  return new URL(targetBaseUrl).hostname.toLowerCase() === SENSENOVA_UPSTREAM_HOST
-    ? 'bearer'
-    : 'native';
-}
 
 export function buildUpstreamHeaders(
   incomingHeaders: http.IncomingHttpHeaders,
@@ -2153,7 +2183,9 @@ export function buildUpstreamHeaders(
     if (
       normalizedHeaderName === ROUTE_CLI_MARKER_HEADER ||
       normalizedHeaderName.startsWith('x-api-detect-') ||
-      normalizedHeaderName.startsWith('x-grok-')
+      normalizedHeaderName.startsWith('x-grok-') ||
+      (cliType !== 'claudeCode' &&
+        (normalizedHeaderName === 'anthropic-version' || normalizedHeaderName === 'anthropic-beta'))
     ) {
       delete forwardHeaders[headerName];
     }
@@ -2165,6 +2197,10 @@ export function buildUpstreamHeaders(
     forwardHeaders['x-api-key'] = apiKey;
   } else {
     forwardHeaders.authorization = `Bearer ${apiKey}`;
+  }
+
+  if (cliType === 'claudeCode' && !forwardHeaders['anthropic-version']) {
+    forwardHeaders['anthropic-version'] = '2023-06-01';
   }
 
   return forwardHeaders;
@@ -2606,6 +2642,7 @@ interface ForwardToUpstreamOptions {
   nativeResponsePassthrough?: boolean;
   streamIdleTimeoutMs?: number;
   beforeStreamCommit?: (bufferedBody: Buffer) => Promise<void>;
+  onUpstreamAttempt?: () => void;
   onStreamCompletionDelivered?: () => void;
 }
 
@@ -2651,11 +2688,9 @@ async function forwardToUpstream(
       ? 'x-api-key'
       : options.upstreamAuthScheme === 'bearer'
         ? 'bearer'
-        : resolveUpstreamAuthScheme(targetBaseUrl) === 'bearer'
-          ? 'bearer'
-          : upstreamCliType === 'claudeCode'
-            ? 'x-api-key'
-            : 'bearer'
+        : upstreamCliType === 'claudeCode'
+          ? 'x-api-key'
+          : 'bearer'
   );
 
   // 合并额外的请求头（如 AnyRouter 改写添加的 anthropic-beta）
@@ -2984,6 +3019,7 @@ async function forwardToUpstream(
 
   let response: Awaited<ReturnType<typeof httpRawRequest>>;
   try {
+    options.onUpstreamAttempt?.();
     response =
       options.streamResponse && options.streamResponseBody
         ? await httpRawStreamRequest(target.url, {
@@ -3384,6 +3420,7 @@ export async function handleRequest(
   res: http.ServerResponse
 ): Promise<void> {
   const requestSelectionStartedAt = Date.now();
+  let upstreamAttemptCount = 0;
   let routeAgentId: string | undefined;
   let routeAgentName: string | undefined;
   let routeInstanceLogId: string | undefined;
@@ -3499,8 +3536,6 @@ export async function handleRequest(
   res.once('finish', finishRouteHandling);
   req.on('aborted', cancelRouteRequest);
 
-  const routing = unifiedConfigManager.getRoutingConfig();
-
   const pathname = getRequestPathname(req.url);
   const initialCliType =
     detectMarkedRouteCliType(req.headers) ?? detectCliTypeFromPath(pathname) ?? 'codex';
@@ -3512,6 +3547,44 @@ export async function handleRequest(
     canonicalModel: null,
     requestKind: 'inference',
   };
+  const requestDiagnostic = {
+    requestId,
+    method: normalizeRouteDiagnosticCategory((req.method || 'GET').toUpperCase(), [
+      'GET',
+      'HEAD',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+      'OPTIONS',
+      'CONNECT',
+      'TRACE',
+    ]),
+    path: getRouteDiagnosticPath(pathname),
+    sourceProtocol: inferSourceProtocol(pathname),
+  };
+  let responseDiagnosticLogged = false;
+  const recordResponseDiagnostic = () => {
+    if (responseDiagnosticLogged) return;
+    responseDiagnosticLogged = true;
+    res.off('finish', recordResponseDiagnostic);
+    res.off('close', recordResponseDiagnostic);
+    req.off('aborted', recordResponseDiagnostic);
+    log.debug('Route request completed', {
+      ...requestDiagnostic,
+      durationMs: Math.max(0, Date.now() - requestSelectionStartedAt),
+      statusCode: res.headersSent ? res.statusCode : null,
+      termination:
+        res.writableEnded || routeStreamCompletionDelivered ? 'completed' : 'client_cancelled',
+      attemptCount: upstreamAttemptCount,
+    });
+  };
+  log.debug('Route request received', requestDiagnostic);
+  res.once('finish', recordResponseDiagnostic);
+  res.once('close', recordResponseDiagnostic);
+  req.once('aborted', recordResponseDiagnostic);
+
+  const routing = unifiedConfigManager.getRoutingConfig();
   if ((req.method || 'GET').toUpperCase() === 'HEAD' && pathname === '/') {
     recordRequestForSelection({
       ...routeCancellationLogContext,
@@ -3865,6 +3938,60 @@ export async function handleRequest(
     defaultReasoningEffort: 'medium',
     requestAt: requestSelectionStartedAt,
   });
+  const identitySource = observedRouteInstanceKey?.lineage?.source
+    ? observedRouteInstanceKey.lineage.source
+    : observedRouteInstanceKey?.agentId.startsWith('profile:')
+      ? 'profile'
+      : observedRouteInstanceKey?.agentId.startsWith('session:')
+        ? 'generic'
+        : observedRouteInstanceKey
+          ? 'explicit'
+          : 'none';
+  const requestKind = normalizeRouteDiagnosticCategory(
+    observedRouteInstanceKey?.lineage?.requestKind,
+    ['turn', 'prewarm', 'compaction', 'memory']
+  );
+  const threadSource = normalizeRouteDiagnosticCategory(
+    observedRouteInstanceKey?.lineage?.threadSource,
+    ['user', 'system', 'subagent', 'guardian_review', 'memory_consolidation']
+  );
+  log.debug('RouteInstance identity binding', {
+    ...requestDiagnostic,
+    sourceProtocol,
+    identitySource,
+    hasCurrentIdentity: Boolean(observedRouteInstanceKey?.sessionId),
+    hasRootIdentity: Boolean(observedRouteInstanceKey?.lineage?.rootSessionId),
+    hasParentIdentity: Boolean(observedRouteInstanceKey?.lineage?.parentSessionId),
+    ...(requestKind ? { requestKind } : {}),
+    ...(threadSource ? { threadSource } : {}),
+    isCodexUtility: Boolean(routeInstanceResolution.utilityRequest),
+    sessionIdHash: fingerprintRouteIdentity(observedRouteInstanceKey?.sessionId),
+    rootSessionIdHash: fingerprintRouteIdentity(observedRouteInstanceKey?.lineage?.rootSessionId),
+    parentThreadIdHash: fingerprintRouteIdentity(
+      observedRouteInstanceKey?.lineage?.parentSessionId
+    ),
+    forkedFromThreadIdHash: fingerprintRouteIdentity(
+      observedRouteInstanceKey?.lineage?.forkedFromThreadId
+    ),
+    resolutionPath: routeInstanceResolution.resolutionPath,
+    createdReason: routeInstanceResolution.createdReason,
+    memberAppended: routeInstanceResolution.memberAppended,
+    rejectedEvidence: hasRejectedRouteInstanceEvidence,
+    rejectionReason: hasRejectedRouteInstanceEvidence
+      ? 'invalid_or_incomplete_identity'
+      : observedRouteInstanceKey
+        ? undefined
+        : 'no_identity_evidence',
+    bindingState: routeInstanceResolution.instance
+      ? 'bound'
+      : routeInstanceResolution.utilityRequest
+        ? 'utility'
+        : hasRejectedRouteInstanceEvidence
+          ? 'rejected'
+          : 'unidentified',
+    profileIdHash: fingerprintRouteIdentity(routeProfile?.id),
+    instanceIdHash: fingerprintRouteIdentity(routeInstanceResolution.instance?.id),
+  });
   routeInstanceLogId = routeInstanceResolution.instance?.id;
   if (!routeInstanceResolution.instance && !rawModel && !stateAffinityRecord && !targetLock) {
     recordRequestForSelection({
@@ -4022,6 +4149,28 @@ export async function handleRequest(
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
     const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
     const resolvedChannels = await resolveChannelTargets(enabledChannels);
+    if (resolvedChannels.length === 0) {
+      recordRequestForSelection({
+        requestId,
+        attempt: 0,
+        cliType,
+        requestedModel: rawModel,
+        reasoningEffort,
+        canonicalModel,
+        routeRuleId: rule.id,
+        outcome: 'failure',
+        statusCode: 503,
+        error: 'no_compatible_upstream_protocol',
+      });
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'no_compatible_upstream_protocol',
+          message: `No upstream supports ${sourceProtocol} or provides an unambiguous conversion target`,
+        })
+      );
+      return;
+    }
     if (stopRouteHandlingIfClientCancelled()) {
       return;
     }
@@ -4520,6 +4669,9 @@ export async function handleRequest(
                     await bindResourceAffinity(resourceId);
                   }
                 : undefined,
+            onUpstreamAttempt: () => {
+              upstreamAttemptCount += 1;
+            },
             onStreamCompletionDelivered: () => {
               routeStreamCompletionDelivered = true;
             },

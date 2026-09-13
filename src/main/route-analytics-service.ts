@@ -40,6 +40,9 @@ import { loadCustomCliConfigStorageSync } from './custom-cli-config-service';
 
 const log = Logger.scope('RouteAnalytics');
 const MAX_ROUTE_REQUEST_LOGS = 1000;
+/** 失败日志窗口去重：客户端（如 Codex）在收到失败响应后常自动重发，每次重发都写一条失败日志会刷屏。 */
+const FAILURE_LOG_DEDUPE_MS = 5_000;
+const failureLogDedupeByKey = new Map<string, number>();
 const ROUTE_OVERVIEW_DEBOUNCE_MS = 1200;
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 
@@ -445,6 +448,19 @@ export function recordRouteRequest(params: {
   at?: number;
 }): void {
   const at = params.at ?? Date.now();
+  if (params.outcome === 'failure') {
+    const dedupeKey = [
+      params.routeInstanceId || params.requestId,
+      params.routeRuleId || '',
+      params.statusCode ?? '',
+      params.error ?? '',
+    ].join('|');
+    const lastRecordedAt = failureLogDedupeByKey.get(dedupeKey);
+    if (lastRecordedAt !== undefined && at - lastRecordedAt < FAILURE_LOG_DEDUPE_MS) {
+      return;
+    }
+    failureLogDedupeByKey.set(dedupeKey, at);
+  }
   const recordsInferenceUsage =
     params.requestKind !== 'token-count' && params.tokenUsageSource !== 'local-estimate';
   const estimatedCostUsd = recordsInferenceUsage

@@ -21,6 +21,7 @@
 
 ## 更新日志
 
+- 2026-09-03: 会话路由卡片多轮迭代至「显示优先」分层结构——头部行（logo + 名称幽灵输入，客户端名称与 `#N` 编号同框展示、保存前剥离编号后缀 + 带文字的取消/CircleStop 关闭/归档按钮）、备注 hero 行（16px 会话色）、元信息行（Session ID + 复制 + 30% 宽运行范围幽灵输入）、带分隔线的配置区、轻量页脚；状态徽章移除（按钮与透明度已承载状态语义，未绑定提示按 armed/cancelled 分化文案）；整卡左缘 3px 会话色边、p-3/gap-2 留白、悬停微阴影；会话色与优先级色点同源（`utils/routeSessionOrdinal.ts`）；已关闭/已取消卡片降透明；卡片列表按创建时间稳定排序
 - 2026-09-02: 页面内容互换——配置文件卡片(原"配置文件"页)迁入本地路由页成为 `ConfigProfilesSection.tsx`,会话路由区迁至新"路由设置"页
 - 2026-08-08: 删除无引用的 `RouteSubTabs.tsx`;`ProxyStatsTab.tsx` 移除 `StatsDashboard`/`ProxyStatsTab` 导出,保留 `ServerSection`/`CliModelSection`;`ServerSection` 重写为 canonical AppCard + AppInput 风格
 - 2026-04-16: 顶层"模型重定向"页面下线,`代理统计` 一级页更名为 `路由`

@@ -266,6 +266,67 @@ describe('DirectCliConfigEditorContent', () => {
     });
   });
 
+  it('saves the selected upstream authentication scheme with direct config identity fields', async () => {
+    await renderDialog();
+
+    const authSelect = screen.getByRole('combobox', { name: '上游鉴权方式' });
+    fireEvent.change(authSelect, { target: { value: 'x-api-key' } });
+    expect(authSelect).toHaveValue('x-api-key');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('direct-cli-save-button')).toHaveAttribute('data-dirty', 'true')
+    );
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+    await waitFor(() => {
+      expect(useCustomCliConfigStore.getState().updateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({ routeAuthScheme: 'x-api-key' })
+      );
+    });
+  });
+
+  it('saves the route target protocol with direct config identity fields', async () => {
+    await renderDialog();
+
+    const protocolSelect = screen.getByRole('combobox', { name: '路由上游协议' });
+    fireEvent.change(protocolSelect, { target: { value: 'openai-responses' } });
+    expect(protocolSelect).toHaveValue('openai-responses');
+
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+    await waitFor(() => {
+      expect(useCustomCliConfigStore.getState().updateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({
+          routeTargetProtocol: 'openai-responses',
+          routeTargetProtocolNeedsConfirmation: false,
+        })
+      );
+    });
+  });
+
+  it('saves the declared upstream protocols with direct config identity fields', async () => {
+    await renderDialog();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'OpenAI Chat Completions' }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('direct-cli-save-button')).toHaveAttribute('data-dirty', 'true')
+    );
+
+    fireEvent.click(screen.getByTestId('direct-cli-save-button'));
+
+    await waitFor(() => {
+      expect(useCustomCliConfigStore.getState().updateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({
+          supportedProtocols: ['anthropic-messages', 'openai-responses'],
+        })
+      );
+    });
+  });
+
   it('marks the save action dirty when the model URL changes', async () => {
     await renderDialog();
 

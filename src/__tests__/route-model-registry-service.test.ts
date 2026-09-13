@@ -65,6 +65,7 @@ import {
   resolveChannelCredentials,
   resolveChannelTarget,
   resolveChannels,
+  resolveSupportedTargetProtocol,
 } from '../main/route-channel-resolver';
 import { sortChannelsByScore } from '../main/route-stats-service';
 import {
@@ -1648,6 +1649,37 @@ describe('route model registry service', () => {
     const resolved = await resolveChannelTarget(channels[0]);
     expect(resolved.targetProtocol).toBe('openai-responses');
     expect(resolved.targetEndpoint).toBe('/v1/responses');
+  });
+
+  it('keeps legacy routing when upstream protocols are not declared', () => {
+    expect(resolveSupportedTargetProtocol('openai-responses', 'native')).toBe('openai-responses');
+  });
+
+  it('uses a supported inbound protocol without conversion', () => {
+    expect(
+      resolveSupportedTargetProtocol('openai-responses', 'native', [
+        'anthropic-messages',
+        'openai-responses',
+      ])
+    ).toBe('openai-responses');
+  });
+
+  it('automatically converts to the only declared upstream protocol', () => {
+    expect(
+      resolveSupportedTargetProtocol('openai-responses', 'native', ['anthropic-messages'])
+    ).toBe('anthropic-messages');
+  });
+
+  it('rejects ambiguous or unsupported upstream protocol targets', () => {
+    expect(
+      resolveSupportedTargetProtocol('openai-responses', 'native', [
+        'anthropic-messages',
+        'openai-chat-completions',
+      ])
+    ).toBeNull();
+    expect(
+      resolveSupportedTargetProtocol('openai-responses', 'openai-responses', ['anthropic-messages'])
+    ).toBeNull();
   });
 
   it('does not route an unknown requested model through generic channels once registry data exists', () => {

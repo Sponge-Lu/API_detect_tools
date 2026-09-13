@@ -5,7 +5,7 @@ import type {
   EndpointTestSelectionInput,
   EndpointTestSelectionState,
   EndpointTestStateView,
-} from '../shared/types/route-proxy';
+} from '../shared/types/endpoint-test';
 
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
@@ -20,15 +20,22 @@ const target = { kind: 'direct' as const, configId: 'direct-1' };
 const initialState: EndpointTestStateView = {
   target,
   targetKey: 'direct:direct-1',
+  baseUrl: 'https://direct.example/v1',
   apiKeys: [
-    { id: 'key-a', label: 'Key A', models: ['messages-model', 'chat-model'] },
-    { id: 'key-b', label: 'Key B', models: ['responses-model'] },
+    {
+      id: 'key-a',
+      label: 'Key A',
+      maskedApiKey: 'dire******ret',
+      models: ['messages-model', 'chat-model'],
+    },
+    { id: 'key-b', label: 'Key B', maskedApiKey: 'respo******ret', models: ['responses-model'] },
   ],
   models: ['messages-model', 'responses-model', 'chat-model'],
   protocols: {
     'anthropic-messages': {
       apiKeyId: 'key-a',
       model: 'messages-model',
+      curl: "curl '{{BASE_URL}}/messages' --header 'x-api-key: {{API_KEY}}' --data-raw '{\"model\":\"{{MODEL}}\"}'",
       latest: {
         success: true,
         endpoint: '/v1/messages',
@@ -44,6 +51,7 @@ const initialState: EndpointTestStateView = {
     'openai-responses': {
       apiKeyId: 'key-b',
       model: 'responses-model',
+      curl: "curl '{{BASE_URL}}/responses' --header 'Authorization: Bearer {{API_KEY}}' --data-raw '{\"model\":\"{{MODEL}}\"}'",
       latest: {
         success: false,
         endpoint: '/v1/responses',
@@ -59,6 +67,7 @@ const initialState: EndpointTestStateView = {
     'openai-chat-completions': {
       apiKeyId: 'key-a',
       model: 'chat-model',
+      curl: "curl '{{BASE_URL}}/chat/completions' --header 'Authorization: Bearer {{API_KEY}}' --data-raw '{\"model\":\"{{MODEL}}\"}'",
     },
   },
 };
@@ -67,6 +76,7 @@ describe('EndpointTestPanel', () => {
   const getState = vi.fn();
   const saveSelection = vi.fn();
   const run = vi.fn();
+  const saveAuthScheme = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -99,6 +109,27 @@ describe('EndpointTestPanel', () => {
     });
   });
 
+  it('gives each embedded endpoint its own card boundary', async () => {
+    render(<EndpointTestPanel target={target} embedded />);
+
+    await screen.findByTitle('测试 /v1/messages');
+
+    for (const protocol of [
+      'anthropic-messages',
+      'openai-responses',
+      'openai-chat-completions',
+    ] as const) {
+      expect(screen.getByTestId(`endpoint-test-card-${protocol}`)).toHaveClass(
+        'rounded-[var(--radius-md)]',
+        'border',
+        'border-[var(--line-soft)]',
+        'bg-[var(--surface-3)]'
+      );
+    }
+
+    expect(screen.getByText('/v1/messages')).toHaveClass('font-mono', 'bg-[var(--surface-2)]');
+  });
+
   it('renders three endpoint tests and restores independent persisted selections', async () => {
     render(<EndpointTestPanel target={target} />);
 
@@ -106,8 +137,8 @@ describe('EndpointTestPanel', () => {
     const messagesTitle = screen.getByText('/v1/messages').parentElement;
     expect(messagesTitle).toHaveClass('items-center');
     expect(messagesTitle).toHaveTextContent('Anthropic Messages/v1/messages');
-    expect(screen.getAllByText('OpenAI Responses')).toHaveLength(2);
-    expect(screen.getAllByText('OpenAI Chat Completions')).toHaveLength(2);
+    expect(screen.getAllByText('OpenAI Responses')).toHaveLength(1);
+    expect(screen.getAllByText('OpenAI Chat Completions')).toHaveLength(1);
     expect(screen.getByText('/v1/messages')).toBeInTheDocument();
     expect(screen.getByText('/v1/responses')).toBeInTheDocument();
     expect(screen.getByText('/v1/chat/completions')).toBeInTheDocument();
@@ -115,9 +146,8 @@ describe('EndpointTestPanel', () => {
     expect(screen.getByTitle('测试 /v1/messages')).toHaveClass('!min-h-7', '!px-2.5');
 
     const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    expect(selects).toHaveLength(7);
+    expect(selects).toHaveLength(6);
     expect(selects.map(select => select.value)).toEqual([
-      'native',
       'key-a',
       'messages-model',
       'key-b',
@@ -126,6 +156,54 @@ describe('EndpointTestPanel', () => {
       'chat-model',
     ]);
     expect(screen.queryByRole('option', { name: 'cli-usage-model' })).not.toBeInTheDocument();
+    for (const label of [
+      'Anthropic Messages cURL',
+      'OpenAI Responses cURL',
+      'OpenAI Chat Completions cURL',
+    ]) {
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole('button', { name: '展开 Anthropic Messages cURL 编辑器' }));
+    const curl = screen.getByLabelText('Anthropic Messages cURL') as HTMLTextAreaElement;
+    expect(curl.value).toContain("curl 'https://direct.example/v1/messages'");
+    expect(curl.value).toContain('x-api-key: dire******ret');
+    expect(curl.value).toContain('"model":"messages-model"');
+    expect(curl.value).not.toContain('{{BASE_URL}}');
+    expect(curl.value).not.toContain('{{API_KEY}}');
+    expect(curl.value).not.toContain('{{MODEL}}');
+  });
+
+  it('starts cURL editors collapsed and fills missing persisted templates with defaults', async () => {
+    const state = structuredClone(initialState);
+    for (const protocol of Object.keys(state.protocols) as Array<keyof typeof state.protocols>) {
+      state.protocols[protocol].curl = '';
+    }
+    getState.mockResolvedValueOnce({ success: true, data: state });
+
+    render(<EndpointTestPanel target={target} />);
+    await screen.findByTitle('测试 /v1/messages');
+
+    expect(screen.queryByLabelText('Anthropic Messages cURL')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '展开 Anthropic Messages cURL 编辑器' }));
+
+    const curl = screen.getByLabelText('Anthropic Messages cURL') as HTMLTextAreaElement;
+    expect(curl.value).toContain("curl --request POST 'https://direct.example/v1/messages'");
+    expect(curl.value).toContain('x-api-key: dire******ret');
+    expect(curl.value).toContain('"model": "messages-model"');
+    expect(curl.value).toContain('"max_tokens": 1024');
+    expect(
+      screen.getByRole('button', { name: '折叠 Anthropic Messages cURL 编辑器' })
+    ).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('keeps route configuration controls out of the endpoint test panel', async () => {
+    render(<EndpointTestPanel target={target} />);
+
+    await screen.findByTitle('测试 /v1/messages');
+    expect(screen.queryByRole('combobox', { name: '路由上游协议' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: '上游鉴权方式' })).not.toBeInTheDocument();
+    expect(screen.queryByText('上游支持协议')).not.toBeInTheDocument();
+    expect(saveAuthScheme).not.toHaveBeenCalled();
   });
 
   it('shows the latest test time for both successful and failed results', async () => {
@@ -174,6 +252,90 @@ describe('EndpointTestPanel', () => {
     ).toHaveValue('chat-model');
   });
 
+  it('shows editable cURL per endpoint and saves only the selected protocol command', async () => {
+    render(<EndpointTestPanel target={target} />);
+    await screen.findByTitle('测试 /v1/messages');
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 Anthropic Messages cURL 编辑器' }));
+    const curl = screen.getByLabelText('Anthropic Messages cURL') as HTMLTextAreaElement;
+    expect(curl).toBeInTheDocument();
+    fireEvent.change(curl, { target: { value: "curl 'https://direct.example/v1/messages'" } });
+    fireEvent.click(screen.getAllByTitle('保存 cURL')[0]);
+
+    await waitFor(() => {
+      expect(saveSelection).toHaveBeenCalledWith({
+        target,
+        protocol: 'anthropic-messages',
+        apiKeyId: 'key-a',
+        model: 'messages-model',
+        curl: "curl '{{BASE_URL}}/messages'",
+      });
+    });
+    expect(saveSelection).not.toHaveBeenCalledWith(
+      expect.objectContaining({ protocol: 'openai-responses' })
+    );
+  });
+
+  it('replaces model and API key placeholders when the selection changes', async () => {
+    render(<EndpointTestPanel target={target} />);
+    await screen.findByTitle('测试 /v1/messages');
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 Anthropic Messages cURL 编辑器' }));
+    const curl = screen.getByLabelText('Anthropic Messages cURL') as HTMLTextAreaElement;
+    expect(curl.value).toContain('dire******ret');
+    expect(curl.value).toContain('messages-model');
+
+    fireEvent.change(
+      screen.getByLabelText('模型', { selector: '#endpoint-test-model-anthropic-messages' }),
+      { target: { value: 'chat-model' } }
+    );
+    await waitFor(() => {
+      expect(curl.value).toContain('chat-model');
+      expect(curl.value).not.toContain('messages-model');
+    });
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'key-b' } });
+    await waitFor(() => {
+      expect(curl.value).toContain('respo******ret');
+      expect(curl.value).not.toContain('dire******ret');
+    });
+  });
+
+  it('executes an unsaved cURL draft without including it in API/model autosave', async () => {
+    render(<EndpointTestPanel target={target} />);
+    await screen.findByTitle('测试 /v1/messages');
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 Anthropic Messages cURL 编辑器' }));
+    const draft =
+      'curl \'{{BASE_URL}}/messages\' --header \'x-api-key: {{API_KEY}}\' --data-raw \'{"model":"{{MODEL}}","draft":true}\'';
+    fireEvent.change(screen.getByLabelText('Anthropic Messages cURL'), {
+      target: { value: draft },
+    });
+    fireEvent.change(
+      screen.getByLabelText('模型', { selector: '#endpoint-test-model-anthropic-messages' }),
+      { target: { value: 'chat-model' } }
+    );
+
+    await waitFor(() => {
+      expect(saveSelection).toHaveBeenCalledWith({
+        target,
+        protocol: 'anthropic-messages',
+        apiKeyId: 'key-a',
+        model: 'chat-model',
+      });
+    });
+    fireEvent.click(screen.getByTitle('测试 /v1/messages'));
+    await waitFor(() => {
+      expect(run).toHaveBeenCalledWith({
+        target,
+        protocol: 'anthropic-messages',
+        apiKeyId: 'key-a',
+        model: 'chat-model',
+        curl: draft,
+      });
+    });
+  });
+
   it('updates the displayed latest test time from a completed run', async () => {
     render(<EndpointTestPanel target={target} />);
     await screen.findByTitle('测试 /v1/messages');
@@ -186,6 +348,7 @@ describe('EndpointTestPanel', () => {
         protocol: 'openai-chat-completions',
         apiKeyId: 'key-a',
         model: 'chat-model',
+        curl: initialState.protocols['openai-chat-completions'].curl,
       });
     });
     expect(await screen.findByText('OK chat')).toBeInTheDocument();
@@ -231,7 +394,7 @@ describe('EndpointTestPanel', () => {
     ).toBeInTheDocument();
 
     fireEvent.click(listAllSwitch);
-    const apiKeySelect = screen.getAllByRole('combobox')[1];
+    const apiKeySelect = screen.getAllByRole('combobox')[0];
     fireEvent.change(apiKeySelect, { target: { value: 'key-b' } });
     await waitFor(() => expect(modelSelect).toHaveValue('responses-model'));
   });

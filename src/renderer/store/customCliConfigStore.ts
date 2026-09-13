@@ -18,6 +18,10 @@ import {
   normalizeCustomCliGroupMultiplier,
   normalizeCustomCliSettings,
 } from '../../shared/types/custom-cli-config';
+import {
+  normalizeCliTargetProtocol,
+  normalizeCliUpstreamProtocolsWithDefault,
+} from '../../shared/types/cli-config';
 import { toast } from './toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
 import Logger from '../utils/logger';
@@ -242,6 +246,9 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
   if (!hasModelBoundary) {
     return {
       ...config,
+      routeTargetProtocol: normalizeCliTargetProtocol(config.routeTargetProtocol),
+      routeTargetProtocolNeedsConfirmation: Boolean(config.routeTargetProtocolNeedsConfirmation),
+      supportedProtocols: normalizeCliUpstreamProtocolsWithDefault(config.supportedProtocols),
       modelUrl,
       apiKeys,
       apiKey: apiKeys[0]?.key ?? config.apiKey,
@@ -256,6 +263,9 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
   const availableModels = new Set([...normalizedModels, ...manualModels]);
   return {
     ...config,
+    routeTargetProtocol: normalizeCliTargetProtocol(config.routeTargetProtocol),
+    routeTargetProtocolNeedsConfirmation: Boolean(config.routeTargetProtocolNeedsConfirmation),
+    supportedProtocols: normalizeCliUpstreamProtocolsWithDefault(config.supportedProtocols),
     modelUrl,
     apiKeys,
     apiKey: apiKeys[0]?.key ?? config.apiKey,

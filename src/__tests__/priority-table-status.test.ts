@@ -6,11 +6,10 @@ import {
   buildSessionChannelKey,
   formatRemainingDuration,
   formatRoutePathDisabledReasonLabel,
-  sessionColorForKey,
-  sessionColorForSession,
   type PriorityModelEntry,
   type RoutePathSuspensionLabel,
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
+import { sessionColorForKey, sessionColorForSession } from '../renderer/utils/routeSessionOrdinal';
 import type { RoutePathDisabledReason } from '../shared/types/route-proxy';
 
 const NOW = 1_700_000_000_000;

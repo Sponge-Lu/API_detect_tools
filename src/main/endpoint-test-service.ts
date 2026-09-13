@@ -8,7 +8,7 @@ import {
   type EndpointTestStateView,
   type EndpointTestTarget,
   type EndpointTestTargetState,
-} from '../shared/types/route-proxy';
+} from '../shared/types/endpoint-test';
 import {
   BUILTIN_GROUP_IDS,
   isAnyRouterSite,
@@ -16,24 +16,31 @@ import {
   type ApiKeyInfo,
 } from '../shared/types/site';
 import {
-  buildCustomCliRouteAccountId,
   buildCustomCliRouteApiKeyId,
-  buildCustomCliRouteSiteId,
   loadCustomCliConfigStorage,
 } from './custom-cli-config-service';
 import { normalizeCustomCliApiKeys } from '../shared/types/custom-cli-config';
-import { isRouteMaskedApiKeyValue, resolveAccountApiKeyValue } from './route-channel-resolver';
-import { resolveApiKeyId } from './route-model-registry-service';
-import { ensureRouteProxyReady } from './route-proxy-service';
-import { routeStateManager } from './route-state-manager';
-import { buildTargetLockRouteApiKey } from './route-target-lock';
+import { resolveApiKeyId } from './api-key-identity';
+import { endpointTestStateService } from './endpoint-test-state-service';
 import { unifiedConfigManager } from './unified-config-manager';
+import {
+  isMaskedApiKeyValue,
+  resolveUpstreamCredentials,
+  type UpstreamCredentialTarget,
+} from './upstream-credential-resolver';
+import { httpRawRequest } from './utils/http-client';
 
 const MAX_SUMMARY_LENGTH = 1000;
 const MAX_ERROR_LENGTH = 200;
 const DEFAULT_TIMEOUT_MS = 60000;
 const ANYROUTER_TIMEOUT_MS = 120000;
 const TEST_PROMPT = '1.2和1.19哪个更大？';
+const API_KEY_PLACEHOLDER = '{{API_KEY}}';
+const MODEL_PLACEHOLDER = '{{MODEL}}';
+const BASE_URL_PLACEHOLDER = '{{BASE_URL}}';
+const MAX_CURL_LENGTH = 65536;
+const MAX_CURL_HEADERS = 100;
+const MAX_CURL_BODY_LENGTH = 262144;
 
 const ENDPOINTS: Record<EndpointTestProtocol, string> = {
   'anthropic-messages': '/v1/messages',
@@ -44,13 +51,18 @@ const ENDPOINTS: Record<EndpointTestProtocol, string> = {
 interface ResolvedEndpointTestTarget {
   target: EndpointTestTarget;
   targetKey: string;
-  siteId: string;
-  accountId: string;
-  apiKeys: Array<EndpointTestApiKeyOption & { info?: ApiKeyInfo; value?: string }>;
+  baseUrl: string;
+  authScheme?: EndpointAuthScheme;
+  apiKeys: Array<EndpointTestApiKeyOption & { credentialTarget: UpstreamCredentialTarget }>;
   models: string[];
   timeoutMs: number;
-  upstreamBaseUrl?: string;
-  upstreamApiKey?: string;
+}
+
+interface ParsedCurlRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: string;
 }
 
 function normalizeText(value: unknown): string {
@@ -59,6 +71,22 @@ function normalizeText(value: unknown): string {
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.map(normalizeText).filter(Boolean)));
+}
+
+function maskApiKeyForDisplay(value: unknown): string {
+  const normalized = normalizeText(value);
+  if (!normalized) return '';
+  if (isMaskedApiKeyValue(normalized)) return normalized;
+  if (normalized.length <= 4) return '****';
+
+  const visibleLength = Math.ceil(normalized.length / 2);
+  const prefixLength = Math.ceil(visibleLength / 2);
+  const suffixLength = visibleLength - prefixLength;
+  const maskedLength = Math.max(4, normalized.length - visibleLength);
+
+  return `${normalized.slice(0, prefixLength)}${'*'.repeat(maskedLength)}${normalized.slice(
+    -suffixLength
+  )}`;
 }
 
 function summarize(value: string): string {
@@ -126,7 +154,10 @@ function buildTargetKey(target: EndpointTestTarget): string {
 function createSelectionState(
   stored: EndpointTestSelectionState | undefined,
   apiKeys: EndpointTestApiKeyOption[],
-  models: string[]
+  models: string[],
+  protocol: EndpointTestProtocol,
+  baseUrl: string,
+  authScheme: EndpointAuthScheme | undefined
 ): EndpointTestSelectionState {
   const storedApiKeyId = stored?.apiKeyId;
   return {
@@ -136,6 +167,14 @@ function createSelectionState(
         ? storedApiKeyId
         : apiKeys[0]?.id) || null,
     model: stored?.model || models[0] || null,
+    curl: normalizeText(stored?.curl)
+      ? stored!.curl
+      : buildDefaultCurl(
+          protocol,
+          baseUrl,
+          resolveEndpointAuthScheme(protocol, authScheme),
+          MODEL_PLACEHOLDER
+        ),
     ...(stored?.latest ? { latest: stored.latest } : {}),
   };
 }
@@ -202,13 +241,13 @@ function buildRequestBody(protocol: EndpointTestProtocol, model: string): Record
   if (protocol === 'anthropic-messages') {
     return {
       model,
-      max_tokens: 32,
+      max_tokens: 1024,
       stream: false,
       messages: [{ role: 'user', content: TEST_PROMPT }],
     };
   }
   if (protocol === 'openai-responses') {
-    return { model, input: TEST_PROMPT, max_output_tokens: 32, stream: false };
+    return { model, input: TEST_PROMPT, max_output_tokens: 32, stream: false, store: false };
   }
   return {
     model,
@@ -218,15 +257,386 @@ function buildRequestBody(protocol: EndpointTestProtocol, model: string): Record
   };
 }
 
-function buildHeaders(protocol: EndpointTestProtocol, routeApiKey: string): Record<string, string> {
+type EndpointAuthScheme = 'bearer' | 'x-api-key';
+
+function resolveEndpointAuthScheme(
+  protocol: EndpointTestProtocol,
+  configuredScheme: EndpointAuthScheme | undefined
+): EndpointAuthScheme {
+  if (configuredScheme) return configuredScheme;
+  return protocol === 'anthropic-messages' ? 'x-api-key' : 'bearer';
+}
+
+function buildHeaders(
+  protocol: EndpointTestProtocol,
+  apiKey: string,
+  authScheme: EndpointAuthScheme
+): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (protocol === 'anthropic-messages') {
-    headers['x-api-key'] = routeApiKey;
-    headers['anthropic-version'] = '2023-06-01';
+  if (authScheme === 'x-api-key') {
+    headers['x-api-key'] = apiKey;
   } else {
-    headers.Authorization = `Bearer ${routeApiKey}`;
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  if (protocol === 'anthropic-messages') {
+    headers['anthropic-version'] = '2023-06-01';
   }
   return headers;
+}
+
+function joinEndpointUrl(baseUrl: string, endpoint: string): string {
+  const parsed = new URL(baseUrl);
+  const baseSegments = parsed.pathname.split('/').filter(Boolean);
+  const endpointSegments = endpoint.split('/').filter(Boolean);
+  let overlap = 0;
+  const maxOverlap = Math.min(baseSegments.length, endpointSegments.length);
+  for (let size = 1; size <= maxOverlap; size += 1) {
+    const baseSuffix = baseSegments.slice(-size);
+    const endpointPrefix = endpointSegments.slice(0, size);
+    if (baseSuffix.every((segment, index) => segment === endpointPrefix[index])) {
+      overlap = size;
+    }
+  }
+  parsed.pathname = `/${[...baseSegments, ...endpointSegments.slice(overlap)].join('/')}`;
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function serializeCurl(request: ParsedCurlRequest): string {
+  const lines = [`curl --request ${request.method} ${shellQuote(request.url)}`];
+  for (const [name, value] of Object.entries(request.headers)) {
+    lines.push(`  --header ${shellQuote(`${name}: ${value}`)}`);
+  }
+  if (request.body) {
+    lines.push(`  --data-raw ${shellQuote(request.body)}`);
+  }
+  return lines.join(' \\\n');
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  const parsed = new URL(baseUrl);
+  parsed.search = '';
+  parsed.hash = '';
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  return pathname ? `${parsed.origin}${pathname}` : parsed.origin;
+}
+
+function replaceUrlWithBasePlaceholder(requestUrl: string, baseUrl: string): string {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  if (requestUrl.startsWith(normalizedBaseUrl)) {
+    return `${BASE_URL_PLACEHOLDER}${requestUrl.slice(normalizedBaseUrl.length)}`;
+  }
+
+  const request = new URL(requestUrl);
+  const base = new URL(normalizedBaseUrl);
+  if (request.origin !== base.origin) throw new Error('cURL 请求 URL 必须使用当前上游地址');
+  const parentSegments = base.pathname
+    .split('/')
+    .filter(Boolean)
+    .map(() => '..');
+  return `${BASE_URL_PLACEHOLDER}/${[...parentSegments, request.pathname.replace(/^\/+/, '')]
+    .filter(Boolean)
+    .join('/')}${request.search}${request.hash}`;
+}
+
+function buildDefaultCurl(
+  protocol: EndpointTestProtocol,
+  baseUrl: string,
+  authScheme: EndpointAuthScheme,
+  model = MODEL_PLACEHOLDER
+): string {
+  const concreteUrl = joinEndpointUrl(baseUrl, ENDPOINTS[protocol]);
+  return serializeCurl({
+    url: replaceUrlWithBasePlaceholder(concreteUrl, baseUrl),
+    method: 'POST',
+    headers: buildHeaders(protocol, API_KEY_PLACEHOLDER, authScheme),
+    body: JSON.stringify(buildRequestBody(protocol, model), null, 2),
+  });
+}
+
+function expandCurlBaseUrl(value: string, baseUrl: string): string {
+  return value.split(BASE_URL_PLACEHOLDER).join(normalizeBaseUrl(baseUrl));
+}
+
+function tokenizeCurl(value: string): string[] {
+  if (!value.trim()) throw new Error('请输入 cURL 代码');
+  if (value.length > MAX_CURL_LENGTH) throw new Error('cURL 代码过长');
+
+  const tokens: string[] = [];
+  let token = '';
+  let quote: 'single' | 'double' | null = null;
+  let tokenStarted = false;
+
+  const pushToken = () => {
+    if (tokenStarted) tokens.push(token);
+    token = '';
+    tokenStarted = false;
+  };
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote === 'single') {
+      if (character === "'") quote = null;
+      else token += character;
+      tokenStarted = true;
+      continue;
+    }
+    if (quote === 'double') {
+      if (character === '"') {
+        quote = null;
+      } else if (character === '\\') {
+        const next = value[index + 1];
+        if (next === '\n') index += 1;
+        else if (next === '\r' && value[index + 2] === '\n') index += 2;
+        else if (next !== undefined) {
+          token += next;
+          index += 1;
+        } else {
+          token += character;
+        }
+      } else {
+        token += character;
+      }
+      tokenStarted = true;
+      continue;
+    }
+    if (character === "'") {
+      quote = 'single';
+      tokenStarted = true;
+    } else if (character === '"') {
+      quote = 'double';
+      tokenStarted = true;
+    } else if (character === '\\') {
+      const next = value[index + 1];
+      if (next === '\n') index += 1;
+      else if (next === '\r' && value[index + 2] === '\n') index += 2;
+      else if (next !== undefined) {
+        token += next;
+        tokenStarted = true;
+        index += 1;
+      } else {
+        token += character;
+        tokenStarted = true;
+      }
+    } else if (/\s/.test(character)) {
+      pushToken();
+    } else {
+      token += character;
+      tokenStarted = true;
+    }
+  }
+  if (quote) throw new Error('cURL 引号未闭合');
+  pushToken();
+  return tokens;
+}
+
+function parseHeader(value: string): [string, string] {
+  const separator = value.indexOf(':');
+  if (separator <= 0) throw new Error(`cURL 请求头格式无效：${value}`);
+  const name = value.slice(0, separator).trim();
+  const headerValue = value.slice(separator + 1).trim();
+  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) {
+    throw new Error(`cURL 请求头名无效：${name}`);
+  }
+  return [name, headerValue];
+}
+
+function parseCurl(value: string): ParsedCurlRequest {
+  const tokens = tokenizeCurl(value);
+  if (tokens[0]?.toLowerCase() !== 'curl') throw new Error('cURL 代码必须以 curl 开头');
+
+  let url = '';
+  let method = '';
+  let body = '';
+  const headers: Record<string, string> = {};
+  const takeValue = (index: number, option: string): [string, number] => {
+    const next = tokens[index + 1];
+    if (next === undefined) throw new Error(`cURL 参数 ${option} 缺少值`);
+    return [next, index + 1];
+  };
+
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (
+      ['--location', '-L', '--silent', '-s', '--show-error', '-S', '--compressed'].includes(token)
+    ) {
+      continue;
+    }
+    if (token === '--request' || token === '-X') {
+      [method, index] = takeValue(index, token);
+      continue;
+    }
+    if (token.startsWith('--request=')) {
+      method = token.slice('--request='.length);
+      continue;
+    }
+    if (token === '--url') {
+      [url, index] = takeValue(index, token);
+      continue;
+    }
+    if (token.startsWith('--url=')) {
+      url = token.slice('--url='.length);
+      continue;
+    }
+    if (token === '--header' || token === '-H') {
+      let header: string;
+      [header, index] = takeValue(index, token);
+      const [name, headerValue] = parseHeader(header);
+      headers[name] = headerValue;
+      continue;
+    }
+    if (token.startsWith('--header=')) {
+      const [name, headerValue] = parseHeader(token.slice('--header='.length));
+      headers[name] = headerValue;
+      continue;
+    }
+    if (token.startsWith('-H') && token.length > 2) {
+      const [name, headerValue] = parseHeader(token.slice(2));
+      headers[name] = headerValue;
+      continue;
+    }
+    if (['--data', '--data-raw', '--data-binary', '--data-ascii', '-d'].includes(token)) {
+      [body, index] = takeValue(index, token);
+      continue;
+    }
+    const dataOption = ['--data=', '--data-raw=', '--data-binary=', '--data-ascii='].find(prefix =>
+      token.startsWith(prefix)
+    );
+    if (dataOption) {
+      body = token.slice(dataOption.length);
+      continue;
+    }
+    if (token.startsWith('-d') && token.length > 2) {
+      body = token.slice(2);
+      continue;
+    }
+    if (token.startsWith('-')) throw new Error(`不支持的 cURL 参数：${token}`);
+    if (url) throw new Error('cURL 只能包含一个请求 URL');
+    url = token;
+  }
+
+  if (!url) throw new Error('cURL 缺少请求 URL');
+  if (Object.keys(headers).length > MAX_CURL_HEADERS) throw new Error('cURL 请求头过多');
+  if (body.length > MAX_CURL_BODY_LENGTH) throw new Error('cURL 请求体过大');
+  const normalizedMethod = (method || (body ? 'POST' : 'GET')).trim().toUpperCase();
+  if (!/^[A-Z]+$/.test(normalizedMethod)) throw new Error('cURL 请求方法无效');
+  return { url, method: normalizedMethod, headers, body };
+}
+
+function setHeader(headers: Record<string, string>, name: string, value?: string): void {
+  for (const existing of Object.keys(headers)) {
+    if (existing.toLowerCase() === name.toLowerCase()) delete headers[existing];
+  }
+  if (value !== undefined) headers[name] = value;
+}
+
+function buildRequestFromCurl(
+  curl: string,
+  protocol: EndpointTestProtocol,
+  baseUrl: string,
+  apiKey: string,
+  authScheme: EndpointAuthScheme,
+  model: string
+): ParsedCurlRequest {
+  const request = parseCurl(expandCurlBaseUrl(curl, baseUrl));
+  let requestUrl: URL;
+  let configuredUrl: URL;
+  try {
+    requestUrl = new URL(request.url);
+    configuredUrl = new URL(baseUrl);
+  } catch {
+    throw new Error('cURL 请求 URL 无效');
+  }
+  if (
+    !['http:', 'https:'].includes(requestUrl.protocol) ||
+    requestUrl.origin !== configuredUrl.origin
+  ) {
+    throw new Error('cURL 请求 URL 必须使用当前上游地址');
+  }
+  const configuredPath = configuredUrl.pathname.replace(/\/+$/, '') || '/';
+  const requestPath = requestUrl.pathname.replace(/\/+$/, '') || '/';
+  if (
+    configuredPath !== '/' &&
+    requestPath !== configuredPath &&
+    !requestPath.startsWith(`${configuredPath}/`)
+  ) {
+    throw new Error('cURL 请求 URL 必须位于当前上游 Base URL 下');
+  }
+  if (!request.body) throw new Error('cURL 缺少 JSON 请求体');
+
+  let body: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(request.body);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    const replacePlaceholders = (value: unknown): unknown => {
+      if (typeof value === 'string') {
+        return value.split(API_KEY_PLACEHOLDER).join(apiKey).split(MODEL_PLACEHOLDER).join(model);
+      }
+      if (Array.isArray(value)) return value.map(replacePlaceholders);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+            key,
+            replacePlaceholders(item),
+          ])
+        );
+      }
+      return value;
+    };
+    body = replacePlaceholders(parsed) as Record<string, unknown>;
+  } catch {
+    throw new Error('cURL 请求体必须是 JSON 对象');
+  }
+  body.model = model;
+  if (protocol === 'anthropic-messages') body.max_tokens = 1024;
+  if (protocol === 'openai-responses') body.store = false;
+
+  const headers = Object.fromEntries(
+    Object.entries(request.headers).map(([name, value]) => [
+      name,
+      value.split(API_KEY_PLACEHOLDER).join(apiKey).split(MODEL_PLACEHOLDER).join(model),
+    ])
+  );
+  setHeader(headers, 'Authorization');
+  setHeader(headers, 'x-api-key');
+  if (authScheme === 'x-api-key') setHeader(headers, 'x-api-key', apiKey);
+  else setHeader(headers, 'Authorization', `Bearer ${apiKey}`);
+  setHeader(headers, 'Content-Type', 'application/json');
+  if (protocol === 'anthropic-messages') {
+    const hasAnthropicVersion = Object.keys(headers).some(
+      name => name.toLowerCase() === 'anthropic-version'
+    );
+    if (!hasAnthropicVersion) setHeader(headers, 'anthropic-version', '2023-06-01');
+  }
+  for (const forbidden of ['host', 'content-length', 'connection', 'proxy-authorization']) {
+    setHeader(headers, forbidden);
+  }
+
+  return { ...request, url: requestUrl.toString(), headers, body: JSON.stringify(body) };
+}
+
+function canonicalizeCurl(
+  curl: string,
+  protocol: EndpointTestProtocol,
+  baseUrl: string,
+  authScheme: EndpointAuthScheme
+): string {
+  const request = buildRequestFromCurl(
+    curl,
+    protocol,
+    baseUrl,
+    API_KEY_PLACEHOLDER,
+    authScheme,
+    MODEL_PLACEHOLDER
+  );
+  request.body = JSON.stringify(JSON.parse(request.body), null, 2);
+  request.url = replaceUrlWithBasePlaceholder(request.url, baseUrl);
+  return serializeCurl(request);
 }
 
 async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpointTestTarget> {
@@ -245,7 +655,7 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
       legacyGroupMultiplier: config.groupMultiplier,
     })
       .map(apiKey => ({ apiKey, value: normalizeText(apiKey.key) }))
-      .filter(item => item.value && !isRouteMaskedApiKeyValue(item.value));
+      .filter(item => item.value && !isMaskedApiKeyValue(item.value));
     if (apiKeys.length === 0) throw new Error('请先配置可用的 API Key');
 
     const displayName = normalizeText(config.name) || baseUrl;
@@ -261,20 +671,22 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
         ...apiKey.models,
         ...(apiKey.models.length > 0 ? [] : config.models || []),
       ]),
-      value,
+      ...(maskApiKeyForDisplay(value) ? { maskedApiKey: maskApiKeyForDisplay(value) } : {}),
+      credentialTarget: {
+        kind: 'direct' as const,
+        configId: config.id,
+        apiKeyId: apiKey.id,
+      },
     }));
     const configModels = uniqueStrings([...(config.models || []), ...(config.manualModels || [])]);
     return {
       target,
       targetKey: buildTargetKey(target),
-      siteId: buildCustomCliRouteSiteId(config.id),
-      accountId: buildCustomCliRouteAccountId(config.id),
+      baseUrl,
+      ...(config.routeAuthScheme ? { authScheme: config.routeAuthScheme } : {}),
       apiKeys: targetApiKeys,
       models: uniqueStrings([...targetApiKeys.flatMap(apiKey => apiKey.models), ...configModels]),
       timeoutMs: DEFAULT_TIMEOUT_MS,
-      upstreamBaseUrl: baseUrl,
-      // 多 Key 直连没有统一上游 key：由运行时按所选 key 的值锁定（见 runEndpointTest）
-      upstreamApiKey: apiKeys.length === 1 ? apiKeys[0].value : undefined,
     };
   }
 
@@ -291,19 +703,30 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
     account.cached_data?.models || site.cached_data?.models || [],
     modelPricing
   );
-  const apiKeys = (account.cached_data?.api_keys || []).filter(isApiKeyActive).map(info => ({
-    id: resolveApiKeyId(info),
-    label: normalizeText(info.name) || `API Key ${resolveApiKeyId(info)}`,
-    ...(normalizeText(info.group) ? { group: normalizeText(info.group) } : {}),
-    models: getModelsForApiKey(models, modelPricing, info),
-    info,
-  }));
+  const apiKeys = (account.cached_data?.api_keys || []).filter(isApiKeyActive).map(info => {
+    const storedValue = normalizeText(info.key || info.token);
+    return {
+      id: resolveApiKeyId(info),
+      label: normalizeText(info.name) || `API Key ${resolveApiKeyId(info)}`,
+      ...(maskApiKeyForDisplay(storedValue)
+        ? { maskedApiKey: maskApiKeyForDisplay(storedValue) }
+        : {}),
+      ...(normalizeText(info.group) ? { group: normalizeText(info.group) } : {}),
+      models: getModelsForApiKey(models, modelPricing, info),
+      credentialTarget: {
+        kind: 'managed' as const,
+        siteId: site.id,
+        accountId: account.id,
+        apiKeyId: resolveApiKeyId(info),
+      },
+    };
+  });
 
   return {
     target,
     targetKey: buildTargetKey(target),
-    siteId: site.id,
-    accountId: account.id,
+    baseUrl: site.url,
+    ...(account.routeAuthScheme ? { authScheme: account.routeAuthScheme } : {}),
     apiKeys,
     models,
     timeoutMs: isAnyRouterSite(site.name)
@@ -312,8 +735,9 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
   };
 }
 
-function getRoutingEndpointTests(): Record<string, EndpointTestTargetState> {
-  return unifiedConfigManager.getRoutingConfig().endpointTests;
+async function getEndpointTests(): Promise<Record<string, EndpointTestTargetState>> {
+  await endpointTestStateService.ensureLoaded();
+  return endpointTestStateService.getTargets();
 }
 
 async function persistSelection(
@@ -321,18 +745,30 @@ async function persistSelection(
   input: EndpointTestSelectionInput,
   latest?: EndpointTestResult
 ): Promise<EndpointTestSelectionState> {
-  const routing = unifiedConfigManager.getRoutingConfig();
-  const currentTarget = routing.endpointTests[target.targetKey];
+  const endpointTests = await getEndpointTests();
+  const currentTarget = endpointTests[target.targetKey];
+  const persistedCurl =
+    input.curl ??
+    (normalizeText(currentTarget?.protocols[input.protocol]?.curl)
+      ? currentTarget!.protocols[input.protocol]!.curl
+      : undefined) ??
+    buildDefaultCurl(
+      input.protocol,
+      target.baseUrl,
+      resolveEndpointAuthScheme(input.protocol, target.authScheme),
+      MODEL_PLACEHOLDER
+    );
   const nextSelection: EndpointTestSelectionState = {
     apiKeyId: input.apiKeyId,
     model: input.model,
+    curl: persistedCurl,
     ...(latest
       ? { latest }
       : currentTarget?.protocols[input.protocol]?.latest
         ? { latest: currentTarget.protocols[input.protocol]!.latest }
         : {}),
   };
-  routing.endpointTests[target.targetKey] = {
+  endpointTests[target.targetKey] = {
     targetKey: target.targetKey,
     protocols: {
       ...(currentTarget?.protocols || {}),
@@ -340,7 +776,7 @@ async function persistSelection(
     },
     updatedAt: Date.now(),
   };
-  await routeStateManager.saveEndpointTestsState(routing);
+  await endpointTestStateService.saveTargets(endpointTests);
   return nextSelection;
 }
 
@@ -359,20 +795,29 @@ export async function getEndpointTestState(
   targetInput: EndpointTestTarget
 ): Promise<EndpointTestStateView> {
   const target = await resolveTarget(targetInput);
-  const stored = getRoutingEndpointTests()[target.targetKey];
+  const stored = (await getEndpointTests())[target.targetKey];
   const protocols = Object.fromEntries(
     ENDPOINT_TEST_PROTOCOLS.map(protocol => [
       protocol,
-      createSelectionState(stored?.protocols[protocol], target.apiKeys, target.models),
+      createSelectionState(
+        stored?.protocols[protocol],
+        target.apiKeys,
+        target.models,
+        protocol,
+        target.baseUrl,
+        target.authScheme
+      ),
     ])
   ) as Record<EndpointTestProtocol, EndpointTestSelectionState>;
 
   return {
     target: target.target,
     targetKey: target.targetKey,
-    apiKeys: target.apiKeys.map(({ id, label, group, models }) => ({
+    baseUrl: target.baseUrl,
+    apiKeys: target.apiKeys.map(({ id, label, maskedApiKey, group, models }) => ({
       id,
       label,
+      ...(maskedApiKey ? { maskedApiKey } : {}),
       ...(group ? { group } : {}),
       models,
     })),
@@ -386,7 +831,16 @@ export async function saveEndpointTestSelection(
 ): Promise<EndpointTestSelectionState> {
   const target = await resolveTarget(input.target);
   assertSelection(target, input);
-  return persistSelection(target, { ...input, model: input.model.trim() });
+  const nextInput = { ...input, model: input.model.trim() };
+  if (input.curl !== undefined) {
+    nextInput.curl = canonicalizeCurl(
+      input.curl,
+      input.protocol,
+      target.baseUrl,
+      resolveEndpointAuthScheme(input.protocol, target.authScheme)
+    );
+  }
+  return persistSelection(target, nextInput);
 }
 
 export async function runEndpointTest(
@@ -402,40 +856,42 @@ export async function runEndpointTest(
   let result: EndpointTestResult;
 
   try {
-    if (input.target.kind === 'managed') {
-      const managedTarget = input.target;
-      const config = unifiedConfigManager.exportConfigSync();
-      const site = config?.sites.find(item => item.id === managedTarget.siteId);
-      const account = config?.accounts.find(item => item.id === managedTarget.accountId);
-      if (!site || !account || !selectedKey.info) throw new Error('测试目标已失效');
-      const resolvedKey = await resolveAccountApiKeyValue(site, account, selectedKey.info);
-      if (!resolvedKey || isRouteMaskedApiKeyValue(resolvedKey)) {
-        throw new Error('无法解析所选 API Key');
-      }
+    const credentials = await resolveUpstreamCredentials(selectedKey.credentialTarget);
+    const apiKey = normalizeText(credentials?.apiKey);
+    if (!credentials || !apiKey || isMaskedApiKeyValue(apiKey)) {
+      throw new Error('无法解析所选 API Key');
     }
-
-    const routeRuntime = await ensureRouteProxyReady({ autoEnable: true });
-    // direct 多 Key：目标锁按所选 key 的实际值透传上游；单 Key / managed 沿用目标级值
-    const upstreamApiKey =
-      input.target.kind === 'direct' ? selectedKey.value : target.upstreamApiKey;
-    const routeApiKey = buildTargetLockRouteApiKey(routeRuntime.unifiedApiKey, {
-      siteId: target.siteId,
-      accountId: target.accountId,
-      apiKeyId: input.apiKeyId,
-      canonicalModel: input.model.trim(),
-      rawModel: input.model.trim(),
-      targetProtocol: input.protocol,
-      upstreamBaseUrl: target.upstreamBaseUrl,
-      upstreamApiKey,
-    });
-    const response = await fetch(`${routeRuntime.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: buildHeaders(input.protocol, routeApiKey),
-      body: JSON.stringify(buildRequestBody(input.protocol, input.model.trim())),
-      signal: AbortSignal.timeout(target.timeoutMs),
+    const authScheme = resolveEndpointAuthScheme(input.protocol, credentials.authScheme);
+    const stored = (await getEndpointTests())[target.targetKey];
+    const savedCurl =
+      (normalizeText(stored?.protocols[input.protocol]?.curl)
+        ? stored!.protocols[input.protocol]!.curl
+        : undefined) || buildDefaultCurl(input.protocol, credentials.baseUrl, authScheme);
+    const executionCurl = canonicalizeCurl(
+      input.curl || savedCurl,
+      input.protocol,
+      credentials.baseUrl,
+      authScheme
+    );
+    const request = buildRequestFromCurl(
+      executionCurl,
+      input.protocol,
+      credentials.baseUrl,
+      apiKey,
+      authScheme,
+      input.model.trim()
+    );
+    const routing = unifiedConfigManager.getRoutingConfig();
+    const response = await httpRawRequest(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      timeout: target.timeoutMs,
+      proxyUrl: routing.server?.upstreamProxyUrl,
+      preferElectronNet: true,
     });
     statusCode = response.status;
-    const responseText = await response.text();
+    const responseText = response.body.toString('utf8');
     let payload: unknown;
     try {
       payload = JSON.parse(responseText);
@@ -443,13 +899,14 @@ export async function runEndpointTest(
       payload = null;
     }
     const generatedText = extractGeneratedText(input.protocol, payload);
-    const error = !response.ok
-      ? summarizeFailure(responseText, response.status, payload)
-      : !payload
-        ? '响应不是有效 JSON'
-        : !generatedText
-          ? '响应中没有生成文本'
-          : undefined;
+    const error =
+      response.status < 200 || response.status >= 300
+        ? summarizeFailure(responseText, response.status, payload)
+        : !payload
+          ? '响应不是有效 JSON'
+          : !generatedText
+            ? '响应中没有生成文本'
+            : undefined;
     result = {
       success: !error,
       endpoint,
@@ -476,6 +933,14 @@ export async function runEndpointTest(
     };
   }
 
-  await persistSelection(target, input, result);
+  await persistSelection(
+    target,
+    {
+      ...input,
+      model: input.model.trim(),
+      curl: undefined,
+    },
+    result
+  );
   return result;
 }

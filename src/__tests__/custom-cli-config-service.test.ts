@@ -21,6 +21,7 @@ import {
   loadCustomCliConfigStorage,
   saveCustomCliConfigStorage,
 } from '../main/custom-cli-config-service';
+import { CLI_UPSTREAM_PROTOCOLS } from '../shared/types/cli-config';
 
 function createLegacyConfig(targetProtocols: Record<string, string>) {
   return {
@@ -67,6 +68,34 @@ describe('custom CLI route target protocol migration', () => {
     expect(loaded.configs[0]).toMatchObject({
       routeTargetProtocol: 'openai-responses',
       routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
+    });
+  });
+
+  it('defaults old direct configs without route fields to all upstream protocols and native routing', async () => {
+    const config = createLegacyConfig({});
+    await fs.writeFile(
+      path.join(mocks.userData, 'custom-cli-configs.json'),
+      JSON.stringify({ configs: [config], activeConfigId: config.id }),
+      'utf-8'
+    );
+
+    const loaded = await loadCustomCliConfigStorage();
+
+    expect(loaded.configs[0]).toMatchObject({
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
+    });
+    expect(loaded.configs[0].routeAuthScheme).toBeUndefined();
+
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(mocks.userData, 'custom-cli-configs.json'), 'utf-8')
+    );
+    expect(persisted.configs[0]).toMatchObject({
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
     });
   });
 
@@ -103,5 +132,19 @@ describe('custom CLI route target protocol migration', () => {
       'custom-cli-site-direct-1',
       'custom-cli-site-direct-2',
     ]);
+  });
+
+  it('normalizes route defaults when configs are saved directly through the main service', async () => {
+    const config = createLegacyConfig({});
+
+    await saveCustomCliConfigStorage({ configs: [config], activeConfigId: config.id });
+
+    const loaded = await loadCustomCliConfigStorage();
+    expect(loaded.configs[0]).toMatchObject({
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
+    });
+    expect(loaded.configs[0].routeAuthScheme).toBeUndefined();
   });
 });

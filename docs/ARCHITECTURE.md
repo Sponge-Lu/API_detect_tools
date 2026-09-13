@@ -169,7 +169,7 @@ interface UnifiedConfig {
 
 ### 端点测试执行路径
 
-`endpoint-test:*` IPC 接收接入目标、协议、API Key 与模型。测试页保存接入点级上游协议，但 `EndpointTestService` 始终按被测协议构造原生请求，不调用协议转换层。托管目标同时返回站点全量模型与各 API Key 用户分组可用模型，直连目标返回已获取和手工模型并集。
+`endpoint-test:*` IPC 接收接入目标、协议、API Key 与模型。测试页保存接入点级上游协议，但 `EndpointTestService` 始终按被测协议构造原生请求，不调用本地 Route Proxy 或协议转换层；请求直接发送到选定站点/直连配置的 Base URL，并沿用配置的上游代理。托管目标同时返回站点全量模型与各 API Key 用户分组可用模型，直连目标返回已获取和手工模型并集。
 
 ### 浏览器管理模型
 
@@ -202,6 +202,9 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 
 - `route-proxy-service.ts`：三协议 pathname 分派、模型发现/根探测、代理启停、完整 Base URL 前缀拼接和请求执行
 - `route-channel-resolver.ts`：通道路由决策
+- `upstream-credential-resolver.ts`：中性解析托管/直连真实上游凭证；路由与端点测试共享解析结果，但不共享传输执行
+- `api-key-identity.ts`：生成稳定 API Key 标识，不属于路由选择或端点传输
+- `endpoint-test-state-service.ts`：独立维护端点测试 sidecar；路由状态管理器不再加载或保存端点测试结果
 - `route-session-service.ts`：基于 `agentId + runtimeSlotId + sessionId` 的 RouteInstance 生命周期、ARMED 原子绑定、槽位切换和配置覆盖
 - `route-rule-engine.ts`：规则匹配
 - `route-model-registry-service.ts`：模型注册表与覆盖项
@@ -209,7 +212,7 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 - `route-analytics-service.ts`：聚合分析统计
 - `route-health-service.ts`：健康检查
 - `route-stats-service.ts`：统计写入
-- `route-target-lock.ts`：手动端点测试的 loopback 目标锁定编解码与请求尝试预算
+- `route-target-lock.ts`：路由层内部 target-lock 请求的编解码与请求尝试预算；端点测试不依赖此模块
 
 ### 渲染层页面
 
@@ -246,6 +249,7 @@ Route 功能统一挂在 `route:*`：
 | 数据 | 位置 |
 |------|------|
 | 接入点上游协议 | `account.routeTargetProtocol` 或直连配置 `routeTargetProtocol` |
+| 上游鉴权方式 | `account.routeAuthScheme` 或直连配置 `routeAuthScheme`；未设置时按协议/提供商自动选择 |
 | 自定义配置卡片 | `${userData}/config-file-profiles.json` |
 | 直连接入点 | `${userData}/custom-cli-configs.json` |
 | 会话规则与覆盖 | `config.json` 的 `routing.sessionRouting`（活动记录仅在内存） |
@@ -293,8 +297,8 @@ Route 功能统一挂在 `route:*`：
 
 1. Route 请求经过规则解析与通道选择。
 2. 普通代理请求按规则、模型注册表、站点优先级、API Key 优先级和运行时路径健康状态选择上游。
-3. 手动端点测试使用 target lock 精确选择站点 / 账户 / API Key / 模型，不进入普通路由统计。
-4. 运行结果写入 route runtime、endpoint tests 和 analytics 各自的 sidecar。
+3. 手动端点测试直接使用选定站点 / 账户 / API Key / 模型请求上游，不经过本地 Route Proxy，也不进入普通路由统计。
+4. 运行结果分别写入 route runtime、endpoint tests 和 analytics 各自的 sidecar；端点测试只写 endpoint-tests sidecar。
 5. 渲染层通过 `routeStore`、数据总览页和日志页拉取摘要、分布、逐条请求尝试与最新状态。
 6. 路由数据趋势图由前端按当前 scope 过滤后的桶级数据聚合；`24h` 固定生成 24 个小时点，`7d` 固定生成 7 个日期点，缺失桶保持零值，首个真实桶之前的空点只保留 X 轴标签。
 
@@ -326,6 +330,6 @@ Route 功能统一挂在 `route:*`：
 
 - **数据模型更清晰**：站点、账号、稳定路由配置与高频运行态 sidecar 分层明确。
 - **工作台能力更完整**：站点管理之外，新增路由代理运维面。
-- **端点测试更明确**：协议中立、目标锁定、最新结果与时间持久化形成统一诊断链路。
+- **端点测试更明确**：协议中立、上游直连、最新结果与时间持久化形成统一诊断链路。
 - **UI 与主题体系收敛**：从旧命名和多套实验主题回到统一原语与双主题。
 - **恢复能力更强**：配置迁移、坏文件保护和备份恢复成为内建能力。

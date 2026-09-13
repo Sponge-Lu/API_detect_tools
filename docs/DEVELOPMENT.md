@@ -178,7 +178,7 @@ npm run test:coverage
 当前 Route / CLI 相关测试重点覆盖：
 
 - 三种端点的协议头/请求体、生成文本校验与无 CLI 特征请求
-- route proxy target lock 的 loopback 限制、单测试目标尝试预算和托管/直连特殊处理
+- 路由层 target lock 的 loopback 限制与单测试目标尝试预算；端点测试直连托管/直连目标并覆盖鉴权、路径和凭证解析
 - 成功、HTTP 失败、解析失败和超时的 `testedAt` 持久化与 UI 展示
 - 数据总览路由趋势图在 `24h` / `7d` 部分数据窗口下仍补齐完整 X 轴，并且前置空桶不绘制请求柱或趋势线
 - 日志页的会话事件筛选、路由日志逐条 push 追加、紧凑请求尝试列表、Token/cache token 与参考金额展示

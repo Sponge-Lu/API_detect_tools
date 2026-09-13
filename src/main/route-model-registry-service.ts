@@ -5,7 +5,6 @@
  * 定位: 服务层 - 扫描所有站点模型 → 厂商分类 → 映射表管理
  */
 
-import { createHash } from 'crypto';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
 import {
@@ -33,6 +32,9 @@ import {
 import { BUILTIN_GROUP_IDS, isApiKeyActive } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, ModelPricingData } from '../shared/types/site';
 import { normalizeCustomCliApiKeys, type CustomCliConfig } from '../shared/types/custom-cli-config';
+import { resolveApiKeyId } from './api-key-identity';
+
+export { resolveApiKeyId } from './api-key-identity';
 import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 import { normalizeCircledGroupLabel } from '../shared/utils/groupLabel';
 
@@ -142,28 +144,6 @@ function getApiKeyDisplayName(apiKey: {
   }
 
   return '未命名 Key';
-}
-
-export function resolveApiKeyId(apiKey: {
-  id?: number | string;
-  token_id?: number | string;
-  key?: string;
-  token?: string;
-}): string {
-  if (apiKey.id !== undefined && apiKey.id !== null) {
-    return String(apiKey.id);
-  }
-
-  if (apiKey.token_id !== undefined && apiKey.token_id !== null) {
-    return String(apiKey.token_id);
-  }
-
-  const raw = apiKey.key || apiKey.token || '';
-  if (raw) {
-    return createHash('sha256').update(raw).digest('hex').slice(0, 16);
-  }
-
-  return 'unknown';
 }
 
 function parseApiKeyModelSet(value: string | undefined): Set<string> | null {

@@ -41,15 +41,18 @@ import {
   type CustomCliSettings,
 } from '../../../shared/types/custom-cli-config';
 import { normalizeCircledGroupLabel } from '../../../shared/utils/groupLabel';
-import type { ModelPriceInfo, ModelPricingData } from '../../../shared/types/site';
+import type { ModelPriceInfo, ModelPricingData, RouteAuthScheme } from '../../../shared/types/site';
 import {
   BUILTIN_CLI_LABELS,
   BUILTIN_CLI_TYPES,
+  CLI_UPSTREAM_PROTOCOLS,
   CLI_TARGET_PROTOCOLS,
   getCliTargetEndpoint,
   normalizeCliTargetProtocol,
+  normalizeCliUpstreamProtocolsWithDefault,
   type BuiltinCliType,
   type CliTargetProtocol,
+  type CliUpstreamProtocol,
 } from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
@@ -64,6 +67,8 @@ import { getGroupTextColor } from '../../utils/groupStyle';
 import {
   AccessPointResourceSectionHeader,
   AccessPointResourceShell,
+  accessPointFormFieldLabelClass,
+  accessPointFormInputClass,
   accessPointResourceActionClass,
   accessPointResourceIconActionClass,
   accessPointResourceListClass,
@@ -124,6 +129,12 @@ const CLI_TYPES: CliTypeConfig[] = [
 
 const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
   native: '原生协议',
+  'anthropic-messages': 'Anthropic Messages',
+  'openai-chat-completions': 'OpenAI Chat Completions',
+  'openai-responses': 'OpenAI Responses',
+};
+
+const CLI_UPSTREAM_PROTOCOL_LABELS: Record<CliUpstreamProtocol, string> = {
   'anthropic-messages': 'Anthropic Messages',
   'openai-chat-completions': 'OpenAI Chat Completions',
   'openai-responses': 'OpenAI Responses',
@@ -497,6 +508,9 @@ function isDirectCliConfigDirty(params: {
   baseUrl: string;
   modelUrl: string;
   apiKey: string;
+  routeTargetProtocol: CliTargetProtocol;
+  routeAuthScheme?: RouteAuthScheme;
+  supportedProtocols?: CliUpstreamProtocol[];
   apiKeys: CustomCliApiKey[];
   gasStationUrl: string;
   groupMultiplierInput: string;
@@ -514,6 +528,9 @@ function isDirectCliConfigDirty(params: {
     baseUrl,
     modelUrl,
     apiKey,
+    routeTargetProtocol,
+    routeAuthScheme,
+    supportedProtocols,
     apiKeys,
     gasStationUrl,
     groupMultiplierInput,
@@ -528,6 +545,15 @@ function isDirectCliConfigDirty(params: {
 
   if ((name.trim() || config.name) !== config.name) return true;
   if (baseUrl !== config.baseUrl) return true;
+  if (routeTargetProtocol !== normalizeCliTargetProtocol(config.routeTargetProtocol)) return true;
+  if (config.routeTargetProtocolNeedsConfirmation) return true;
+  if ((routeAuthScheme || undefined) !== (config.routeAuthScheme || undefined)) return true;
+  if (
+    JSON.stringify(normalizeCliUpstreamProtocolsWithDefault(supportedProtocols)) !==
+    JSON.stringify(normalizeCliUpstreamProtocolsWithDefault(config.supportedProtocols))
+  ) {
+    return true;
+  }
   if ((modelUrl.trim() || '') !== (config.modelUrl || '')) return true;
   if (apiKey !== config.apiKey) return true;
   if (
@@ -824,6 +850,15 @@ export function DirectCliConfigEditorContent({
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [modelUrl, setModelUrl] = useState(config.modelUrl || '');
   const [apiKey, setApiKey] = useState(config.apiKey);
+  const [routeTargetProtocol, setRouteTargetProtocol] = useState<CliTargetProtocol>(() =>
+    normalizeCliTargetProtocol(config.routeTargetProtocol)
+  );
+  const [routeAuthScheme, setRouteAuthScheme] = useState<RouteAuthScheme | undefined>(
+    config.routeAuthScheme
+  );
+  const [supportedProtocols, setSupportedProtocols] = useState<CliUpstreamProtocol[]>(() =>
+    normalizeCliUpstreamProtocolsWithDefault(config.supportedProtocols)
+  );
   const [apiKeys, setApiKeys] = useState<CustomCliApiKey[]>(() =>
     normalizeCustomCliApiKeys(config.apiKeys, {
       legacyApiKey: config.apiKey,
@@ -905,6 +940,9 @@ export function DirectCliConfigEditorContent({
     setBaseUrl(config.baseUrl);
     setModelUrl(config.modelUrl || '');
     setApiKey(config.apiKey);
+    setRouteTargetProtocol(normalizeCliTargetProtocol(config.routeTargetProtocol));
+    setRouteAuthScheme(config.routeAuthScheme);
+    setSupportedProtocols(normalizeCliUpstreamProtocolsWithDefault(config.supportedProtocols));
     setApiKeys(
       normalizeCustomCliApiKeys(config.apiKeys, {
         legacyApiKey: config.apiKey,
@@ -1041,6 +1079,10 @@ export function DirectCliConfigEditorContent({
       modelUrl: modelUrl.trim() || undefined,
       apiKey: apiKeys[0]?.key || '',
       apiKeys,
+      routeTargetProtocol,
+      routeTargetProtocolNeedsConfirmation: false,
+      routeAuthScheme,
+      supportedProtocols,
     });
     await saveConfigs();
     await fetchModels(config.id);
@@ -1052,6 +1094,7 @@ export function DirectCliConfigEditorContent({
       setManualModels(latestConfig.manualModels || []);
       setApiKeys(normalizeCustomCliApiKeys(latestConfig.apiKeys));
       setApiKey(latestConfig.apiKey);
+      setRouteTargetProtocol(normalizeCliTargetProtocol(latestConfig.routeTargetProtocol));
       setModelPricing(normalizeModelPricingState(latestConfig.modelPricing));
       setCliSettings(nextCliSettings);
       setPerCliEdited(buildPerCliEditedFromSettings(nextCliSettings));
@@ -1247,6 +1290,10 @@ export function DirectCliConfigEditorContent({
       modelUrl: modelUrl.trim() || undefined,
       apiKey: apiKeys[0]?.key || '',
       apiKeys,
+      routeTargetProtocol,
+      routeTargetProtocolNeedsConfirmation: false,
+      routeAuthScheme,
+      supportedProtocols,
       gasStationUrl: gasStationUrl.trim() || undefined,
       groupMultiplier: parseGroupMultiplierInput(groupMultiplierInput),
       notes,
@@ -1285,6 +1332,9 @@ export function DirectCliConfigEditorContent({
     baseUrl,
     modelUrl,
     apiKey,
+    routeTargetProtocol,
+    routeAuthScheme,
+    supportedProtocols,
     apiKeys,
     gasStationUrl,
     groupMultiplierInput,
@@ -1303,7 +1353,7 @@ export function DirectCliConfigEditorContent({
   }, [isDirty, onDirtyChange]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {shouldShowHeader ? (
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -1350,33 +1400,31 @@ export function DirectCliConfigEditorContent({
         </div>
       ) : null}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {/* 基本信息 */}
         {showIdentitySection ? (
           <form
             id={identityFormId}
-            className="space-y-4"
+            className="space-y-3"
             onSubmit={event => {
               event.preventDefault();
               void handleSave();
             }}
           >
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  配置名称
-                </label>
+                <label className={accessPointFormFieldLabelClass}>配置名称</label>
                 <input
                   type="text"
                   value={name}
                   onChange={e => setName(e.target.value)}
                   placeholder="例如: 我的 API"
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  className={accessPointFormInputClass}
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  <Globe className="mr-1 inline h-4 w-4" />
+                <label className={accessPointFormFieldLabelClass}>
+                  <Globe className="mr-1 inline h-3.5 w-3.5" />
                   Base URL
                 </label>
                 <input
@@ -1384,58 +1432,144 @@ export function DirectCliConfigEditorContent({
                   value={baseUrl}
                   onChange={e => setBaseUrl(e.target.value)}
                   placeholder="https://api.example.com"
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  className={accessPointFormInputClass}
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  加油站链接
-                </label>
+                <label className={accessPointFormFieldLabelClass}>路由上游协议</label>
+                <select
+                  aria-label="路由上游协议"
+                  value={routeTargetProtocol}
+                  onChange={event =>
+                    setRouteTargetProtocol(normalizeCliTargetProtocol(event.target.value))
+                  }
+                  className={accessPointFormInputClass}
+                >
+                  {CLI_TARGET_PROTOCOLS.map(protocol => (
+                    <option
+                      key={protocol}
+                      value={protocol}
+                      disabled={
+                        protocol !== 'native' &&
+                        supportedProtocols !== undefined &&
+                        !supportedProtocols.includes(protocol)
+                      }
+                    >
+                      {protocol === 'native' ? '自动 / 原生' : CLI_TARGET_PROTOCOL_LABELS[protocol]}
+                    </option>
+                  ))}
+                </select>
+                {config.routeTargetProtocolNeedsConfirmation ? (
+                  <p className="mt-1.5 text-xs text-[var(--warning)]">
+                    旧配置存在协议冲突，请确认当前选择后保存。
+                  </p>
+                ) : null}
+                {routeTargetProtocol !== 'native' &&
+                supportedProtocols !== undefined &&
+                !supportedProtocols.includes(routeTargetProtocol) ? (
+                  <p className="mt-1.5 text-xs text-[var(--warning)]">
+                    当前转换目标不在上游支持协议中；保存新的支持协议或切回自动后路由才会使用该上游。
+                  </p>
+                ) : null}
+              </div>
+              <div>
+                <label className={accessPointFormFieldLabelClass}>上游鉴权方式</label>
+                <select
+                  aria-label="上游鉴权方式"
+                  value={routeAuthScheme ?? ''}
+                  onChange={event =>
+                    setRouteAuthScheme(
+                      event.target.value ? (event.target.value as RouteAuthScheme) : undefined
+                    )
+                  }
+                  className={accessPointFormInputClass}
+                >
+                  <option value="">自动（按协议）</option>
+                  <option value="bearer">Bearer</option>
+                  <option value="x-api-key">x-api-key</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className={accessPointFormFieldLabelClass}>上游支持协议</label>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {CLI_UPSTREAM_PROTOCOLS.map(protocol => {
+                    const checked = supportedProtocols?.includes(protocol) ?? false;
+                    return (
+                      <label
+                        key={protocol}
+                        className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={event => {
+                            const current = new Set(supportedProtocols ?? []);
+                            if (event.target.checked) current.add(protocol);
+                            else current.delete(protocol);
+                            const nextProtocols = CLI_UPSTREAM_PROTOCOLS.filter(item =>
+                              current.has(item)
+                            );
+                            if (nextProtocols.length === 0) return;
+                            setSupportedProtocols(nextProtocols);
+                            if (
+                              routeTargetProtocol !== 'native' &&
+                              !nextProtocols.includes(routeTargetProtocol)
+                            ) {
+                              setRouteTargetProtocol('native');
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-[var(--line-soft)]"
+                        />
+                        {CLI_UPSTREAM_PROTOCOL_LABELS[protocol]}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-xs text-[var(--text-tertiary)]">
+                  至少选择一种协议；旧配置默认启用全部三种协议。
+                </p>
+              </div>
+              <div>
+                <label className={accessPointFormFieldLabelClass}>加油站链接</label>
                 <input
                   aria-label="加油站链接"
                   type="url"
                   value={gasStationUrl}
                   onChange={e => setGasStationUrl(e.target.value)}
                   placeholder="https://example.com/topup"
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  className={accessPointFormInputClass}
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  模型 URL
-                </label>
+                <label className={accessPointFormFieldLabelClass}>模型 URL</label>
                 <input
                   aria-label="模型 URL"
                   type="url"
                   value={modelUrl}
                   onChange={e => setModelUrl(e.target.value)}
                   placeholder="留空则使用 Base URL"
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  className={accessPointFormInputClass}
                 />
               </div>
             </div>
 
             {showModelSummary ? (
               <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  模型概况
-                </label>
-                <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)]">
+                <label className={accessPointFormFieldLabelClass}>模型概况</label>
+                <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)]">
                   已拉取 {models.length} 个模型，手动模型 {manualModels.length} 个
                 </div>
               </div>
             ) : null}
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                备注信息
-              </label>
+              <label className={accessPointFormFieldLabelClass}>备注信息</label>
               <textarea
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
                 placeholder="在此添加备注信息（可选）..."
                 rows={3}
-                className="w-full resize-none rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                className={`${accessPointFormInputClass} h-auto resize-none py-1.5`}
               />
             </div>
           </form>

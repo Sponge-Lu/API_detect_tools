@@ -2,6 +2,8 @@ import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { routeDiagnosticLog } = vi.hoisted(() => ({ routeDiagnosticLog: vi.fn() }));
+
 vi.mock('../main/utils/logger', () => ({
   default: {
     // 顶层方法也要 mock：侧车服务直接用 Logger.error，缺了会让 catch 处理器自身抛出
@@ -9,8 +11,8 @@ vi.mock('../main/utils/logger', () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-    scope: () => ({
-      debug: vi.fn(),
+    scope: (name: string) => ({
+      debug: name === 'RouteProxyService' ? routeDiagnosticLog : vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
@@ -155,6 +157,9 @@ import { recordRouteRequest } from '../main/route-analytics-service';
 import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
+  DEFAULT_ROUTING_CONFIG,
+  DEFAULT_ROUTE_RUNTIME_CONFIG,
+  DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
   type RoutePathState,
 } from '../shared/types/route-proxy';
@@ -236,6 +241,7 @@ function createMockResponse(): Parameters<typeof handleRequest>[1] & {
   end: ReturnType<typeof vi.fn>;
   emit: EventEmitter['emit'];
   headers: Record<string, unknown>;
+  listenerCount: EventEmitter['listenerCount'];
   off: EventEmitter['off'];
   once: EventEmitter['once'];
   statusCode: number;
@@ -249,6 +255,7 @@ function createMockResponse(): Parameters<typeof handleRequest>[1] & {
     emit: events.emit.bind(events),
     headers: {} as Record<string, unknown>,
     headersSent: false,
+    listenerCount: events.listenerCount.bind(events),
     off: events.off.bind(events),
     once: events.once.bind(events),
     statusCode: 0,
@@ -282,12 +289,41 @@ function createMockResponse(): Parameters<typeof handleRequest>[1] & {
     end: ReturnType<typeof vi.fn>;
     emit: EventEmitter['emit'];
     headers: Record<string, unknown>;
+    listenerCount: EventEmitter['listenerCount'];
     off: EventEmitter['off'];
     once: EventEmitter['once'];
     statusCode: number;
     write: ReturnType<typeof vi.fn>;
     writeHead: ReturnType<typeof vi.fn>;
   };
+}
+
+function getRouteDiagnostics(message: string): Record<string, unknown>[] {
+  return routeDiagnosticLog.mock.calls
+    .filter(([label]) => label === message)
+    .map(([, details]) => details as Record<string, unknown>);
+}
+
+function expectSingleRequestDiagnostics(expected: {
+  statusCode: number | null;
+  attemptCount: number;
+  termination: 'completed' | 'client_cancelled';
+  path?: string;
+}): void {
+  const incoming = getRouteDiagnostics('Route request received');
+  const completed = getRouteDiagnostics('Route request completed');
+  expect(incoming).toHaveLength(1);
+  expect(completed).toEqual([
+    expect.objectContaining({
+      ...expected,
+      requestId: incoming[0].requestId,
+      durationMs: expect.any(Number),
+    }),
+  ]);
+  expect(completed[0].durationMs).toBeGreaterThanOrEqual(0);
+  for (const [entry] of vi.mocked(recordRouteRequest).mock.calls) {
+    expect(entry.requestId).toBe(incoming[0].requestId);
+  }
 }
 
 describe('route-proxy-service endpoint classification', () => {
@@ -399,6 +435,17 @@ describe('route-proxy-service endpoint classification', () => {
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'failure', statusCode: 404, error: 'unsupported_route' })
     );
+    expectSingleRequestDiagnostics({
+      statusCode: 404,
+      attemptCount: 0,
+      termination: 'completed',
+      path: 'other',
+    });
+    response.emit('close');
+    expect(getRouteDiagnostics('Route request completed')).toHaveLength(1);
+    expect(response.listenerCount('finish')).toBe(0);
+    expect(response.listenerCount('close')).toBe(0);
+    expect(request.listenerCount('aborted')).toBe(0);
   });
 
   it('uses only known managed CLI marker values', () => {
@@ -416,7 +463,7 @@ describe('route-proxy-service endpoint classification', () => {
     vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
     vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValueOnce(null);
     const request = createJsonRequest(
-      '/v1/responses/resp_1',
+      '/v1/responses/private-resource-sentinel?api_key=private-query-sentinel',
       {
         authorization: 'Bearer sk-route',
         'x-api-detect-cli': 'openCode',
@@ -435,6 +482,16 @@ describe('route-proxy-service endpoint classification', () => {
     );
     expect(resolveChannels).not.toHaveBeenCalled();
     expect(httpRawRequest).not.toHaveBeenCalled();
+    expectSingleRequestDiagnostics({
+      statusCode: 401,
+      attemptCount: 0,
+      termination: 'completed',
+      path: '/v1/responses/:resource',
+    });
+    const diagnostics = JSON.stringify(routeDiagnosticLog.mock.calls);
+    expect(diagnostics).not.toContain('private-resource-sentinel');
+    expect(diagnostics).not.toContain('private-query-sentinel');
+    expect(diagnostics).not.toContain('sk-route');
   });
 
   it('rejects the legacy global key before previous_response_id channel selection', async () => {
@@ -2821,6 +2878,7 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
         error: 'token_count_unsupported:cached_unsupported',
       })
     );
+    expectSingleRequestDiagnostics({ statusCode: 501, attemptCount: 0, termination: 'completed' });
   });
 
   it('marks non-Anthropic custom CLI targets as local-only for Claude count_tokens', async () => {
@@ -3031,7 +3089,7 @@ describe('route-proxy-service client cancellation', () => {
     vi.mocked(isRoutePathDisabled).mockReturnValue(false);
   }
 
-  function expectClientCancellationLog(): void {
+  function expectClientCancellationLog(statusCode: number | null = null): void {
     expect(recordRouteRequest).toHaveBeenCalledTimes(1);
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3046,6 +3104,11 @@ describe('route-proxy-service client cancellation', () => {
         error: 'route_client_cancelled',
       })
     );
+    expectSingleRequestDiagnostics({
+      statusCode,
+      attemptCount: 1,
+      termination: 'client_cancelled',
+    });
   }
 
   it('aborts the active upstream request and does not try fallback channels after client close', async () => {
@@ -3093,6 +3156,12 @@ describe('route-proxy-service client cancellation', () => {
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
     expectClientCancellationLog();
     expect(response.end).not.toHaveBeenCalled();
+    response.emit('close');
+    response.emit('finish');
+    expect(getRouteDiagnostics('Route request completed')).toHaveLength(1);
+    expect(response.listenerCount('finish')).toBe(0);
+    expect(response.listenerCount('close')).toBe(0);
+    expect(request.listenerCount('aborted')).toBe(0);
   });
 
   it('ignores an upstream result that resolves after client cancellation', async () => {
@@ -3131,6 +3200,40 @@ describe('route-proxy-service client cancellation', () => {
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
     expectClientCancellationLog();
     expect(response.end).not.toHaveBeenCalled();
+  });
+
+  it('counts no upstream attempts when cancelled during credential resolution', async () => {
+    setupCodexCancellationRoute();
+    let finishCredentials: (value: null) => void = () => {};
+    vi.mocked(resolveChannelCredentials).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishCredentials = resolve;
+        })
+    );
+    const request = createControllableJsonRequest(
+      '/v1/responses',
+      { authorization: 'Bearer sk-route', 'content-type': 'application/json' },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+    const pending = handleRequest(request, response);
+    await vi.waitFor(() => expect(resolveChannelCredentials).toHaveBeenCalledTimes(1));
+
+    response.emit('close');
+    finishCredentials(null);
+    await pending;
+
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, statusCode: 499, error: 'route_client_cancelled' })
+    );
+    expectSingleRequestDiagnostics({
+      statusCode: null,
+      attemptCount: 0,
+      termination: 'client_cancelled',
+    });
   });
 
   it('keeps path success for a completed late upstream result without duplicating the log', async () => {
@@ -3236,7 +3339,7 @@ describe('route-proxy-service client cancellation', () => {
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
     expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
-    expectClientCancellationLog();
+    expectClientCancellationLog(200);
   });
 
   it('records success when the client closes after receiving a successful stream terminal', async () => {
@@ -3302,6 +3405,7 @@ describe('route-proxy-service client cancellation', () => {
     expect(recordRouteRequest).not.toHaveBeenCalledWith(
       expect.objectContaining({ error: 'route_client_cancelled' })
     );
+    expectSingleRequestDiagnostics({ statusCode: 200, attemptCount: 1, termination: 'completed' });
   });
 
   it('still ignores late non-success upstream results after client cancel', async () => {
@@ -3379,6 +3483,11 @@ describe('route-proxy-service client cancellation', () => {
       })
     );
     expect(response.end).not.toHaveBeenCalled();
+    expectSingleRequestDiagnostics({
+      statusCode: null,
+      attemptCount: 0,
+      termination: 'client_cancelled',
+    });
   });
 });
 
@@ -3522,7 +3631,7 @@ describe('route-proxy-service custom CLI forwarding', () => {
     );
   });
 
-  it('forwards SenseNova Claude-compatible upstream auth as bearer token', async () => {
+  it('forwards SenseNova Claude-compatible upstream auth as x-api-key', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -3638,8 +3747,8 @@ describe('route-proxy-service custom CLI forwarding', () => {
       })
     );
     const headers = vi.mocked(httpRawRequest).mock.calls[0]?.[1]?.headers;
-    expect(headers?.authorization).toBe('Bearer sk-sensenova-upstream');
-    expect(headers?.['x-api-key']).toBeUndefined();
+    expect(headers?.['x-api-key']).toBe('sk-sensenova-upstream');
+    expect(headers?.authorization).toBeUndefined();
     expect(response.statusCode).toBe(200);
   });
 });
@@ -4016,6 +4125,410 @@ describe('route-proxy-service CLI model fallback', () => {
       reasoning: { effort: 'low' },
     });
     expect(requestIdOnlyResponse.statusCode).toBe(200);
+  });
+});
+
+describe('route-proxy-service Codex utility request diagnostics', () => {
+  function setupCodexUtilityRoute() {
+    vi.clearAllMocks();
+    const sessionRouting = structuredClone(DEFAULT_ROUTE_SESSION_ROUTING_CONFIG);
+    const routing = { ...structuredClone(DEFAULT_ROUTING_CONFIG), sessionRouting };
+    const rule = {
+      id: 'rule-codex-utility',
+      cliType: 'codex' as const,
+      pattern: '*',
+      patternType: 'wildcard' as const,
+    };
+    routing.rules = [rule];
+    routing.server.unifiedApiKey = 'private-route-key-sentinel';
+    for (const model of ['root-model', 'helper-model', 'armed-model']) {
+      routing.modelRegistry.entries[model] = {
+        canonicalName: model,
+        aliases: [model],
+        sources: [],
+        vendor: 'gpt',
+        hasOverride: false,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      routing.modelRegistry.displayItems.push({
+        id: `display-${model}`,
+        canonicalName: model,
+        mode: 'manual',
+        sourceKeys: [],
+        originalModelOrder: [],
+        runtimeConfig: { ...DEFAULT_ROUTE_RUNTIME_CONFIG, maxAttemptsPerRoutePath: 1 },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    }
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      saveConfig: vi.fn(async () => undefined),
+      getSiteById: vi.fn((id: string) => ({ id, name: id })),
+      getAccountById: vi.fn((id: string) => ({ id, account_name: id })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockImplementation(body =>
+      body && typeof body === 'object' && 'model' in body && typeof body.model === 'string'
+        ? body.model
+        : null
+    );
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule);
+    vi.mocked(resolveChannels).mockImplementation((_rule, canonicalModel) =>
+      ['primary', 'fallback'].map(name => ({
+        routeRuleId: rule.id,
+        siteId: `site-${name}`,
+        accountId: `account-${name}`,
+        apiKeyId: `key-${name}`,
+        cliType: 'codex' as const,
+        targetProtocol: 'openai-responses' as const,
+        canonicalModel: canonicalModel!,
+        resolvedModel: canonicalModel!,
+      }))
+    );
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://codex.example.com',
+      apiKey: 'private-upstream-key-sentinel',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: 1,
+    }));
+    vi.mocked(httpRawRequest)
+      .mockReset()
+      .mockResolvedValue({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          '{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}'
+        ),
+      });
+    return routing;
+  }
+
+  function codexRequest(
+    threadId: string,
+    {
+      threadSource = 'system',
+      requestKind = 'turn',
+      model = 'helper-model',
+      effort = 'low',
+      headerProjection = false,
+      subagentKind,
+      rootSessionId,
+    }: {
+      threadSource?: string;
+      requestKind?: string;
+      model?: string;
+      effort?: string;
+      headerProjection?: boolean;
+      subagentKind?: string;
+      rootSessionId?: string;
+    } = {}
+  ) {
+    const sessionId = rootSessionId ?? threadId;
+    const metadata = JSON.stringify({
+      session_id: sessionId,
+      thread_id: threadId,
+      request_kind: requestKind,
+      thread_source: threadSource,
+      ...(subagentKind ? { subagent_kind: subagentKind } : {}),
+    });
+    return createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer private-route-key-sentinel',
+        'content-type': 'application/json',
+        'session-id': sessionId,
+        'thread-id': threadId,
+        'x-codex-window-id': `${threadId}:0`,
+        ...(headerProjection ? { 'x-codex-turn-metadata': metadata } : {}),
+      },
+      {
+        model,
+        input: 'private-prompt-sentinel',
+        reasoning: { effort },
+        client_metadata: {
+          'x-codex-window-id': `${threadId}:0`,
+          'x-codex-turn-metadata': metadata,
+        },
+      }
+    );
+  }
+
+  it('forwards repeated system helpers without changing the root card or their requested model and effort', async () => {
+    const routing = setupCodexUtilityRoute();
+    await handleRequest(
+      codexRequest('private-root-session', {
+        threadSource: 'user',
+        model: 'root-model',
+        effort: 'high',
+      }),
+      createMockResponse()
+    );
+    const rootState = structuredClone(routing.sessionRouting);
+    expect(Object.values(rootState.instances!)).toHaveLength(1);
+    const saveCount = vi.mocked(unifiedConfigManager.saveConfig).mock.calls.length;
+
+    for (let index = 0; index < 3; index++) {
+      const response = createMockResponse();
+      await handleRequest(
+        codexRequest(`private-helper-session-${index}`, { headerProjection: index === 1 }),
+        response
+      );
+      expect(response.statusCode).toBe(200);
+      expect(response.listenerCount('finish')).toBe(0);
+      expect(response.listenerCount('close')).toBe(0);
+    }
+
+    expect(routing.sessionRouting).toEqual(rootState);
+    expect(unifiedConfigManager.saveConfig).toHaveBeenCalledTimes(saveCount);
+    expect(httpRawRequest).toHaveBeenCalledTimes(4);
+    const forwarded = vi
+      .mocked(httpRawRequest)
+      .mock.calls.map(([, config]) =>
+        JSON.parse(Buffer.from(config.body as Buffer).toString('utf-8'))
+      );
+    expect(forwarded).toEqual([
+      expect.objectContaining({ model: 'root-model', reasoning: { effort: 'high' } }),
+      ...Array.from({ length: 3 }, () =>
+        expect.objectContaining({ model: 'helper-model', reasoning: { effort: 'low' } })
+      ),
+    ]);
+    const bindings = getRouteDiagnostics('RouteInstance identity binding');
+    const incoming = getRouteDiagnostics('Route request received');
+    const completed = getRouteDiagnostics('Route request completed');
+    expect(bindings).toHaveLength(4);
+    expect(incoming).toHaveLength(4);
+    expect(completed).toHaveLength(4);
+    expect(new Set(incoming.map(entry => entry.requestId)).size).toBe(4);
+    bindings.forEach((binding, index) => {
+      expect(binding).toMatchObject({
+        requestId: incoming[index].requestId,
+        requestKind: 'turn',
+        threadSource: index === 0 ? 'user' : 'system',
+        resolutionPath: index === 0 ? 'created' : 'utility',
+        isCodexUtility: index !== 0,
+        sessionIdHash: expect.stringMatching(/^[a-f0-9]{8}$/),
+      });
+      expect(binding).not.toHaveProperty('attempt');
+      expect(binding).not.toHaveProperty('fallback');
+      expect(completed[index]).toMatchObject({
+        requestId: incoming[index].requestId,
+        statusCode: 200,
+        attemptCount: 1,
+        termination: 'completed',
+      });
+      if (index > 0) {
+        expect(binding).toMatchObject({ bindingState: 'utility', memberAppended: false });
+        expect(binding.createdReason).toBeUndefined();
+        expect(binding.instanceIdHash).toBeUndefined();
+        expect(vi.mocked(recordRouteRequest).mock.calls[index][0].routeInstanceId).toBeUndefined();
+      }
+    });
+    const diagnostics = JSON.stringify(routeDiagnosticLog.mock.calls);
+    for (const value of [
+      'private-root-session',
+      'private-helper-session',
+      'private-prompt-sentinel',
+      'private-route-key-sentinel',
+      'private-upstream-key-sentinel',
+    ]) {
+      expect(diagnostics).not.toContain(value);
+    }
+  });
+
+  it('logs a bound root-alias reuse diagnostic when a user thread changes inside one conversation', async () => {
+    const routing = setupCodexUtilityRoute();
+    await handleRequest(
+      codexRequest('private-root-session', { threadSource: 'user', model: 'root-model' }),
+      createMockResponse()
+    );
+    const rootCard = Object.values(routing.sessionRouting.instances!)[0];
+    const saveCount = vi.mocked(unifiedConfigManager.saveConfig).mock.calls.length;
+
+    await handleRequest(
+      codexRequest('private-next-thread', {
+        threadSource: 'user',
+        model: 'root-model',
+        rootSessionId: 'private-root-session',
+      }),
+      createMockResponse()
+    );
+
+    expect(Object.values(routing.sessionRouting.instances!)).toHaveLength(1);
+    expect(rootCard).toMatchObject({
+      routingState: 'active',
+      memberSessionIds: ['private-next-thread'],
+    });
+    expect(vi.mocked(unifiedConfigManager.saveConfig).mock.calls.length).toBe(saveCount + 1);
+    const incoming = getRouteDiagnostics('Route request received');
+    const bindings = getRouteDiagnostics('RouteInstance identity binding');
+    const completed = getRouteDiagnostics('Route request completed');
+    expect(incoming).toHaveLength(2);
+    expect(bindings).toHaveLength(2);
+    expect(completed).toHaveLength(2);
+    expect(bindings[1]).toMatchObject({
+      requestId: incoming[1].requestId,
+      identitySource: 'codex',
+      resolutionPath: 'root-alias',
+      bindingState: 'bound',
+      memberAppended: true,
+      instanceIdHash: expect.stringMatching(/^[a-f0-9]{8}$/),
+    });
+    expect(bindings[1].createdReason).toBeUndefined();
+    expect(completed[1]).toMatchObject({
+      requestId: incoming[1].requestId,
+      statusCode: 200,
+      attemptCount: 1,
+      termination: 'completed',
+    });
+    const diagnostics = JSON.stringify(routeDiagnosticLog.mock.calls);
+    expect(diagnostics).not.toContain('private-root-session');
+    expect(diagnostics).not.toContain('private-next-thread');
+  });
+
+  it('leaves ARMED untouched for helpers and binds it on the next user turn', async () => {
+    const routing = setupCodexUtilityRoute();
+    routing.sessionRouting.instances!['waiting-route'] = {
+      id: 'waiting-route',
+      display: {},
+      modelId: 'armed-model',
+      reasoningEffort: 'high',
+      routingState: 'armed',
+      presenceState: 'unknown',
+    };
+    const armedState = structuredClone(routing.sessionRouting);
+    await handleRequest(codexRequest('private-helper-first'), createMockResponse());
+
+    expect(routing.sessionRouting).toEqual(armedState);
+    expect(unifiedConfigManager.saveConfig).not.toHaveBeenCalled();
+    expectSingleRequestDiagnostics({ statusCode: 200, attemptCount: 1, termination: 'completed' });
+
+    await handleRequest(
+      codexRequest('private-user-next', { threadSource: 'user', model: 'root-model' }),
+      createMockResponse()
+    );
+    expect(Object.values(routing.sessionRouting.instances!)).toHaveLength(1);
+    expect(routing.sessionRouting.instances!['waiting-route']).toMatchObject({
+      routingState: 'active',
+      routeKey: { sessionId: 'private-user-next' },
+    });
+    const binding = getRouteDiagnostics('RouteInstance identity binding')[1];
+    expect(binding).toMatchObject({ resolutionPath: 'armed', isCodexUtility: false });
+    expect(binding.createdReason).toBeUndefined();
+  });
+
+  it('keeps user threads with the same request kind independent and redacts unknown metadata', async () => {
+    const routing = setupCodexUtilityRoute();
+    for (const threadId of ['private-user-a', 'private-user-b']) {
+      await handleRequest(
+        codexRequest(threadId, { threadSource: 'user', model: 'root-model' }),
+        createMockResponse()
+      );
+    }
+    expect(Object.values(routing.sessionRouting.instances!)).toHaveLength(2);
+    await handleRequest(
+      codexRequest('private-unknown-source', {
+        threadSource: 'private-thread-source-sentinel',
+        requestKind: 'private-request-kind-sentinel',
+      }),
+      createMockResponse()
+    );
+    expect(Object.values(routing.sessionRouting.instances!)).toHaveLength(3);
+    expect(getRouteDiagnostics('RouteInstance identity binding')[2]).toMatchObject({
+      threadSource: 'other',
+      requestKind: 'other',
+      resolutionPath: 'created',
+      isCodexUtility: false,
+    });
+    const diagnostics = JSON.stringify(routeDiagnosticLog.mock.calls);
+    expect(diagnostics).not.toContain('private-thread-source-sentinel');
+    expect(diagnostics).not.toContain('private-request-kind-sentinel');
+    expect(diagnostics).not.toContain('private-unknown-source');
+  });
+
+  it('rejects incomplete system subagent identity without creating a profile fallback card', async () => {
+    const routing = setupCodexUtilityRoute();
+    const sessionState = structuredClone(routing.sessionRouting);
+    const response = createMockResponse();
+    await handleRequest(
+      codexRequest('private-system-subagent', { subagentKind: 'review' }),
+      response
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(routing.sessionRouting).toEqual(sessionState);
+    expect(unifiedConfigManager.saveConfig).not.toHaveBeenCalled();
+    expect(getRouteDiagnostics('RouteInstance identity binding')).toEqual([
+      expect.objectContaining({
+        identitySource: 'none',
+        bindingState: 'rejected',
+        rejectedEvidence: true,
+        isCodexUtility: false,
+      }),
+    ]);
+    expectSingleRequestDiagnostics({ statusCode: 200, attemptCount: 1, termination: 'completed' });
+  });
+
+  it('correlates each failed helper request with its own bounded fallback attempts without creating cards', async () => {
+    const routing = setupCodexUtilityRoute();
+    await handleRequest(
+      codexRequest('private-root-session', { threadSource: 'user', model: 'root-model' }),
+      createMockResponse()
+    );
+    const rootState = structuredClone(routing.sessionRouting);
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"error":{"message":"upstream unavailable"}}'),
+    });
+    for (const threadId of ['private-failed-helper', 'private-new-helper']) {
+      const response = createMockResponse();
+      await handleRequest(codexRequest(threadId), response);
+      expect(response.statusCode).toBe(503);
+      response.emit('close');
+    }
+
+    expect(routing.sessionRouting).toEqual(rootState);
+    expect(httpRawRequest).toHaveBeenCalledTimes(5);
+    const incoming = getRouteDiagnostics('Route request received');
+    const completed = getRouteDiagnostics('Route request completed');
+    const bindings = getRouteDiagnostics('RouteInstance identity binding');
+    expect(incoming).toHaveLength(3);
+    expect(completed).toHaveLength(3);
+    expect(bindings).toHaveLength(3);
+    expect(new Set(incoming.map(entry => entry.requestId)).size).toBe(3);
+    incoming.slice(1).forEach((entry, index) => {
+      expect(completed[index + 1]).toMatchObject({
+        requestId: entry.requestId,
+        statusCode: 503,
+        attemptCount: 2,
+        termination: 'completed',
+      });
+      expect(bindings[index + 1]).toMatchObject({
+        requestId: entry.requestId,
+        resolutionPath: 'utility',
+      });
+      const attempts = vi
+        .mocked(recordRouteRequest)
+        .mock.calls.map(([attempt]) => attempt)
+        .filter(attempt => attempt.requestId === entry.requestId);
+      expect(attempts.map(attempt => attempt.attempt)).toEqual([1, 2]);
+      expect(attempts.map(attempt => attempt.siteId)).toEqual(['site-primary', 'site-fallback']);
+      expect(completed[index + 1]).not.toHaveProperty('parentRequestId');
+      expect(completed[index + 1]).not.toHaveProperty('retryRequestId');
+    });
   });
 });
 
@@ -6647,6 +7160,7 @@ describe('route-proxy-service successful path affinity', () => {
     expect(upstreamBodies.map(body => body.model)).toEqual(['zero-model', 'zero-model']);
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toMatchObject({ id: 'resp_retry_good' });
+    expectSingleRequestDiagnostics({ statusCode: 200, attemptCount: 2, termination: 'completed' });
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ resolvedModel: 'zero-model' }),
       'success',
@@ -8460,6 +8974,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
 
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(2);
     expect(response.body).toBe(completedStream.toString('utf-8'));
+    expectSingleRequestDiagnostics({ statusCode: 200, attemptCount: 2, termination: 'completed' });
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: channel.apiKeyId }),
       'success',
@@ -10595,6 +11110,7 @@ describe('route-proxy-service upstream auth headers', () => {
     expect(headers.host).toBe('duckcoding.ai');
     expect(headers['content-length']).toBe('42');
     expect(headers['content-type']).toBe('application/json');
+    expect(headers['anthropic-version']).toBe('2023-06-01');
   });
 
   it('forwards Codex upstream auth as bearer token', () => {
@@ -10631,6 +11147,41 @@ describe('route-proxy-service upstream auth headers', () => {
 
     expect(headers.authorization).toBe('Bearer sk-upstream-key');
     expect(headers['x-api-key']).toBeUndefined();
+  });
+
+  it('uses protocol-derived Anthropic x-api-key auth on SenseNova hosts without an override', () => {
+    const headers = buildUpstreamHeaders(
+      {
+        authorization: 'Bearer sk-route-key',
+        'content-type': 'application/json',
+      },
+      'token.sensenova.cn',
+      42,
+      'sk-upstream-key',
+      'claudeCode'
+    );
+
+    expect(headers['x-api-key']).toBe('sk-upstream-key');
+    expect(headers.authorization).toBeUndefined();
+  });
+
+  it('removes Anthropic protocol headers when forwarding to an OpenAI upstream', () => {
+    const headers = buildUpstreamHeaders(
+      {
+        authorization: 'Bearer sk-route-key',
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',
+        'content-type': 'application/json',
+      },
+      'relay.example.com',
+      42,
+      'sk-upstream-key',
+      'codex'
+    );
+
+    expect(headers.authorization).toBe('Bearer sk-upstream-key');
+    expect(headers['anthropic-version']).toBeUndefined();
+    expect(headers['anthropic-beta']).toBeUndefined();
   });
 
   it('does not forward Grok Build identity and conversation headers upstream', () => {

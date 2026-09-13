@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, FlaskConical, Play, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Clock3, FlaskConical, Play, Save, XCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   ENDPOINT_TEST_PROTOCOLS,
@@ -6,15 +6,16 @@ import {
   type EndpointTestSelectionState,
   type EndpointTestStateView,
   type EndpointTestTarget,
-} from '../../../shared/types/route-proxy';
-import {
-  CLI_TARGET_PROTOCOLS,
-  normalizeCliTargetProtocol,
-  type CliTargetProtocol,
-} from '../../../shared/types/cli-config';
+} from '../../../shared/types/endpoint-test';
 import { toast } from '../../store/toastStore';
 import { AppButton } from '../AppButton/AppButton';
 import { AppSwitch } from '../AppSwitch';
+import {
+  AccessPointResourceSectionHeader,
+  accessPointFormFieldLabelClass,
+  accessPointFormFieldLabelTextClass,
+  accessPointFormInputClass,
+} from './AccessPointResourcePrimitives';
 import { PanelSection } from './PanelSection';
 
 const PROTOCOL_META: Record<EndpointTestProtocol, { title: string; endpoint: string }> = {
@@ -26,11 +27,12 @@ const PROTOCOL_META: Record<EndpointTestProtocol, { title: string; endpoint: str
   },
 };
 
+const DEFAULT_TEST_PROMPT = '1.2和1.19哪个更大？';
+
 interface EndpointTestPanelProps {
   target: EndpointTestTarget;
-  routeTargetProtocol?: CliTargetProtocol;
-  routeTargetProtocolNeedsConfirmation?: boolean;
-  onRouteTargetProtocolChange?: (protocol: CliTargetProtocol) => void | Promise<void>;
+  /** Render endpoint sections without card chrome when hosted inside the access-point shell. */
+  embedded?: boolean;
 }
 
 function formatTestedAt(value: number): string {
@@ -66,6 +68,115 @@ function createListAllModelsState(): Record<EndpointTestProtocol, boolean> {
   >;
 }
 
+function createCurlExpandedState(): Record<EndpointTestProtocol, boolean> {
+  return Object.fromEntries(ENDPOINT_TEST_PROTOCOLS.map(protocol => [protocol, false])) as Record<
+    EndpointTestProtocol,
+    boolean
+  >;
+}
+
+function getEndpointPathSuffix(baseUrl: string | undefined, endpoint: string): string {
+  if (!baseUrl) return endpoint;
+  try {
+    const baseSegments = new URL(baseUrl).pathname.split('/').filter(Boolean);
+    const endpointSegments = endpoint.split('/').filter(Boolean);
+    let overlap = 0;
+    const maxOverlap = Math.min(baseSegments.length, endpointSegments.length);
+    for (let size = 1; size <= maxOverlap; size += 1) {
+      if (
+        baseSegments.slice(-size).every((segment, index) => segment === endpointSegments[index])
+      ) {
+        overlap = size;
+      }
+    }
+    const suffix = endpointSegments.slice(overlap).join('/');
+    return suffix ? `/${suffix}` : '';
+  } catch {
+    return endpoint;
+  }
+}
+
+function createDefaultCurlTemplate(protocol: EndpointTestProtocol, baseUrl?: string): string {
+  const headers =
+    protocol === 'anthropic-messages'
+      ? [
+          'x-api-key: {{API_KEY}}',
+          'anthropic-version: 2023-06-01',
+          'Content-Type: application/json',
+        ]
+      : ['Authorization: Bearer {{API_KEY}}', 'Content-Type: application/json'];
+  const body =
+    protocol === 'anthropic-messages'
+      ? {
+          model: '{{MODEL}}',
+          max_tokens: 1024,
+          stream: false,
+          messages: [{ role: 'user', content: DEFAULT_TEST_PROMPT }],
+        }
+      : protocol === 'openai-responses'
+        ? {
+            model: '{{MODEL}}',
+            input: DEFAULT_TEST_PROMPT,
+            max_output_tokens: 32,
+            stream: false,
+            store: false,
+          }
+        : {
+            model: '{{MODEL}}',
+            max_tokens: 32,
+            stream: false,
+            messages: [{ role: 'user', content: DEFAULT_TEST_PROMPT }],
+          };
+
+  return [
+    `curl --request POST '{{BASE_URL}}${getEndpointPathSuffix(baseUrl, PROTOCOL_META[protocol].endpoint)}'`,
+    ...headers.map(header => `  --header '${header}'`),
+    `  --data-raw '${JSON.stringify(body, null, 2)}'`,
+  ].join(' \\\n');
+}
+
+function createCurlDrafts(view?: EndpointTestStateView): Record<EndpointTestProtocol, string> {
+  return Object.fromEntries(
+    ENDPOINT_TEST_PROTOCOLS.map(protocol => {
+      const persisted = view?.protocols[protocol].curl;
+      return [
+        protocol,
+        persisted?.trim() ? persisted : createDefaultCurlTemplate(protocol, view?.baseUrl),
+      ];
+    })
+  ) as Record<EndpointTestProtocol, string>;
+}
+
+function replaceTemplateValue(value: string, source: string, placeholder: string): string {
+  return source ? value.split(source).join(placeholder) : value;
+}
+
+function expandCurlTemplate(
+  template: string,
+  baseUrl: string,
+  maskedApiKey: string,
+  model: string
+): string {
+  return template
+    .split('{{BASE_URL}}')
+    .join(baseUrl.replace(/\/+$/, ''))
+    .split('{{API_KEY}}')
+    .join(maskedApiKey || '****')
+    .split('{{MODEL}}')
+    .join(model);
+}
+
+function collapseCurlTemplate(
+  value: string,
+  baseUrl: string,
+  maskedApiKey: string,
+  model: string
+): string {
+  let collapsed = replaceTemplateValue(value, baseUrl.replace(/\/+$/, ''), '{{BASE_URL}}');
+  collapsed = replaceTemplateValue(collapsed, maskedApiKey, '{{API_KEY}}');
+  return replaceTemplateValue(collapsed, model, '{{MODEL}}');
+}
+
 function getProtocolModels(
   view: EndpointTestStateView,
   protocol: EndpointTestProtocol,
@@ -80,12 +191,7 @@ function getProtocolModels(
   );
 }
 
-export function EndpointTestPanel({
-  target,
-  routeTargetProtocol,
-  routeTargetProtocolNeedsConfirmation,
-  onRouteTargetProtocolChange,
-}: EndpointTestPanelProps) {
+export function EndpointTestPanel({ target, embedded = false }: EndpointTestPanelProps) {
   const targetRef = useRef(target);
   targetRef.current = target;
   const [view, setView] = useState<EndpointTestStateView | null>(null);
@@ -93,6 +199,8 @@ export function EndpointTestPanel({
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<EndpointTestProtocol | null>(null);
   const [listAllModels, setListAllModels] = useState(createListAllModelsState);
+  const [curlDrafts, setCurlDrafts] = useState(createCurlDrafts);
+  const [curlExpanded, setCurlExpanded] = useState(createCurlExpandedState);
   const targetIdentity =
     target.kind === 'managed'
       ? `managed:${target.siteId}:${target.accountId}`
@@ -104,6 +212,8 @@ export function EndpointTestPanel({
     setError(null);
     setView(null);
     setListAllModels(createListAllModelsState());
+    setCurlDrafts(createCurlDrafts());
+    setCurlExpanded(createCurlExpandedState());
 
     void window.electronAPI.endpointTest
       ?.getState(targetRef.current)
@@ -113,6 +223,7 @@ export function EndpointTestPanel({
           throw new Error(response.error || '无法加载测试配置');
         }
         setView(response.data);
+        setCurlDrafts(createCurlDrafts(response.data));
       })
       .catch(reason => {
         if (active) setError(reason instanceof Error ? reason.message : '无法加载测试配置');
@@ -147,8 +258,40 @@ export function EndpointTestPanel({
       return;
     }
     setView(currentView =>
-      currentView ? updateProtocolState(currentView, protocol, response.data!) : currentView
+      currentView
+        ? updateProtocolState(currentView, protocol, { ...next, ...response.data })
+        : currentView
     );
+  };
+
+  const saveCurl = async (protocol: EndpointTestProtocol) => {
+    if (!view) return;
+    const state = view.protocols[protocol];
+    const curl = curlDrafts[protocol];
+    if (!state.apiKeyId || !state.model || !curl.trim()) {
+      toast.warning('请输入有效的 cURL 代码');
+      return;
+    }
+    const response = await window.electronAPI.endpointTest?.saveSelection({
+      target,
+      protocol,
+      apiKeyId: state.apiKeyId,
+      model: state.model,
+      curl,
+    });
+    if (!response?.success || !response.data) {
+      toast.error(response?.error || '保存 cURL 失败');
+      return;
+    }
+    setView(currentView =>
+      currentView
+        ? updateProtocolState(currentView, protocol, {
+            ...currentView.protocols[protocol],
+            ...response.data,
+          })
+        : currentView
+    );
+    setCurlDrafts(current => ({ ...current, [protocol]: response.data!.curl || curl }));
   };
 
   const changeApiKey = async (protocol: EndpointTestProtocol, apiKeyId: string) => {
@@ -177,6 +320,7 @@ export function EndpointTestPanel({
         protocol,
         apiKeyId: selection.apiKeyId,
         model: selection.model,
+        curl: curlDrafts[protocol],
       });
       if (!response?.success || !response.data) {
         throw new Error(response?.error || '测试失败');
@@ -215,33 +359,6 @@ export function EndpointTestPanel({
 
   return (
     <div className="space-y-3">
-      <PanelSection title="路由上游协议" collapsible={false}>
-        <select
-          aria-label="路由上游协议"
-          value={normalizeCliTargetProtocol(routeTargetProtocol)}
-          onChange={event =>
-            void onRouteTargetProtocolChange?.(normalizeCliTargetProtocol(event.target.value))
-          }
-          className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm text-[var(--text-primary)] outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
-        >
-          {CLI_TARGET_PROTOCOLS.map(protocol => (
-            <option key={protocol} value={protocol}>
-              {protocol === 'native'
-                ? '自动 / 原生'
-                : protocol === 'anthropic-messages'
-                  ? 'Anthropic Messages'
-                  : protocol === 'openai-chat-completions'
-                    ? 'OpenAI Chat Completions'
-                    : 'OpenAI Responses'}
-            </option>
-          ))}
-        </select>
-        {routeTargetProtocolNeedsConfirmation ? (
-          <div className="mt-2 text-xs text-[var(--warning)]">
-            旧 CLI 上游协议存在冲突，请确认当前选择。
-          </div>
-        ) : null}
-      </PanelSection>
       {ENDPOINT_TEST_PROTOCOLS.map(protocol => {
         const meta = PROTOCOL_META[protocol];
         const state = view.protocols[protocol];
@@ -249,41 +366,45 @@ export function EndpointTestPanel({
         const resultMessage = formatResultMessage(state);
         const canRun = Boolean(state.apiKeyId && state.model);
         const modelOptions = getProtocolModels(view, protocol, listAllModels[protocol]);
-
-        return (
-          <PanelSection
-            key={protocol}
-            title={
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0">{meta.title}</span>
-                <span className="min-w-0 truncate text-xs font-normal text-[var(--text-secondary)]">
-                  {meta.endpoint}
-                </span>
-              </span>
-            }
-            collapsible={false}
-            actions={
-              <AppButton
-                type="button"
-                size="sm"
-                className="!min-h-7 !px-2.5"
-                onClick={() => void runTest(protocol)}
-                loading={running === protocol}
-                disabled={!canRun || running !== null}
-                title={`测试 ${meta.endpoint}`}
-              >
-                <Play className="h-3.5 w-3.5" />
-                测试
-              </AppButton>
-            }
+        const selectedApiKey = view.apiKeys.find(option => option.id === state.apiKeyId);
+        const maskedApiKey = selectedApiKey?.maskedApiKey || '****';
+        const displayedCurl = expandCurlTemplate(
+          curlDrafts[protocol],
+          view.baseUrl ?? '',
+          maskedApiKey,
+          state.model || ''
+        );
+        const title = (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-[var(--text-primary)]">{meta.title}</span>
+            <span className="min-w-0 truncate rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-[11px] font-normal text-[var(--text-secondary)]">
+              {meta.endpoint}
+            </span>
+          </span>
+        );
+        const actions = (
+          <AppButton
+            type="button"
+            size="sm"
+            className="!min-h-7 !px-2.5"
+            onClick={() => void runTest(protocol)}
+            loading={running === protocol}
+            disabled={!canRun || running !== null}
+            title={`测试 ${meta.endpoint}`}
           >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="min-w-0 space-y-1.5 text-xs text-[var(--text-secondary)]">
-                <span>API Key</span>
+            <Play className="h-3.5 w-3.5" />
+            测试
+          </AppButton>
+        );
+        const body = (
+          <>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <label className="block min-w-0">
+                <span className={accessPointFormFieldLabelClass}>API Key</span>
                 <select
                   value={state.apiKeyId || ''}
                   onChange={event => void changeApiKey(protocol, event.target.value)}
-                  className="h-9 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm text-[var(--text-primary)] outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+                  className={accessPointFormInputClass}
                 >
                   {view.apiKeys.length === 0 ? <option value="">无可用 API Key</option> : null}
                   {view.apiKeys.map(apiKey => (
@@ -294,9 +415,14 @@ export function EndpointTestPanel({
                 </select>
               </label>
 
-              <div className="min-w-0 space-y-1.5 text-xs text-[var(--text-secondary)]">
-                <div className="flex min-h-4 items-center justify-between gap-2">
-                  <label htmlFor={`endpoint-test-model-${protocol}`}>模型</label>
+              <div className="min-w-0">
+                <div className="mb-1.5 flex min-h-4 items-center justify-between gap-2">
+                  <label
+                    htmlFor={`endpoint-test-model-${protocol}`}
+                    className={accessPointFormFieldLabelTextClass}
+                  >
+                    模型
+                  </label>
                   {target.kind === 'managed' ? (
                     <AppSwitch
                       checked={listAllModels[protocol]}
@@ -313,7 +439,7 @@ export function EndpointTestPanel({
                   id={`endpoint-test-model-${protocol}`}
                   value={state.model || ''}
                   onChange={event => void saveSelection(protocol, { model: event.target.value })}
-                  className="h-9 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm text-[var(--text-primary)] outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+                  className={accessPointFormInputClass}
                 >
                   {modelOptions.length === 0 ? <option value="">无可用模型</option> : null}
                   {modelOptions.map(model => (
@@ -325,8 +451,67 @@ export function EndpointTestPanel({
               </div>
             </div>
 
+            <div className="space-y-2 border-t border-[var(--line-soft)] pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[var(--radius-sm)] py-1 text-left text-xs font-medium text-[var(--text-secondary)] outline-none hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  aria-expanded={curlExpanded[protocol]}
+                  aria-controls={`endpoint-test-curl-content-${protocol}`}
+                  aria-label={`${curlExpanded[protocol] ? '折叠' : '展开'} ${meta.title} cURL 编辑器`}
+                  onClick={() =>
+                    setCurlExpanded(current => ({ ...current, [protocol]: !current[protocol] }))
+                  }
+                >
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 shrink-0 transition-transform ${
+                      curlExpanded[protocol] ? 'rotate-0' : '-rotate-90'
+                    }`}
+                  />
+                  <span>cURL</span>
+                </button>
+                {curlExpanded[protocol] ? (
+                  <AppButton
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="!min-h-7 !px-2.5"
+                    onClick={() => void saveCurl(protocol)}
+                    disabled={!curlDrafts[protocol].trim() || !canRun || running !== null}
+                    title="保存 cURL"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    保存
+                  </AppButton>
+                ) : null}
+              </div>
+              {curlExpanded[protocol] ? (
+                <div id={`endpoint-test-curl-content-${protocol}`}>
+                  <textarea
+                    id={`endpoint-test-curl-${protocol}`}
+                    aria-label={`${meta.title} cURL`}
+                    value={displayedCurl}
+                    onChange={event =>
+                      setCurlDrafts(current => ({
+                        ...current,
+                        [protocol]: collapseCurlTemplate(
+                          event.target.value,
+                          view.baseUrl ?? '',
+                          maskedApiKey,
+                          state.model || ''
+                        ),
+                      }))
+                    }
+                    rows={8}
+                    spellCheck={false}
+                    className="w-full resize-y rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 font-mono text-xs leading-5 text-[var(--text-primary)] outline-none transition-colors focus:border-transparent focus:ring-1 focus:ring-[var(--accent)]"
+                  />
+                </div>
+              ) : null}
+            </div>
+
             {latest ? (
-              <div className="border-t border-[var(--line-muted)] pt-3">
+              <div className="border-t border-[var(--line-soft)] pt-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
                   <span
                     className={`inline-flex items-center gap-1.5 font-medium ${
@@ -334,9 +519,9 @@ export function EndpointTestPanel({
                     }`}
                   >
                     {latest.success ? (
-                      <CheckCircle2 className="h-4 w-4" />
+                      <CheckCircle2 className="h-3.5 w-3.5" />
                     ) : (
-                      <XCircle className="h-4 w-4" />
+                      <XCircle className="h-3.5 w-3.5" />
                     )}
                     {latest.success ? '成功' : '失败'}
                   </span>
@@ -358,11 +543,30 @@ export function EndpointTestPanel({
                 ) : null}
               </div>
             ) : (
-              <div className="flex items-center gap-2 border-t border-[var(--line-muted)] pt-3 text-xs text-[var(--text-tertiary)]">
-                <FlaskConical className="h-4 w-4" />
+              <div className="flex items-center gap-2 border-t border-[var(--line-soft)] pt-3 text-xs text-[var(--text-tertiary)]">
+                <FlaskConical className="h-3.5 w-3.5" />
                 尚未测试
               </div>
             )}
+          </>
+        );
+
+        if (embedded) {
+          return (
+            <section
+              key={protocol}
+              data-testid={`endpoint-test-card-${protocol}`}
+              className="space-y-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] px-2.5 py-2"
+            >
+              <AccessPointResourceSectionHeader title={title} actions={actions} />
+              {body}
+            </section>
+          );
+        }
+
+        return (
+          <PanelSection key={protocol} title={title} collapsible={false} actions={actions}>
+            {body}
           </PanelSection>
         );
       })}

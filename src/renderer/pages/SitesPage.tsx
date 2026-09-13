@@ -22,7 +22,7 @@ import {
   SiteSettingsDialog,
 } from '../components/dialogs';
 import type { SiteSettingsChanges } from '../components/dialogs';
-import type { CliTargetProtocol } from '../../shared/types/cli-config';
+import type { CliTargetProtocol, CliUpstreamProtocol } from '../../shared/types/cli-config';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
 import { AppButton } from '../components/AppButton/AppButton';
 import { AppSearchInput } from '../components/AppInput';
@@ -48,6 +48,7 @@ import {
   type AccountBrowserProfileOptions,
   type AccountAuthSource,
   type BrowserProfileOptionId,
+  type RouteAuthScheme,
 } from '../../shared/types/site';
 import type { Config, SiteGroup } from '../App';
 import {
@@ -91,6 +92,8 @@ interface AccountInfo {
   auto_refresh_interval?: number;
   routeTargetProtocol?: CliTargetProtocol;
   routeTargetProtocolNeedsConfirmation?: boolean;
+  routeAuthScheme?: RouteAuthScheme;
+  supportedProtocols?: CliUpstreamProtocol[];
   anyRouterConfig?: AnyRouterAccountConfig;
 }
 
@@ -726,6 +729,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           | 'auto_refresh_interval'
           | 'routeTargetProtocol'
           | 'routeTargetProtocolNeedsConfirmation'
+          | 'routeAuthScheme'
+          | 'supportedProtocols'
         >
       >
     ) => {
@@ -2257,36 +2262,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           }}
           onDeleteDirectConfig={handleDeleteDirectConfig}
           onUpdateAnyRouterUserHash={handleUpdateAnyRouterUserHash}
-          onSaveRouteTargetProtocol={async (protocol: CliTargetProtocol) => {
-            if (selectedItem.type === 'managed' && selectedItem.account) {
-              await handleSavePanelAccount(selectedItem.account.id, {
-                routeTargetProtocol: protocol,
-                routeTargetProtocolNeedsConfirmation: false,
-              });
-              return;
-            }
-            if (selectedItem.type === 'custom-cli') {
-              const store = useCustomCliConfigStore.getState();
-              store.updateConfig(selectedItem.config.id, {
-                routeTargetProtocol: protocol,
-                routeTargetProtocolNeedsConfirmation: false,
-              });
-              await store.saveConfigs();
-              setSelectedItem(current =>
-                current?.type === 'custom-cli' && current.config.id === selectedItem.config.id
-                  ? {
-                      ...current,
-                      config: {
-                        ...current.config,
-                        routeTargetProtocol: protocol,
-                        routeTargetProtocolNeedsConfirmation: false,
-                      },
-                    }
-                  : current
-              );
-              toast.success('路由上游协议已保存');
-            }
-          }}
           onConfigChanged={async () => {
             if (selectedItem.type === 'managed') {
               const refreshedConfig = await window.electronAPI.loadConfig();

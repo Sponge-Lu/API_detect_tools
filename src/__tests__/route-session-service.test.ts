@@ -21,6 +21,7 @@ import {
   ROUTE_SESSION_CANDIDATE_MAX_COUNT,
   ROUTE_SESSION_CANDIDATE_MAX_VALUE_HASHES,
   ROUTE_SESSION_CANDIDATE_TTL_MS,
+  restoreRouteInstance,
   resolveRouteInstanceForRequest,
   type ObservedRouteInstanceKey,
   updateRouteInstance,
@@ -82,6 +83,27 @@ function resolveObserved(
     defaultReasoningEffort: 'medium',
     requestAt,
   });
+}
+
+function codexTurnRequest(
+  threadId: string,
+  metadata: Record<string, unknown> = {},
+  projection: 'body' | 'header' = 'body'
+) {
+  const headers: Record<string, string> = {
+    'x-codex-window-id': `${threadId}:0`,
+    'session-id': threadId,
+  };
+  const turnMetadata = JSON.stringify({
+    thread_id: threadId,
+    request_kind: 'turn',
+    thread_source: 'system',
+    ...metadata,
+  });
+  const clientMetadata: Record<string, unknown> = {};
+  if (projection === 'header') headers['x-codex-turn-metadata'] = turnMetadata;
+  else clientMetadata['x-codex-turn-metadata'] = turnMetadata;
+  return { headers, body: { client_metadata: clientMetadata } };
 }
 
 describe('route instance identity boundary', () => {
@@ -224,6 +246,450 @@ describe('route instance identity boundary', () => {
       sessionId: 'root-thread',
       lineage: { source: 'codex', rootSessionId: 'root-session' },
     });
+  });
+
+  it.each(['body', 'header'] as const)(
+    'recognizes native Codex system turns from the %s metadata projection',
+    projection => {
+      const request = codexTurnRequest('helper-thread', {}, projection);
+      expect(extractObservedRouteInstanceKey(request, request.body)).toMatchObject({
+        agentId: 'codex',
+        runtimeSlotId: 'helper-thread',
+        sessionId: 'helper-thread',
+        lineage: {
+          source: 'codex',
+          requestKind: 'turn',
+          threadSource: 'system',
+          isUtility: true,
+        },
+      });
+    }
+  );
+
+  it('reconciles body and header metadata while keeping fork lineage observational', () => {
+    const request = codexTurnRequest('helper-thread', { forked_from_thread_id: 'fork-source' });
+    Object.assign(request.body.client_metadata, {
+      request_kind: 'turn',
+      thread_source: 'system',
+      forked_from_thread_id: 'fork-source',
+    });
+    request.headers['x-codex-turn-metadata'] = String(
+      request.body.client_metadata['x-codex-turn-metadata']
+    );
+    const key = extractObservedRouteInstanceKey(request, request.body);
+    expect(key?.lineage).toMatchObject({
+      requestKind: 'turn',
+      threadSource: 'system',
+      forkedFromThreadId: 'fork-source',
+      isUtility: true,
+    });
+    expect(key?.lineage?.parentSessionId).toBeUndefined();
+  });
+
+  it.each(['empty', 'armed', 'one root', 'two roots', 'another profile'])(
+    'leaves %s unchanged across repeated title and recap system threads',
+    scenario => {
+      const config = baseConfig();
+      const rootCount = scenario === 'two roots' ? 2 : scenario.includes('root') ? 1 : 0;
+      for (let index = 0; index < rootCount; index += 1) {
+        const request = codexTurnRequest(`root-${index}`, { thread_source: 'user' });
+        const root = resolveObserved(
+          config,
+          extractObservedRouteInstanceKey(request, request.body),
+          1_000,
+          'gpt-5.6-sol'
+        ).instance!;
+        root.modelId = 'user-selected-model';
+        root.reasoningEffort = 'low';
+        root.display.customAgentName = 'User label';
+      }
+      if (scenario === 'armed') createArmedRouteInstance(config, 'chosen-model', 'max');
+      if (scenario === 'another profile') {
+        const request = codexTurnRequest('other-root', { thread_source: 'user' });
+        resolveObserved(
+          config,
+          extractObservedRouteInstanceKey(request, request.body),
+          1_000,
+          'gpt-5.6-sol',
+          'profile-2'
+        );
+      }
+      const before = JSON.parse(JSON.stringify(config));
+      for (const [index, threadId] of ['title-1', 'recap-1', 'recap-2', 'recap-3'].entries()) {
+        const request = codexTurnRequest(threadId, {}, index % 2 ? 'header' : 'body');
+        const key = extractObservedRouteInstanceKey(request, request.body);
+        for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', null]) {
+          expect(resolveObserved(config, key, 1_100 + index * 30_000, model)).toEqual({
+            instance: null,
+            changed: false,
+            resolutionPath: 'utility',
+            memberAppended: false,
+            utilityRequest: true,
+          });
+          expect(config).toEqual(before);
+        }
+      }
+    }
+  );
+
+  it.each(['active', 'closed'])(
+    'does not reuse, revive, or normalize an exact %s legacy helper card',
+    state => {
+      const config = baseConfig();
+      const oldRequest = codexTurnRequest('old-helper', { thread_source: 'user' });
+      const oldCard = resolveObserved(
+        config,
+        extractObservedRouteInstanceKey(oldRequest, oldRequest.body),
+        1_000,
+        'old-model'
+      ).instance!;
+      if (state === 'closed') closeRouteInstance(config, oldCard.id, 1_100);
+      oldCard.routeKey!.runtimeSlotId = 'old-helper:5';
+      const before = JSON.parse(JSON.stringify(config));
+      const request = codexTurnRequest('old-helper');
+      const result = resolveObserved(
+        config,
+        extractObservedRouteInstanceKey(request, request.body),
+        2_000,
+        'helper-model'
+      );
+      expect(result).toMatchObject({
+        instance: null,
+        changed: false,
+        resolutionPath: 'utility',
+        memberAppended: false,
+        utilityRequest: true,
+      });
+      expect(result.createdReason).toBeUndefined();
+      expect(config).toEqual(before);
+    }
+  );
+
+  it('does not append system threads to an otherwise matching root alias', () => {
+    const config = baseConfig();
+    const rootRequest = codexTurnRequest('root-thread', { thread_source: 'user' });
+    resolveObserved(
+      config,
+      extractObservedRouteInstanceKey(rootRequest, rootRequest.body),
+      1_000,
+      'gpt-5.6-sol'
+    );
+    const request = codexTurnRequest('helper-thread', { forked_from_thread_id: 'unverified-fork' });
+    request.headers['session-id'] = 'root-thread';
+    const before = JSON.parse(JSON.stringify(config));
+    const result = resolveObserved(
+      config,
+      extractObservedRouteInstanceKey(request, request.body),
+      2_000,
+      'gpt-5.6-sol'
+    );
+    expect(result).toMatchObject({
+      instance: null,
+      changed: false,
+      resolutionPath: 'utility',
+      memberAppended: false,
+    });
+    expect(config).toEqual(before);
+  });
+
+  it.each(['turn', 'prewarm', 'compaction', 'memory', 'title', 'catch-up', 'recap'])(
+    'does not classify %s requests without the exact system source as utility',
+    requestKind => {
+      const config = baseConfig();
+      for (const threadSource of [undefined, 'user', 'unknown', 'internal', 'SYSTEM']) {
+        const request = codexTurnRequest(`thread-${String(threadSource)}`, {
+          request_kind: requestKind,
+          thread_source: threadSource,
+        });
+        const key = extractObservedRouteInstanceKey(request, request.body);
+        expect(key).not.toBeNull();
+        expect(key?.lineage?.isUtility).toBeUndefined();
+        const resolution = resolveObserved(config, key, 1_000, 'gpt-5.6-sol');
+        expect(resolution).toMatchObject({
+          changed: true,
+          resolutionPath: 'created',
+          createdReason: 'unseen_identity',
+          memberAppended: false,
+        });
+        expect(resolution.instance?.parentInstanceId).toBeUndefined();
+      }
+      expect(Object.values(config.instances)).toHaveLength(5);
+    }
+  );
+
+  it.each([null, 'gpt-5.6-sol', 'gpt-5.6-terra'])(
+    'never treats fork lineage as parent evidence or aliases with model %s',
+    requestedModel => {
+      const config = baseConfig();
+      const rootRequest = codexTurnRequest('root-thread', { thread_source: 'user' });
+      const root = resolveObserved(
+        config,
+        extractObservedRouteInstanceKey(rootRequest, rootRequest.body),
+        1_000,
+        'gpt-5.6-sol'
+      ).instance!;
+      const before = JSON.parse(JSON.stringify(root));
+      for (const forkId of ['root-thread', 'unknown-thread']) {
+        const request = codexTurnRequest(`fork-${forkId}`, {
+          thread_source: 'user',
+          forked_from_thread_id: forkId,
+        });
+        const key = extractObservedRouteInstanceKey(request, request.body);
+        expect(key?.lineage?.forkedFromThreadId).toBe(forkId);
+        expect(key?.lineage?.parentSessionId).toBeUndefined();
+        const result = resolveObserved(config, key, 2_000, requestedModel);
+        expect(result).toMatchObject({
+          changed: true,
+          resolutionPath: 'created',
+          memberAppended: false,
+        });
+        expect(result.instance?.parentInstanceId).toBeUndefined();
+        expect(result.instance?.memberSessionIds).toBeUndefined();
+        expect(root).toEqual(before);
+      }
+      expect(Object.values(config.instances)).toHaveLength(3);
+    }
+  );
+
+  it.each(['request_kind', 'thread_source', 'forked_from_thread_id', 'subagent_kind'])(
+    'rejects malformed or conflicting %s metadata across projections',
+    field => {
+      for (const value of [null, 42, '', 'x'.repeat(513), 'bad\u0001value', ['system'], {}]) {
+        const request = codexTurnRequest('helper-thread', { [field]: value });
+        expect(hasObservedRouteInstanceEvidence(request, request.body)).toBe(true);
+        expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+      }
+      const request = codexTurnRequest('helper-thread', { [field]: 'system' });
+      request.headers['x-codex-turn-metadata'] = JSON.stringify({ [field]: 'different' });
+      expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+      delete request.headers['x-codex-turn-metadata'];
+      request.body.client_metadata[field] = 'different';
+      expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+    }
+  );
+
+  it.each(['body', 'header'] as const)('rejects invalid %s turn metadata envelopes', projection => {
+    for (const value of ['{bad-json', '{}'.padEnd(8_193), '[]', 'null']) {
+      const request = codexTurnRequest('helper-thread', {}, projection);
+      if (projection === 'header') request.headers['x-codex-turn-metadata'] = value;
+      else request.body.client_metadata['x-codex-turn-metadata'] = value;
+      expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+    }
+  });
+
+  it('preserves explicit identity priority over system metadata', () => {
+    const request = codexTurnRequest('helper-thread');
+    Object.assign(request.headers, {
+      [ROUTE_AGENT_ID_HEADER]: 'explicit-agent',
+      [ROUTE_RUNTIME_SLOT_ID_HEADER]: 'explicit-slot',
+      [ROUTE_SESSION_ID_HEADER]: 'explicit-session',
+    });
+    const key = extractObservedRouteInstanceKey(request, request.body);
+    expect(key).toMatchObject({ agentId: 'explicit-agent', sessionId: 'explicit-session' });
+    expect(key?.lineage).toBeUndefined();
+    expect(resolveObserved(baseConfig(), key, 1_000, 'explicit-model').resolutionPath).toBe(
+      'created'
+    );
+    delete request.headers[ROUTE_SESSION_ID_HEADER];
+    expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+  });
+
+  it('does not select the Codex adapter from generic metadata property names', () => {
+    const request = {
+      headers: { 'x-session-id': 'generic-session', 'user-agent': 'GenericClient/1.0' },
+    };
+    const body = {
+      client_metadata: {
+        request_kind: 'turn',
+        thread_source: 'system',
+        forked_from_thread_id: 'generic-fork',
+      },
+    };
+    const key = extractObservedRouteInstanceKey(request, body);
+    expect(key).toMatchObject({ agentId: 'session:http', sessionId: 'generic-session' });
+    expect(key?.lineage).toBeUndefined();
+  });
+
+  it.each(['gpt-5.6-sol', 'gpt-5.6-terra'])(
+    'preserves verified subagent routing with system metadata and model %s',
+    requestedModel => {
+      const config = baseConfig();
+      const rootRequest = codexTurnRequest('root-thread', { thread_source: 'user' });
+      const parent = resolveObserved(
+        config,
+        extractObservedRouteInstanceKey(rootRequest, rootRequest.body),
+        1_000,
+        'gpt-5.6-sol'
+      ).instance!;
+      const request = codexTurnRequest('child-thread', {
+        parent_thread_id: 'root-thread',
+        subagent_kind: 'thread_spawn',
+      });
+      request.headers['session-id'] = 'root-thread';
+      request.headers['x-openai-subagent'] = 'worker';
+      const key = extractObservedRouteInstanceKey(request, request.body);
+      expect(key?.lineage?.isUtility).toBeUndefined();
+      const result = resolveObserved(config, key, 2_000, requestedModel);
+      const sameModel = requestedModel === 'gpt-5.6-sol';
+      expect(result).toMatchObject({
+        changed: true,
+        resolutionPath: 'parent',
+        memberAppended: sameModel,
+      });
+      expect(result.instance?.parentInstanceId).toBe(sameModel ? undefined : parent.id);
+      expect(result.createdReason).toBe(sameModel ? undefined : 'different_model_child');
+      delete request.headers['x-openai-subagent'];
+      const canonicalKey = extractObservedRouteInstanceKey(request, request.body);
+      expect(canonicalKey).toEqual(key);
+      const repeated = resolveObserved(config, canonicalKey, 2_000, requestedModel);
+      expect(repeated).toMatchObject({
+        changed: false,
+        resolutionPath: 'parent',
+        memberAppended: false,
+      });
+      expect(repeated.createdReason).toBeUndefined();
+      expect(Object.values(config.instances)).toHaveLength(sameModel ? 1 : 2);
+    }
+  );
+
+  it.each(['body', 'header', 'flat', 'conflicting'])(
+    'rejects %s system subagent metadata without a parent and preserves ARMED',
+    projection => {
+      for (const subagentKind of ['thread_spawn', null]) {
+        const request = codexTurnRequest(
+          'child-thread',
+          projection === 'flat' ? {} : { subagent_kind: subagentKind },
+          projection === 'header' ? 'header' : 'body'
+        );
+        if (projection === 'flat') request.body.client_metadata.subagent_kind = subagentKind;
+        if (projection === 'conflicting') {
+          request.headers['x-codex-turn-metadata'] = JSON.stringify({
+            thread_source: 'system',
+            subagent_kind: 'other-kind',
+          });
+        }
+        const key = extractObservedRouteInstanceKey(request, request.body);
+        expect(key).toBeNull();
+        for (const withArmed of [false, true]) {
+          const config = baseConfig();
+          if (withArmed) createArmedRouteInstance(config, 'chosen-model', 'max');
+          const before = JSON.parse(JSON.stringify(config));
+          expect(resolveObserved(config, key, 1_000, 'gpt-5.6-sol')).toEqual({
+            instance: null,
+            changed: false,
+          });
+          expect(config).toEqual(before);
+          expect(Object.keys(config.instances)).toHaveLength(withArmed ? 1 : 0);
+        }
+      }
+    }
+  );
+
+  it('rejects malformed or conflicting system subagent kinds even with a complete parent chain', () => {
+    for (const subagentKind of [null, 42, ['thread_spawn'], { kind: 'thread_spawn' }]) {
+      const request = codexTurnRequest('child-thread', {
+        parent_thread_id: 'root-thread',
+        subagent_kind: subagentKind,
+      });
+      expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+    }
+    const conflicting = codexTurnRequest('child-thread', {
+      parent_thread_id: 'root-thread',
+      subagent_kind: 'thread_spawn',
+    });
+    conflicting.headers['x-codex-turn-metadata'] = JSON.stringify({
+      thread_source: 'system',
+      subagent_kind: 'other-kind',
+    });
+    expect(extractObservedRouteInstanceKey(conflicting, conflicting.body)).toBeNull();
+  });
+
+  it('rejects system metadata with an incomplete or self-referencing subagent chain', () => {
+    const request = codexTurnRequest('child-thread');
+    request.headers['x-openai-subagent'] = 'worker';
+    expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+    request.headers['x-codex-parent-thread-id'] = 'child-thread';
+    expect(extractObservedRouteInstanceKey(request, request.body)).toBeNull();
+  });
+
+  it('keeps the root card when Codex changes threads without a parent marker', () => {
+    const config = baseConfig();
+    const root = extractObservedRouteInstanceKey({
+      headers: {
+        'x-codex-window-id': 'window-1',
+        'session-id': 'root-session',
+        'thread-id': 'root-thread',
+      },
+    });
+    const nextThread = extractObservedRouteInstanceKey({
+      headers: {
+        'x-codex-window-id': 'window-2',
+        'session-id': 'root-session',
+        'thread-id': 'next-thread',
+      },
+    });
+
+    const first = resolveObserved(config, root, 1_000, 'gpt-5.6-sol').instance!;
+    const resolution = resolveObserved(config, nextThread, 1_000, 'gpt-5.6-sol');
+    const repeated = resolution.instance!;
+
+    expect(root).toMatchObject({
+      runtimeSlotId: 'root-thread',
+      sessionId: 'root-thread',
+      lineage: { rootSessionId: 'root-session' },
+    });
+    expect(nextThread).toMatchObject({
+      runtimeSlotId: 'next-thread',
+      sessionId: 'next-thread',
+      lineage: { rootSessionId: 'root-session' },
+    });
+    expect(repeated.id).toBe(first.id);
+    expect(resolution).toMatchObject({
+      changed: true,
+      resolutionPath: 'root-alias',
+      memberAppended: true,
+    });
+    expect(resolution.createdReason).toBeUndefined();
+    expect(resolveObserved(config, nextThread, 1_000, 'gpt-5.6-sol')).toMatchObject({
+      changed: false,
+      resolutionPath: 'root-alias',
+      memberAppended: false,
+    });
+    expect(first.memberSessionIds).toEqual(['root-session', 'next-thread']);
+    expect(Object.values(config.instances)).toHaveLength(1);
+  });
+
+  it('creates one stable child card for a verified different-model Codex thread', () => {
+    const config = baseConfig();
+    const root = extractObservedRouteInstanceKey({
+      headers: {
+        'x-codex-window-id': 'window-root',
+        'session-id': 'root-session',
+        'thread-id': 'root-thread',
+      },
+    });
+    const child = extractObservedRouteInstanceKey({
+      headers: {
+        'x-codex-window-id': 'window-child',
+        'session-id': 'root-session',
+        'thread-id': 'child-thread',
+        'x-codex-parent-thread-id': 'root-thread',
+      },
+    });
+
+    const parent = resolveObserved(config, root, 1_000, 'gpt-5.6-sol').instance!;
+    const first = resolveObserved(config, child, 2_000, 'gpt-5.6-terra').instance!;
+    const repeated = resolveObserved(config, child, 3_000, 'gpt-5.6-terra').instance!;
+
+    expect(first.id).not.toBe(parent.id);
+    expect(repeated.id).toBe(first.id);
+    expect(first).toMatchObject({
+      parentInstanceId: parent.id,
+      childOrdinal: 1,
+      clientModelId: 'gpt-5.6-terra',
+      routeKey: { agentId: 'codex', runtimeSlotId: 'child-thread', sessionId: 'child-thread' },
+    });
+    expect(Object.values(config.instances)).toHaveLength(2);
   });
 
   it('rejects malformed or conflicting Codex lineage projections', () => {
@@ -690,7 +1156,11 @@ describe('route instance lifecycle', () => {
       'gpt-5.6-terra'
     );
 
-    expect(resolution.instance).toBeNull();
+    expect(resolution).toMatchObject({
+      instance: null,
+      resolutionPath: 'parent-unresolved',
+      memberAppended: false,
+    });
     expect(config.instances[armed.id].routingState).toBe('armed');
   });
 
@@ -803,11 +1273,19 @@ describe('route instance lifecycle', () => {
   it('claims ARMED once when two unseen keys arrive and auto-creates the other', () => {
     const config = baseConfig();
     const armed = createArmedRouteInstance(config, 'chosen-model', 'max');
-    const first = resolve(config, 'session-a', 1_000, 'request-a', 'slot-a').instance;
-    const second = resolve(config, 'session-b', 1_001, 'request-b', 'slot-b').instance;
-    expect(first?.id).toBe(armed.id);
-    expect(second?.id).not.toBe(armed.id);
-    expect(second).toMatchObject({ modelId: 'request-b', reasoningEffort: 'high' });
+    const first = resolve(config, 'session-a', 1_000, 'request-a', 'slot-a');
+    const second = resolve(config, 'session-b', 1_001, 'request-b', 'slot-b');
+    expect(first.instance?.id).toBe(armed.id);
+    expect(first).toMatchObject({ changed: true, resolutionPath: 'armed', memberAppended: false });
+    expect(first.createdReason).toBeUndefined();
+    expect(second.instance?.id).not.toBe(armed.id);
+    expect(second).toMatchObject({
+      changed: true,
+      resolutionPath: 'created',
+      createdReason: 'unseen_identity',
+      memberAppended: false,
+      instance: { modelId: 'request-b', reasoningEffort: 'high' },
+    });
   });
 
   it('keeps stored route overrides while refreshing the direct client model', () => {
@@ -821,7 +1299,12 @@ describe('route instance lifecycle', () => {
       createdAt: 1_000,
       lastRequestAt: 2_000,
     });
-    expect(repeated.changed).toBe(true);
+    expect(repeated).toMatchObject({
+      changed: true,
+      resolutionPath: 'exact',
+      memberAppended: false,
+    });
+    expect(repeated.createdReason).toBeUndefined();
   });
 
   it('merges legacy Codex context-window routes for the same session', () => {
@@ -999,5 +1482,59 @@ describe('route instance lifecycle', () => {
     cancelArmedRouteInstance(config, armed.id);
     expect(listRouteInstances(config)[0]).toMatchObject({ routingState: 'cancelled' });
     expect(config.instances[armed.id]).not.toHaveProperty('createdAt');
+  });
+
+  it('restores a closed route as the active current slot', () => {
+    const config = baseConfig();
+    const instance = resolve(config, 'session-1', 1_000).instance!;
+    closeRouteInstance(config, instance.id, 2_000);
+
+    const restored = restoreRouteInstance(config, instance.id, 3_000);
+
+    expect(restored).toMatchObject({ id: instance.id, routingState: 'active' });
+    expect(restored).not.toHaveProperty('closedAt');
+    expect(restored).not.toHaveProperty('closedReason');
+    expect(config.currentRouteBySlot['["profile-1","agent-1","slot-1"]']).toBe(instance.id);
+  });
+
+  it('closes an active slot occupant when restoring an older generation', () => {
+    const config = baseConfig();
+    const target = resolve(config, 'session-1', 1_000).instance!;
+    closeRouteInstance(config, target.id, 1_500);
+    const current = resolve(config, 'session-2', 2_000).instance!;
+
+    const restored = restoreRouteInstance(config, target.id, 3_000);
+
+    expect(restored.id).toBe(target.id);
+    expect(restored.routingState).toBe('active');
+    expect(config.instances[current.id]).toMatchObject({
+      routingState: 'closed',
+      closedReason: 'replaced',
+      closedAt: 3_000,
+    });
+    expect(config.currentRouteBySlot['["profile-1","agent-1","slot-1"]']).toBe(target.id);
+  });
+
+  it('restores a cancelled pre-created route to the armed state', () => {
+    const config = baseConfig();
+    const instance = createArmedRouteInstance(config, 'model', 'low');
+    cancelArmedRouteInstance(config, instance.id);
+
+    const restored = restoreRouteInstance(config, instance.id);
+
+    expect(restored).toMatchObject({ id: instance.id, routingState: 'armed' });
+    expect(restored).not.toHaveProperty('closedAt');
+    expect(restored).not.toHaveProperty('closedReason');
+    expect(restored).not.toHaveProperty('createdAt');
+  });
+
+  it('rejects restoring active, armed, or missing route instances', () => {
+    const config = baseConfig();
+    const active = resolve(config, 'session-1', 1_000).instance!;
+    const armed = createArmedRouteInstance(config, 'model', 'low');
+
+    expect(() => restoreRouteInstance(config, active.id)).toThrow('可恢复的路由实例不存在');
+    expect(() => restoreRouteInstance(config, armed.id)).toThrow('可恢复的路由实例不存在');
+    expect(() => restoreRouteInstance(config, 'missing')).toThrow('可恢复的路由实例不存在');
   });
 });

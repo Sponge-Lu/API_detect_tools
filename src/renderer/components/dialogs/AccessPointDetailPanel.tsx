@@ -45,15 +45,25 @@ import {
   type AccountBrowserProfileOptions,
   type AccountAuthSource,
   type BrowserProfileOptionId,
+  type RouteAuthScheme,
 } from '../../../shared/types/site';
 import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
-import type { CliTargetProtocol } from '../../../shared/types/cli-config';
+import {
+  CLI_TARGET_PROTOCOLS,
+  CLI_UPSTREAM_PROTOCOLS,
+  normalizeCliTargetProtocol,
+  normalizeCliUpstreamProtocolsWithDefault,
+  type CliTargetProtocol,
+  type CliUpstreamProtocol,
+} from '../../../shared/types/cli-config';
 import type { ModelPricingData } from '../../../shared/types/site';
 import { normalizeCircledGroupLabel } from '../../../shared/utils/groupLabel';
 import {
   AccessPointResourceSectionHeader,
   AccessPointResourceShell,
+  accessPointFormFieldLabelClass,
+  accessPointFormInputClass,
   accessPointResourceActionClass,
   accessPointResourceIconActionClass,
   accessPointResourceTokenListClass,
@@ -98,6 +108,8 @@ export interface AccountInfo {
   auto_refresh_interval?: number;
   routeTargetProtocol?: CliTargetProtocol;
   routeTargetProtocolNeedsConfirmation?: boolean;
+  routeAuthScheme?: RouteAuthScheme;
+  supportedProtocols?: CliUpstreamProtocol[];
   anyRouterConfig?: {
     userHash?: string;
   };
@@ -159,6 +171,8 @@ export interface AccessPointDetailPanelProps {
         | 'auto_refresh_interval'
         | 'routeTargetProtocol'
         | 'routeTargetProtocolNeedsConfirmation'
+        | 'routeAuthScheme'
+        | 'supportedProtocols'
       >
     >
   ) => void | Promise<void>;
@@ -172,7 +186,6 @@ export interface AccessPointDetailPanelProps {
     optionId: BrowserProfileOptionId
   ) => void | Promise<void>;
   onRefreshAccountInfo?: (site: SiteConfig, accountId: string) => void | Promise<void>;
-  onSaveRouteTargetProtocol?: (protocol: CliTargetProtocol) => void | Promise<void>;
   onDeleteDirectConfig?: (config: CustomCliConfig) => void;
   onUpdateAnyRouterUserHash?: (accountId: string, userHash: string) => void | Promise<void>;
   onConfigChanged?: () => void | Promise<void>;
@@ -269,6 +282,10 @@ interface ManagedAccountDraft {
   access_token: string;
   auto_refresh: boolean;
   auto_refresh_interval: number;
+  routeTargetProtocol: CliTargetProtocol;
+  routeTargetProtocolNeedsConfirmation: boolean;
+  routeAuthScheme?: RouteAuthScheme;
+  supportedProtocols?: CliUpstreamProtocol[];
 }
 
 function buildManagedAccountDraft(account: AccountInfo | null): ManagedAccountDraft {
@@ -278,6 +295,10 @@ function buildManagedAccountDraft(account: AccountInfo | null): ManagedAccountDr
     access_token: account?.access_token ?? '',
     auto_refresh: Boolean(account?.auto_refresh),
     auto_refresh_interval: account?.auto_refresh_interval ?? 30,
+    routeTargetProtocol: normalizeCliTargetProtocol(account?.routeTargetProtocol),
+    routeTargetProtocolNeedsConfirmation: Boolean(account?.routeTargetProtocolNeedsConfirmation),
+    routeAuthScheme: account?.routeAuthScheme,
+    supportedProtocols: normalizeCliUpstreamProtocolsWithDefault(account?.supportedProtocols),
   };
 }
 
@@ -343,7 +364,6 @@ export function AccessPointDetailPanel({
   onLoadBrowserProfileOptions,
   onBindBrowserProfile,
   onRefreshAccountInfo,
-  onSaveRouteTargetProtocol,
   onDeleteDirectConfig,
   onUpdateAnyRouterUserHash,
   onConfigChanged,
@@ -484,7 +504,14 @@ export function AccessPointDetailPanel({
       managedAccountDraft.user_id !== savedManagedAccountDraft.user_id ||
       managedAccountDraft.access_token !== savedManagedAccountDraft.access_token ||
       managedAccountDraft.auto_refresh !== savedManagedAccountDraft.auto_refresh ||
-      managedAccountDraft.auto_refresh_interval !== savedManagedAccountDraft.auto_refresh_interval);
+      managedAccountDraft.auto_refresh_interval !==
+        savedManagedAccountDraft.auto_refresh_interval ||
+      managedAccountDraft.routeTargetProtocol !== savedManagedAccountDraft.routeTargetProtocol ||
+      managedAccountDraft.routeTargetProtocolNeedsConfirmation !==
+        savedManagedAccountDraft.routeTargetProtocolNeedsConfirmation ||
+      managedAccountDraft.routeAuthScheme !== savedManagedAccountDraft.routeAuthScheme ||
+      JSON.stringify(managedAccountDraft.supportedProtocols ?? undefined) !==
+        JSON.stringify(savedManagedAccountDraft.supportedProtocols ?? undefined));
   const isBrowserProfileDirty =
     browserProfileSelection !== null &&
     selectedBrowserProfileId !== browserProfileSelection.selectedId;
@@ -668,6 +695,10 @@ export function AccessPointDetailPanel({
           access_token: managedAccountDraft.access_token,
           auto_refresh: managedAccountDraft.auto_refresh,
           auto_refresh_interval: normalizedInterval,
+          routeTargetProtocol: managedAccountDraft.routeTargetProtocol,
+          routeTargetProtocolNeedsConfirmation: false,
+          routeAuthScheme: managedAccountDraft.routeAuthScheme,
+          supportedProtocols: managedAccountDraft.supportedProtocols,
         }
       : null;
     const normalizedSiteDraft: ManagedSiteDraft = {
@@ -817,35 +848,33 @@ export function AccessPointDetailPanel({
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {/* Tab1: 站点信息 */}
         {activeTab === 'info' && (
-          <div className="space-y-4">
+          <AccessPointResourceShell
+            testId={isManagedSite ? 'managed-tab1-content' : 'direct-tab1-content'}
+          >
             {isManagedSite && data.type === 'managed' && (
-              <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-[var(--text-primary)]">
-                      站点与账户
-                    </div>
-                  </div>
-                  <AppButton variant="secondary" size="sm" onClick={onAddAccount}>
-                    <Plus className="h-4 w-4" />
-                    添加账户
-                  </AppButton>
-                </div>
+              <section className="space-y-0.5">
+                <AccessPointResourceSectionHeader
+                  title="站点与账户"
+                  actions={
+                    <AppButton variant="secondary" size="sm" onClick={onAddAccount}>
+                      <Plus className="h-4 w-4" />
+                      添加账户
+                    </AppButton>
+                  }
+                />
 
                 {currentAccount ? (
-                  <>
-                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="space-y-3 pt-3">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          站点类型
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>站点类型</label>
                         <select
                           aria-label="站点类型"
                           value={managedSiteDraft.site_type}
                           onChange={event =>
                             updateManagedSiteDraft('site_type', event.target.value as SiteType)
                           }
-                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className={accessPointFormInputClass}
                         >
                           {SITE_TYPES.map(siteType => (
                             <option key={siteType} value={siteType}>
@@ -855,14 +884,12 @@ export function AccessPointDetailPanel({
                         </select>
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          分组
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>分组</label>
                         <select
                           aria-label="分组"
                           value={managedSiteDraft.group}
                           onChange={event => updateManagedSiteDraft('group', event.target.value)}
-                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className={accessPointFormInputClass}
                         >
                           {managedGroups.map(group => (
                             <option key={group.id} value={group.id}>
@@ -873,9 +900,7 @@ export function AccessPointDetailPanel({
                       </div>
                       {onLoadBrowserProfileOptions ? (
                         <div>
-                          <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                            浏览器 Profile
-                          </label>
+                          <label className={accessPointFormFieldLabelClass}>浏览器 Profile</label>
                           <select
                             aria-label="浏览器 Profile"
                             value={browserProfileSelection ? selectedBrowserProfileId : ''}
@@ -885,7 +910,7 @@ export function AccessPointDetailPanel({
                               )
                             }
                             disabled={loadingBrowserProfiles || !browserProfileSelection}
-                            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                            className={`${accessPointFormInputClass} disabled:cursor-not-allowed disabled:opacity-60`}
                           >
                             {!browserProfileSelection && (
                               <option value="">
@@ -912,24 +937,20 @@ export function AccessPointDetailPanel({
                       )}
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--line-soft)] pt-4 md:grid-cols-2">
+                    <div className="mt-3 grid grid-cols-1 gap-3 border-t border-[var(--line-soft)] pt-3 md:grid-cols-2">
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          站点名称
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>站点名称</label>
                         <input
                           type="text"
                           aria-label="站点名称"
                           value={managedSiteDraft.name}
                           onChange={event => updateManagedSiteDraft('name', event.target.value)}
                           placeholder="站点名称"
-                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className={accessPointFormInputClass}
                         />
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          站点 URL
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>站点 URL</label>
                         <div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2">
                           <Link className="h-4 w-4 flex-shrink-0 text-[var(--text-secondary)]" />
                           <input
@@ -947,9 +968,7 @@ export function AccessPointDetailPanel({
                         </div>
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          加油站链接
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>加油站链接</label>
                         <input
                           type="url"
                           aria-label="加油站链接"
@@ -958,26 +977,22 @@ export function AccessPointDetailPanel({
                             updateManagedSiteDraft('extra_links', event.target.value)
                           }
                           placeholder="https://..."
-                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className={accessPointFormInputClass}
                         />
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          账户名
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>账户名</label>
                         <input
                           type="text"
                           value={managedAccountDraft.account_name}
                           onChange={event =>
                             updateManagedAccountDraft('account_name', event.target.value)
                           }
-                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className={accessPointFormInputClass}
                         />
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          User ID
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>User ID</label>
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
@@ -985,7 +1000,7 @@ export function AccessPointDetailPanel({
                             onChange={event =>
                               updateManagedAccountDraft('user_id', event.target.value)
                             }
-                            className="min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                            className={`min-w-0 flex-1 ${accessPointFormInputClass}`}
                           />
                           <CopyInlineButton
                             title="复制 User ID"
@@ -996,12 +1011,10 @@ export function AccessPointDetailPanel({
                         </div>
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          Access Token
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>Access Token</label>
                         <div className="flex items-center gap-2">
                           <div className="relative min-w-0 flex-1">
-                            <Key className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
+                            <Key className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-tertiary)]" />
                             <input
                               type={showAccessToken ? 'text' : 'password'}
                               value={managedAccountDraft.access_token}
@@ -1009,7 +1022,7 @@ export function AccessPointDetailPanel({
                                 updateManagedAccountDraft('access_token', event.target.value)
                               }
                               placeholder={maskedAccessToken || 'Access Token'}
-                              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-2 pl-9 pr-3 font-mono text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                              className={`h-8 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] pl-8 pr-2.5 font-mono text-xs text-[var(--text-primary)] transition-colors focus:border-transparent focus:ring-1 focus:ring-[var(--accent)]`}
                             />
                           </div>
                           <CopyInlineButton
@@ -1030,9 +1043,137 @@ export function AccessPointDetailPanel({
                           />
                         </div>
                       </div>
+                      <div>
+                        <label className={accessPointFormFieldLabelClass}>路由上游协议</label>
+                        <select
+                          aria-label="路由上游协议"
+                          value={managedAccountDraft.routeTargetProtocol}
+                          onChange={event => {
+                            updateManagedAccountDraft(
+                              'routeTargetProtocol',
+                              normalizeCliTargetProtocol(event.target.value)
+                            );
+                            updateManagedAccountDraft(
+                              'routeTargetProtocolNeedsConfirmation',
+                              false
+                            );
+                          }}
+                          className={accessPointFormInputClass}
+                        >
+                          {CLI_TARGET_PROTOCOLS.map(protocol => (
+                            <option
+                              key={protocol}
+                              value={protocol}
+                              disabled={
+                                protocol !== 'native' &&
+                                managedAccountDraft.supportedProtocols !== undefined &&
+                                !managedAccountDraft.supportedProtocols.includes(protocol)
+                              }
+                            >
+                              {protocol === 'native'
+                                ? '自动 / 原生'
+                                : protocol === 'anthropic-messages'
+                                  ? 'Anthropic Messages'
+                                  : protocol === 'openai-chat-completions'
+                                    ? 'OpenAI Chat Completions'
+                                    : 'OpenAI Responses'}
+                            </option>
+                          ))}
+                        </select>
+                        {managedAccountDraft.routeTargetProtocolNeedsConfirmation ? (
+                          <p className="mt-1.5 text-xs text-[var(--warning)]">
+                            旧配置存在协议冲突，请确认当前选择后保存。
+                          </p>
+                        ) : null}
+                        {managedAccountDraft.routeTargetProtocol !== 'native' &&
+                        managedAccountDraft.supportedProtocols !== undefined &&
+                        !managedAccountDraft.supportedProtocols.includes(
+                          managedAccountDraft.routeTargetProtocol
+                        ) ? (
+                          <p className="mt-1.5 text-xs text-[var(--warning)]">
+                            当前转换目标不在上游支持协议中；保存新的支持协议或切回自动后路由才会使用该上游。
+                          </p>
+                        ) : null}
+                      </div>
+                      <div>
+                        <label className={accessPointFormFieldLabelClass}>上游鉴权方式</label>
+                        <select
+                          aria-label="上游鉴权方式"
+                          value={managedAccountDraft.routeAuthScheme ?? ''}
+                          onChange={event =>
+                            updateManagedAccountDraft(
+                              'routeAuthScheme',
+                              event.target.value
+                                ? (event.target.value as RouteAuthScheme)
+                                : undefined
+                            )
+                          }
+                          className={accessPointFormInputClass}
+                        >
+                          <option value="">自动（按协议）</option>
+                          <option value="bearer">Bearer</option>
+                          <option value="x-api-key">x-api-key</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className={accessPointFormFieldLabelClass}>上游支持协议</label>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          {CLI_UPSTREAM_PROTOCOLS.map(protocol => {
+                            const checked =
+                              managedAccountDraft.supportedProtocols?.includes(protocol) ?? false;
+                            const label =
+                              protocol === 'anthropic-messages'
+                                ? 'Anthropic Messages'
+                                : protocol === 'openai-chat-completions'
+                                  ? 'OpenAI Chat Completions'
+                                  : 'OpenAI Responses';
+                            return (
+                              <label
+                                key={protocol}
+                                className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)]"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={event => {
+                                    const current = new Set(
+                                      managedAccountDraft.supportedProtocols ?? []
+                                    );
+                                    if (event.target.checked) current.add(protocol);
+                                    else current.delete(protocol);
+                                    const nextProtocols = CLI_UPSTREAM_PROTOCOLS.filter(item =>
+                                      current.has(item)
+                                    );
+                                    if (nextProtocols.length === 0) return;
+                                    updateManagedAccountDraft('supportedProtocols', nextProtocols);
+                                    if (
+                                      managedAccountDraft.routeTargetProtocol !== 'native' &&
+                                      nextProtocols.length > 0 &&
+                                      !nextProtocols.includes(
+                                        managedAccountDraft.routeTargetProtocol
+                                      )
+                                    ) {
+                                      updateManagedAccountDraft('routeTargetProtocol', 'native');
+                                      updateManagedAccountDraft(
+                                        'routeTargetProtocolNeedsConfirmation',
+                                        false
+                                      );
+                                    }
+                                  }}
+                                  className="h-4 w-4 rounded border-[var(--line-soft)]"
+                                />
+                                {label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-1.5 text-xs text-[var(--text-tertiary)]">
+                          至少选择一种协议；旧配置默认启用全部三种协议。
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--line-soft)] pt-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
+                    <div className="mt-3 grid grid-cols-1 gap-3 border-t border-[var(--line-soft)] pt-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
                       <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] bg-[var(--surface-1)] px-3 py-2">
                         <div className="min-w-0">
                           <div className="text-xs font-medium text-[var(--text-secondary)]">
@@ -1068,9 +1209,7 @@ export function AccessPointDetailPanel({
                         />
                       </div>
                       <div>
-                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
-                          间隔分钟
-                        </label>
+                        <label className={accessPointFormFieldLabelClass}>间隔分钟</label>
                         <input
                           type="number"
                           min={1}
@@ -1083,13 +1222,13 @@ export function AccessPointDetailPanel({
                             )
                           }
                           disabled={!managedAccountDraft.auto_refresh}
-                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] disabled:opacity-50"
+                          className={`${accessPointFormInputClass} disabled:opacity-50`}
                         />
                       </div>
                     </div>
 
                     {shouldShowAnyRouterConfig && (
-                      <div className="mt-4 border-t border-[var(--line-soft)] pt-4">
+                      <div className="mt-3 border-t border-[var(--line-soft)] pt-3">
                         <AnyRouterConfigSection
                           siteId={data.site.id!}
                           accountId={currentAccount.id}
@@ -1105,7 +1244,7 @@ export function AccessPointDetailPanel({
                     )}
 
                     {otherAccounts.length > 0 && (
-                      <details className="mt-4 border-t border-[var(--line-soft)] pt-4">
+                      <details className="mt-3 border-t border-[var(--line-soft)] pt-3">
                         <summary className="cursor-pointer text-sm font-semibold text-[var(--text-primary)] hover:text-[var(--accent)]">
                           其他账户 ({otherAccounts.length})
                         </summary>
@@ -1139,7 +1278,7 @@ export function AccessPointDetailPanel({
                       </details>
                     )}
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line-soft)] pt-4">
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line-soft)] pt-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <AppButton
                           variant="tertiary"
@@ -1188,24 +1327,20 @@ export function AccessPointDetailPanel({
                         {savingManagedAccount ? '保存中...' : '保存更改'}
                       </AppButton>
                     </div>
-                  </>
+                  </div>
                 ) : (
-                  <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-3 text-sm text-[var(--text-secondary)]">
+                  <div className="pt-3 text-sm text-[var(--text-secondary)]">
                     该站点还没有账户。添加账户后可管理 API Key、User Hash、自动刷新与端点测试。
                   </div>
                 )}
-              </div>
+              </section>
             )}
 
             {isDirectConfig && data.type === 'custom-cli' && (
-              <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-4">
-                <div className="border-b border-[var(--line-soft)] pb-4">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-[var(--text-primary)]">直连配置</div>
-                  </div>
-                </div>
+              <section className="space-y-0.5">
+                <AccessPointResourceSectionHeader title="直连配置" />
 
-                <div className="mt-4 border-t border-[var(--line-soft)] pt-4">
+                <div className="pt-3">
                   <DirectCliConfigEditorContent
                     section="identity"
                     showHeader={false}
@@ -1218,7 +1353,7 @@ export function AccessPointDetailPanel({
                     showDialog={showDialog}
                   />
                 </div>
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line-soft)] pt-4">
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line-soft)] pt-3">
                   <AppButton
                     variant="tertiary"
                     size="sm"
@@ -1239,9 +1374,9 @@ export function AccessPointDetailPanel({
                     保存配置
                   </AppButton>
                 </div>
-              </div>
+              </section>
             )}
-          </div>
+          </AccessPointResourceShell>
         )}
 
         {/* Tab2: 模型 & 资源 */}
@@ -1491,31 +1626,30 @@ export function AccessPointDetailPanel({
         )}
 
         {activeTab === 'test' && (
-          <div className="space-y-4">
-            {isManagedSite && data.type === 'managed' && data.site.id && currentAccount ? (
-              <EndpointTestPanel
-                target={{ kind: 'managed', siteId: data.site.id, accountId: currentAccount.id }}
-                routeTargetProtocol={currentAccount.routeTargetProtocol}
-                routeTargetProtocolNeedsConfirmation={
-                  currentAccount.routeTargetProtocolNeedsConfirmation
-                }
-                onRouteTargetProtocolChange={onSaveRouteTargetProtocol}
-              />
-            ) : isManagedSite && data.type === 'managed' ? (
-              <div className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
-                请选择账户后进行测试。
+          <AccessPointResourceShell
+            testId={isManagedSite ? 'managed-tab3-content' : 'direct-tab3-content'}
+          >
+            <section className="space-y-0.5">
+              <AccessPointResourceSectionHeader title="端点测试" />
+              <div className="space-y-3 pt-3">
+                {isManagedSite && data.type === 'managed' && data.site.id && currentAccount ? (
+                  <EndpointTestPanel
+                    target={{ kind: 'managed', siteId: data.site.id, accountId: currentAccount.id }}
+                    embedded
+                  />
+                ) : isManagedSite && data.type === 'managed' ? (
+                  <div className="py-5 text-center text-sm text-[var(--text-secondary)]">
+                    请选择账户后进行测试。
+                  </div>
+                ) : isDirectConfig && data.type === 'custom-cli' ? (
+                  <EndpointTestPanel
+                    target={{ kind: 'direct', configId: data.config.id }}
+                    embedded
+                  />
+                ) : null}
               </div>
-            ) : isDirectConfig && data.type === 'custom-cli' ? (
-              <EndpointTestPanel
-                target={{ kind: 'direct', configId: data.config.id }}
-                routeTargetProtocol={data.config.routeTargetProtocol}
-                routeTargetProtocolNeedsConfirmation={
-                  data.config.routeTargetProtocolNeedsConfirmation
-                }
-                onRouteTargetProtocolChange={onSaveRouteTargetProtocol}
-              />
-            ) : null}
-          </div>
+            </section>
+          </AccessPointResourceShell>
         )}
       </div>
     </OverlayDrawer>

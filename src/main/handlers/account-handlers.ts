@@ -41,6 +41,16 @@ export function registerAccountHandlers(): void {
         user_id?: string;
         auto_refresh?: boolean;
         auto_refresh_interval?: number;
+        routeTargetProtocol?:
+          | 'native'
+          | 'anthropic-messages'
+          | 'openai-chat-completions'
+          | 'openai-responses';
+        routeTargetProtocolNeedsConfirmation?: boolean;
+        routeAuthScheme?: 'bearer' | 'x-api-key';
+        supportedProtocols?: Array<
+          'anthropic-messages' | 'openai-chat-completions' | 'openai-responses'
+        >;
         cli_config?: any;
         anyRouterConfig?: { userHash?: string };
       }

@@ -26,6 +26,7 @@ import { app } from 'electron';
 import { backupManager } from './backup-manager';
 import { notifyAppDataChanged } from './app-data-events';
 import { runtimeCacheManager } from './runtime-cache-manager';
+import { endpointTestStateService } from './endpoint-test-state-service';
 import { routeStateManager } from './route-state-manager';
 import { routeStateAffinityService } from './route-state-affinity-service';
 import { routeSessionActivityService } from './route-session-activity-service';
@@ -83,6 +84,7 @@ import {
   CLI_TARGET_PROTOCOLS,
   DEFAULT_CLI_CONFIG,
   normalizeCliTargetProtocol,
+  normalizeCliUpstreamProtocolsWithDefault,
   type CliTargetProtocol,
 } from '../shared/types/cli-config';
 import {
@@ -204,6 +206,9 @@ function migrateLegacyRouteTargetProtocol(
   } else if (legacyValues.size > 1) {
     owner.routeTargetProtocol = 'native';
     owner.routeTargetProtocolNeedsConfirmation = true;
+  } else {
+    owner.routeTargetProtocol = 'native';
+    owner.routeTargetProtocolNeedsConfirmation = false;
   }
 }
 
@@ -265,6 +270,18 @@ function areStringSetsEqual(left: string[] | undefined, right: string[] | undefi
   return (
     leftValues.length === rightValues.length &&
     leftValues.every((value, index) => rightValues[index] === value)
+  );
+}
+
+function snapshotAccountRouteSettings(accounts: readonly AccountCredential[]): string {
+  return JSON.stringify(
+    accounts.map(account => ({
+      id: account.id,
+      routeTargetProtocol: account.routeTargetProtocol,
+      routeTargetProtocolNeedsConfirmation: account.routeTargetProtocolNeedsConfirmation,
+      routeAuthScheme: account.routeAuthScheme,
+      supportedProtocols: account.supportedProtocols,
+    }))
   );
 }
 
@@ -590,10 +607,18 @@ export class UnifiedConfigManager {
     if (this.cleanupLegacyRouteRedirectionExample(config)) {
       needsSave = true;
     }
+    const accountRouteSettingsBefore = snapshotAccountRouteSettings(config.accounts || []);
     config = this.normalizeConfig(config);
-    const routeStateSnapshot = await routeStateManager.loadSnapshot();
+    if (snapshotAccountRouteSettings(config.accounts) !== accountRouteSettingsBefore) {
+      needsSave = true;
+    }
+    const [routeStateSnapshot, endpointTests] = await Promise.all([
+      routeStateManager.loadSnapshot(),
+      endpointTestStateService.loadTargets(config.routing!.endpointTests),
+    ]);
     const hasRouteRuntimePayload = this.hasPersistedRouteRuntimePayload(config);
     routeStateManager.applySnapshotToRouting(config.routing!, routeStateSnapshot);
+    config.routing!.endpointTests = endpointTests;
     if (hasRouteRuntimePayload) {
       needsSave = true;
     }
@@ -949,6 +974,21 @@ export class UnifiedConfigManager {
     config.accounts = config.accounts.map(account => {
       const normalized = { ...account } as AccountCredential & { status?: unknown };
       delete normalized.status;
+      if (
+        typeof normalized.routeTargetProtocol === 'string' &&
+        CLI_TARGET_PROTOCOLS.includes(normalized.routeTargetProtocol)
+      ) {
+        normalized.routeTargetProtocol = normalizeCliTargetProtocol(normalized.routeTargetProtocol);
+      } else {
+        delete normalized.routeTargetProtocol;
+        delete normalized.routeTargetProtocolNeedsConfirmation;
+      }
+      if (normalized.routeAuthScheme !== 'bearer' && normalized.routeAuthScheme !== 'x-api-key') {
+        delete normalized.routeAuthScheme;
+      }
+      normalized.supportedProtocols = normalizeCliUpstreamProtocolsWithDefault(
+        normalized.supportedProtocols
+      );
       return normalized;
     });
 
@@ -1271,6 +1311,13 @@ export class UnifiedConfigManager {
           Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
         >
       );
+      if (!account.routeTargetProtocol) {
+        account.routeTargetProtocol = 'native';
+        account.routeTargetProtocolNeedsConfirmation = false;
+      }
+      if (account.routeAuthScheme !== 'bearer' && account.routeAuthScheme !== 'x-api-key') {
+        delete account.routeAuthScheme;
+      }
       if (account.cli_config && !account.cli_config.grokBuild) {
         account.cli_config.grokBuild = { ...DEFAULT_CLI_CONFIG.grokBuild };
       }
@@ -1924,6 +1971,21 @@ export class UnifiedConfigManager {
     const site = this.config!.sites.find(s => s.id === account.site_id);
     const accountInput = { ...account } as typeof account & { status?: unknown };
     delete accountInput.status;
+    migrateLegacyRouteTargetProtocol(
+      accountInput,
+      accountInput.cli_config as Partial<
+        Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+      >
+    );
+    accountInput.routeTargetProtocolNeedsConfirmation = Boolean(
+      accountInput.routeTargetProtocolNeedsConfirmation
+    );
+    accountInput.supportedProtocols = normalizeCliUpstreamProtocolsWithDefault(
+      accountInput.supportedProtocols
+    );
+    if (accountInput.routeAuthScheme !== 'bearer' && accountInput.routeAuthScheme !== 'x-api-key') {
+      delete accountInput.routeAuthScheme;
+    }
 
     // 站点有 legacy 凭证但无账户记录 → 先补建默认账户，防止原凭证被覆盖丢失
     if (site) {
@@ -1938,6 +2000,9 @@ export class UnifiedConfigManager {
           user_id: site.user_id || '',
           access_token: site.access_token || '',
           auth_source: 'manual',
+          routeTargetProtocol: 'native',
+          routeTargetProtocolNeedsConfirmation: false,
+          supportedProtocols: normalizeCliUpstreamProtocolsWithDefault(undefined),
           cached_data: site.cached_data ? { ...site.cached_data } : undefined,
           created_at: now,
           updated_at: now,
@@ -2011,6 +2076,10 @@ export class UnifiedConfigManager {
         | 'user_id'
         | 'auto_refresh'
         | 'auto_refresh_interval'
+        | 'routeTargetProtocol'
+        | 'routeTargetProtocolNeedsConfirmation'
+        | 'routeAuthScheme'
+        | 'supportedProtocols'
         | 'cli_config'
         | 'anyRouterConfig'
         | 'auth_source'

@@ -1,7 +1,6 @@
 import * as path from 'path';
 import { app } from 'electron';
 import type {
-  EndpointTestTargetState,
   RouteAnalyticsBucket,
   RouteChannelHealth,
   RouteChannelStats,
@@ -14,7 +13,6 @@ import Logger from './utils/logger';
 import { readJsonFile, writeJsonFileAtomically } from './utils/atomic-json';
 
 const ROUTE_RUNTIME_STATE_VERSION = '1';
-const ROUTE_ENDPOINT_TESTS_STATE_VERSION = '1';
 const ROUTE_ANALYTICS_STATE_VERSION = '1';
 const ROUTE_MODEL_SOURCES_STATE_VERSION = '1';
 const MAX_ROUTE_RUNTIME_ITEMS = 5000;
@@ -32,12 +30,6 @@ export interface RouteRuntimeStateFile {
   last_updated: number;
 }
 
-export interface RouteEndpointTestsStateFile {
-  version: string;
-  targets: Record<string, EndpointTestTargetState>;
-  last_updated: number;
-}
-
 export interface RouteAnalyticsStateFile {
   version: string;
   buckets: Record<string, RouteAnalyticsBucket>;
@@ -52,17 +44,8 @@ export interface RouteModelSourcesStateFile {
 
 export interface RouteStateSnapshot {
   runtime: RouteRuntimeStateFile;
-  endpointTests: RouteEndpointTestsStateFile;
   analytics: RouteAnalyticsStateFile;
   modelSources: RouteModelSourcesStateFile;
-}
-
-function emptyRouteEndpointTestsState(): RouteEndpointTestsStateFile {
-  return {
-    version: ROUTE_ENDPOINT_TESTS_STATE_VERSION,
-    targets: {},
-    last_updated: 0,
-  };
 }
 
 function emptyRouteRuntimeState(): RouteRuntimeStateFile {
@@ -100,15 +83,6 @@ function normalizeRouteRuntimeState(value: unknown): RouteRuntimeStateFile {
     routePathStates: partial.routePathStates || {},
     routeEndpointCapabilities: partial.routeEndpointCapabilities || {},
     health: partial.health || {},
-    last_updated: partial.last_updated || 0,
-  };
-}
-
-function normalizeRouteEndpointTestsState(value: unknown): RouteEndpointTestsStateFile {
-  const partial = (value || {}) as Partial<RouteEndpointTestsStateFile>;
-  return {
-    version: partial.version || ROUTE_ENDPOINT_TESTS_STATE_VERSION,
-    targets: partial.targets || {},
     last_updated: partial.last_updated || 0,
   };
 }
@@ -177,10 +151,6 @@ export class RouteStateManager {
     return path.join(this.stateDir, 'route-runtime.json');
   }
 
-  getRouteEndpointTestsPath(): string {
-    return path.join(this.stateDir, 'route-endpoint-tests.json');
-  }
-
   getRouteAnalyticsPath(): string {
     return path.join(this.stateDir, 'route-analytics.json');
   }
@@ -190,16 +160,11 @@ export class RouteStateManager {
   }
 
   async loadSnapshot(): Promise<RouteStateSnapshot> {
-    const [runtime, endpointTests, analytics, modelSources] = await Promise.all([
+    const [runtime, analytics, modelSources] = await Promise.all([
       readRecoverableState(
         this.getRouteRuntimePath(),
         emptyRouteRuntimeState(),
         normalizeRouteRuntimeState
-      ),
-      readRecoverableState(
-        this.getRouteEndpointTestsPath(),
-        emptyRouteEndpointTestsState(),
-        normalizeRouteEndpointTestsState
       ),
       readRecoverableState(
         this.getRouteAnalyticsPath(),
@@ -213,7 +178,7 @@ export class RouteStateManager {
       ),
     ]);
 
-    return { runtime, endpointTests, analytics, modelSources };
+    return { runtime, analytics, modelSources };
   }
 
   applySnapshotToRouting(routing: RoutingConfig, snapshot: RouteStateSnapshot): void {
@@ -227,7 +192,6 @@ export class RouteStateManager {
       ...(routing.routeEndpointCapabilities || {}),
     };
     routing.health = { ...snapshot.runtime.health, ...routing.health };
-    routing.endpointTests = { ...snapshot.endpointTests.targets, ...routing.endpointTests };
     routing.analytics.buckets = {
       ...snapshot.analytics.buckets,
       ...routing.analytics.buckets,
@@ -241,23 +205,9 @@ export class RouteStateManager {
   async saveSnapshotFromRouting(routing: RoutingConfig): Promise<void> {
     await Promise.all([
       this.saveRuntimeState(routing),
-      this.saveEndpointTestsState(routing),
       this.saveAnalyticsState(routing),
       this.saveModelSourcesState(routing),
     ]);
-  }
-
-  async saveEndpointTestsState(routing: RoutingConfig): Promise<void> {
-    const now = Date.now();
-    await writeJsonFileAtomically(this.getRouteEndpointTestsPath(), {
-      version: ROUTE_ENDPOINT_TESTS_STATE_VERSION,
-      targets: keepNewestRecordEntries(
-        routing.endpointTests,
-        MAX_ROUTE_RUNTIME_ITEMS,
-        value => value.updatedAt || 0
-      ),
-      last_updated: now,
-    } satisfies RouteEndpointTestsStateFile);
   }
 
   async saveRuntimeState(routing: RoutingConfig): Promise<void> {

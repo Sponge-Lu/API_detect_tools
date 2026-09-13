@@ -632,6 +632,8 @@ describe('sites page redesign', () => {
       expect(screen.getByPlaceholderText('https://api.example.com')).toBeInTheDocument();
       expect(screen.queryByPlaceholderText('sk-...')).not.toBeInTheDocument();
       expect(screen.getAllByRole('button', { name: '保存配置' })).toHaveLength(1);
+      expect(screen.getByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: '上游鉴权方式' })).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: '删除配置' }));
       expect(onDeleteDirectConfig).toHaveBeenCalledWith(customCliConfig);
@@ -642,7 +644,9 @@ describe('sites page redesign', () => {
 
       expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '测试' }));
-      expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+      expect(await screen.findByTitle('测试 /v1/messages')).toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: '路由上游协议' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: '上游鉴权方式' })).not.toBeInTheDocument();
     }
   );
 
@@ -747,6 +751,67 @@ describe('sites page redesign', () => {
     expect(within(content).getByText(/^令牌管理 \(0\/0\)$/)).toBeInTheDocument();
   });
 
+  it('uses shared resource-shell chrome across all detail tabs for managed and direct access points', async () => {
+    const expectSharedShell = (testId: string) => {
+      expect(screen.getByTestId(testId)).toHaveClass(
+        'cursor-default',
+        'space-y-[var(--spacing-sm)]',
+        'border-t',
+        'bg-[var(--surface-2)]/92',
+        'px-[var(--spacing-md)]',
+        'py-[var(--spacing-sm)]'
+      );
+    };
+
+    const managed = render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary Account',
+            user_id: 'user-1',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+      />
+    );
+
+    expectSharedShell('managed-tab1-content');
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    expectSharedShell('managed-tab2-content');
+    fireEvent.click(screen.getByRole('button', { name: '测试' }));
+    await screen.findByTitle('测试 /v1/messages');
+    expectSharedShell('managed-tab3-content');
+    expect(
+      within(screen.getByTestId('managed-tab3-content')).getByText('端点测试')
+    ).toBeInTheDocument();
+
+    managed.unmount();
+
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{ type: 'custom-cli', config: customCliConfig }}
+      />
+    );
+
+    expectSharedShell('direct-tab1-content');
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    expectSharedShell('direct-tab2-content');
+    fireEvent.click(screen.getByRole('button', { name: '测试' }));
+    await screen.findByTitle('测试 /v1/messages');
+    expectSharedShell('direct-tab3-content');
+    expect(
+      within(screen.getByTestId('direct-tab3-content')).getByText('端点测试')
+    ).toBeInTheDocument();
+  });
+
   it('merges managed side-panel tab1 into one editable information surface', async () => {
     const onSaveAccount = vi.fn().mockResolvedValue(undefined);
     const onRefreshAccountInfo = vi.fn().mockResolvedValue(undefined);
@@ -816,6 +881,12 @@ describe('sites page redesign', () => {
     fireEvent.change(screen.getByDisplayValue('Primary Account'), {
       target: { value: 'Primary Account Edited' },
     });
+    fireEvent.change(screen.getByRole('combobox', { name: '上游鉴权方式' }), {
+      target: { value: 'bearer' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: '路由上游协议' }), {
+      target: { value: 'openai-responses' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
 
     await waitFor(() => expect(onSaveAccount).toHaveBeenCalledTimes(1));
@@ -827,6 +898,9 @@ describe('sites page redesign', () => {
         access_token: 'sk-managed-access-token',
         auto_refresh: true,
         auto_refresh_interval: 30,
+        routeTargetProtocol: 'openai-responses',
+        routeTargetProtocolNeedsConfirmation: false,
+        routeAuthScheme: 'bearer',
       })
     );
 
@@ -1058,7 +1132,8 @@ describe('sites page redesign', () => {
 
       expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '测试' }));
-      expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+      expect(await screen.findByTitle('测试 /v1/messages')).toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: '路由上游协议' })).not.toBeInTheDocument();
       expect(onSaveCliConfig).not.toHaveBeenCalled();
     }
   );
@@ -1105,7 +1180,7 @@ describe('sites page redesign', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '测试' }));
-    expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+    expect(await screen.findByTitle('测试 /v1/messages')).toBeInTheDocument();
 
     await act(async () => {
       rerender(
@@ -1121,7 +1196,7 @@ describe('sites page redesign', () => {
       );
     });
 
-    expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+    expect(await screen.findByTitle('测试 /v1/messages')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
     expect(onSaveCliConfig).not.toHaveBeenCalled();
     expect(screen.queryByText('站点与账户')).not.toBeInTheDocument();

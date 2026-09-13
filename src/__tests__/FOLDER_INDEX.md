@@ -45,7 +45,8 @@
 | **browser-profile-reconcile.test.ts** | 浏览器 Profile 管理测试 | 历史 manual 账户原地绑定主 Profile、同站 Profile 重复占用拦截，以及恢复后按旧 slot-N 重建目录并重写路径 |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
-| **endpoint-test-service.test.ts** | 端点测试服务回归 | 三协议统一问题、无 CLI 特征、Key 分组模型、简短错误、托管/直连解析与 `testedAt` 持久化 |
+| **endpoint-test-service.test.ts** | 端点测试服务回归 | 三协议原生请求、直接上游 URL/鉴权/代理、禁止导入路由通道/代理/target-lock、路由状态不变、Key 分组模型、简短错误、托管/直连解析与 `testedAt` 持久化 |
+| **upstream-credential-resolver.test.ts** | 中性上游凭证解析回归 | 直连 Key 身份、托管账户归属、脱敏 Key 补全与持久化，不触碰路由运行态 |
 | **endpoint-test-panel.test.tsx** | 端点测试 UI 回归 | 三卡常驻展开、Key 分组/全部模型切换、独立选择、最新时间恢复与成功/失败显示 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
 | **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消、上游失败分类记账与流式校验 |

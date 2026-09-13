@@ -23,7 +23,7 @@
 
 | 文件夹 | 职责 | 关键文件 |
 |--------|------|--------|
-| **types/** | TypeScript 类型定义 | site.ts, route-proxy.ts, credit.ts |
+| **types/** | TypeScript 类型定义 | site.ts, endpoint-test.ts, route-proxy.ts, credit.ts |
 | **schemas/** | Zod 数据验证规则 | index.ts |
 | **constants/** | 常量定义 | index.ts；含站点列表列宽默认值、列宽版本与最大宽度 |
 | **theme/** | 主题预设与模式归一化 | themePresets.ts |
@@ -84,15 +84,20 @@ function getApiKeyAvailability(apiKey): ApiKeyAvailability;
 function isApiKeyActive(apiKey): boolean;
 ```
 
+### endpoint-test.ts
+
+**职责**: 手动上游端点测试的独立共享契约；定义目标、协议、API Key 选项、选择状态与结果，不包含路由运行态
+
 ### route-proxy.ts
 
-**职责**: 路由工作台共享契约，覆盖代理服务、模型注册表、独立端点测试和统计配置
+**职责**: 路由工作台共享契约，覆盖代理服务、模型注册表和统计配置；端点测试类型通过兼容 re-export 暴露
 
 **关键类型**:
 ```typescript
 interface RoutingConfig {
   server: RouteProxyServerConfig;
   modelRegistry: RouteModelRegistryConfig;
+  /** legacy compatibility projection; persisted records are owned by endpoint-test sidecar */
   endpointTests: Record<string, EndpointTestTargetState>;
   analytics: RouteAnalyticsConfig;
 }

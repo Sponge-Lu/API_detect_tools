@@ -16,7 +16,7 @@
  * 单一数据源：config.json
  */
 
-import type { CliConfig, CliTargetProtocol } from './cli-config';
+import type { CliConfig, CliTargetProtocol, CliUpstreamProtocol } from './cli-config';
 import type { RoutingConfig } from './route-proxy';
 
 // ============= 基础类型 =============
@@ -50,6 +50,9 @@ export const SITE_TYPE_LABELS: Record<SiteType, string> = {
 
 /** 站点健康状态 */
 export type SiteHealthStatus = 'healthy' | 'warning' | 'error' | 'unknown';
+
+/** 上游请求鉴权方式。未设置时由端点协议/提供商默认值决定。 */
+export type RouteAuthScheme = 'bearer' | 'x-api-key';
 
 /** 健康状态详情 */
 export interface HealthStatus {
@@ -200,7 +203,9 @@ export interface AccountCredential {
   // === 账户级配置 ===
   routeTargetProtocol?: CliTargetProtocol;
   routeTargetProtocolNeedsConfirmation?: boolean;
-  routeAuthScheme?: 'bearer' | 'x-api-key';
+  routeAuthScheme?: RouteAuthScheme;
+  /** Concrete protocols accepted natively; missing legacy values normalize to all protocols. */
+  supportedProtocols?: CliUpstreamProtocol[];
   cli_config?: CliConfig; // v3.0.6: 账户的 CLI 配置（引用该账户的 api_key）
   anyRouterConfig?: AnyRouterAccountConfig; // AnyRouter 专用配置
 

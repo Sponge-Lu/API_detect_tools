@@ -15,6 +15,7 @@ import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
 import Logger from './utils/logger';
+import { writeTextFileAtomically } from './utils/atomic-json';
 import type { CustomCliConfig, CustomCliSettings } from '../shared/types/custom-cli-config';
 import {
   normalizeCustomCliApiKeys,
@@ -35,6 +36,7 @@ import {
   BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   normalizeCliTargetProtocol,
+  normalizeCliUpstreamProtocolsWithDefault,
   type CliTargetProtocol,
 } from '../shared/types/cli-config';
 
@@ -64,6 +66,10 @@ export function getCustomCliConfigFilePath(): string {
 
 function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
   for (const config of configs) {
+    config.supportedProtocols = normalizeCliUpstreamProtocolsWithDefault(config.supportedProtocols);
+    if (config.routeAuthScheme !== 'bearer' && config.routeAuthScheme !== 'x-api-key') {
+      delete config.routeAuthScheme;
+    }
     if (typeof config.modelUrl === 'string') {
       const modelUrl = config.modelUrl.trim();
       config.modelUrl = modelUrl || undefined;
@@ -101,6 +107,9 @@ function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
       CLI_TARGET_PROTOCOLS.includes(config.routeTargetProtocol)
     ) {
       config.routeTargetProtocol = normalizeCliTargetProtocol(config.routeTargetProtocol);
+      config.routeTargetProtocolNeedsConfirmation = Boolean(
+        config.routeTargetProtocolNeedsConfirmation
+      );
       continue;
     }
     if (legacyValues.size === 1) {
@@ -109,7 +118,26 @@ function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
     } else if (legacyValues.size > 1) {
       config.routeTargetProtocol = 'native';
       config.routeTargetProtocolNeedsConfirmation = true;
+    } else {
+      config.routeTargetProtocol = 'native';
+      config.routeTargetProtocolNeedsConfirmation = false;
     }
+  }
+}
+
+async function persistNormalizedCustomCliConfigs(
+  filePath: string,
+  configs: CustomCliConfig[],
+  activeConfigId: string | null
+): Promise<void> {
+  try {
+    await writeTextFileAtomically(
+      filePath,
+      JSON.stringify({ configs: encryptCustomCliConfigs(configs), activeConfigId }, null, 2),
+      { encoding: 'utf-8' }
+    );
+  } catch (error) {
+    Logger.warn('[CustomCliConfigService] 规范化旧配置后写回失败:', error);
   }
 }
 
@@ -121,7 +149,15 @@ export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStora
     const configs = Array.isArray(data.configs) ? data.configs : [];
     const decryptedConfigs = decryptCustomCliConfigs(configs);
 
+    const beforeNormalization = JSON.stringify(decryptedConfigs);
     normalizeCustomCliConfigs(decryptedConfigs);
+    if (JSON.stringify(decryptedConfigs) !== beforeNormalization) {
+      await persistNormalizedCustomCliConfigs(
+        filePath,
+        decryptedConfigs,
+        typeof data.activeConfigId === 'string' ? data.activeConfigId : null
+      );
+    }
 
     return {
       configs: decryptedConfigs,
@@ -173,13 +209,15 @@ export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
 export async function saveCustomCliConfigStorage(data: CustomCliConfigStorage): Promise<void> {
   const filePath = getCustomCliConfigFilePath();
   const previous = await loadCustomCliConfigStorage();
+  const normalizedConfigs = data.configs.map(config => ({ ...config }));
+  normalizeCustomCliConfigs(normalizedConfigs);
   try {
     const encryptedData = {
-      configs: encryptCustomCliConfigs(data.configs),
+      configs: encryptCustomCliConfigs(normalizedConfigs),
       activeConfigId: data.activeConfigId,
     };
     await fs.writeFile(filePath, JSON.stringify(encryptedData, null, 2), 'utf-8');
-    const nextIds = new Set(data.configs.map(config => config.id));
+    const nextIds = new Set(normalizedConfigs.map(config => config.id));
     await routeStateAffinityService.removeBySites(
       previous.configs
         .filter(config => !nextIds.has(config.id))

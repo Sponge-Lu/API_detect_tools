@@ -36,6 +36,10 @@ describe('cli-protocol-adapter request adapt', () => {
     );
     expect(result.upstreamPath).toBe('/v1/messages');
     expect(result.upstreamMethod).toBe('POST');
+    expect(result.headers).toMatchObject({
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    });
     const body = JSON.parse(result.body.toString('utf-8'));
     expect(body.model).toBe('upstream-opus');
     expect(body.stream).toBe(true);

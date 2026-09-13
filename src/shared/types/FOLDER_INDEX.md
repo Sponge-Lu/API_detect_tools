@@ -16,7 +16,8 @@
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
 | **site.ts** | 站点、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
-| **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、含父子谱系与客户端模型的会话路由实例、端点历史类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
+| **endpoint-test.ts** | 手动上游端点测试目标、协议、API Key 选项、选择状态与结果 | EndpointTestTarget, EndpointTestProtocol, EndpointTestResult |
+| **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、含父子谱系与客户端模型的会话路由实例、端点历史类型；兼容 re-export 端点测试类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
 | **config-file-profile.ts** | 版本化配置方案、含协议元数据的目标目录、文件事务和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
 | **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
 | **custom-cli-config.ts** | 直连接入点配置、模型列表 URL 及接入点级上游协议 | CustomCliConfig, modelUrl, routeTargetProtocol, manualModels |
@@ -170,8 +171,32 @@ const status: SiteStatus = {
   lastChecked: Date.now()
 };
 ```
+### endpoint-test.ts - 手动端点测试类型
+**职责**: 定义与路由运行态完全独立的手动上游测试契约
+**关键类型**:
+```typescript
+type EndpointTestProtocol =
+  | 'anthropic-messages'
+  | 'openai-responses'
+  | 'openai-chat-completions';
+
+type EndpointTestTarget =
+  | { kind: 'managed'; siteId: string; accountId: string }
+  | { kind: 'direct'; configId: string };
+
+interface EndpointTestResult {
+  success: boolean;
+  endpoint: string;
+  apiKeyId: string;
+  apiKeyLabel: string;
+  model: string;
+  testedAt: number;
+  latencyMs: number;
+}
+```
+
 ### route-proxy.ts - 路由工作台类型
-**职责**: 定义路由代理、模型注册表、独立端点测试、profile affinity 分类摘要、History 请求端点标签和统计分析相关共享契约
+**职责**: 定义路由代理、模型注册表、profile affinity 分类摘要、History 请求端点标签和统计分析相关共享契约；通过 re-export 保持旧端点测试导入兼容
 **关键类型**:
 ```typescript
 interface RouteProxyServerConfig {
@@ -188,13 +213,6 @@ interface RouteModelRegistryConfig {
 interface RouteModelSourceRef {
   sourceType: 'account' | 'site' | 'customCli';
   availableCliTypes?: RouteCliType[];
-}
-
-interface EndpointTestResult {
-  protocol: 'messages' | 'responses' | 'chatCompletions';
-  success: boolean;
-  model: string;
-  testedAt: number;
 }
 
 interface RouteInstanceKey {

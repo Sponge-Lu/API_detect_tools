@@ -14,8 +14,10 @@ import {
   normalizeCliTargetProtocol,
   type BuiltinCliType,
   type CliTargetProtocol,
+  type CliUpstreamProtocol,
+  normalizeCliUpstreamProtocolsWithDefault,
 } from './cli-config';
-import type { ModelPricingData } from './site';
+import type { ModelPricingData, RouteAuthScheme } from './site';
 import { normalizeCircledGroupLabel } from '../utils/groupLabel';
 
 export const CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT = 1;
@@ -66,7 +68,9 @@ export interface CustomCliConfig {
   /** 真实路由请求使用的上游协议；测试请求始终按被测端点原生发送 */
   routeTargetProtocol?: CliTargetProtocol;
   routeTargetProtocolNeedsConfirmation?: boolean;
-  routeAuthScheme?: 'bearer' | 'x-api-key';
+  routeAuthScheme?: RouteAuthScheme;
+  /** Concrete protocols accepted natively; missing legacy values normalize to all protocols. */
+  supportedProtocols?: CliUpstreamProtocol[];
   /** 加油站链接 */
   gasStationUrl?: string;
   /** 直连配置分组倍率，用于估算实际费用 */
@@ -113,6 +117,9 @@ export function normalizeCustomCliSettings(setting?: CustomCliSettings | null): 
 /** 创建新自定义配置的默认值 */
 export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>): CustomCliConfig {
   const now = Date.now();
+  const normalizedSupportedProtocols = normalizeCliUpstreamProtocolsWithDefault(
+    partial?.supportedProtocols
+  );
   const cliSettings = Object.fromEntries(
     BUILTIN_CLI_TYPES.map(cliType => [
       cliType,
@@ -137,6 +144,9 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     createdAt: now,
     updatedAt: now,
     ...partial,
+    routeTargetProtocol: normalizeCliTargetProtocol(partial?.routeTargetProtocol),
+    routeTargetProtocolNeedsConfirmation: partial?.routeTargetProtocolNeedsConfirmation ?? false,
+    supportedProtocols: normalizedSupportedProtocols,
     cliSettings,
     groupMultiplier: normalizeCustomCliGroupMultiplier(partial?.groupMultiplier),
     apiKeys,

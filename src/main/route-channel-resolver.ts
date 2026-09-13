@@ -6,18 +6,14 @@
  */
 
 import { unifiedConfigManager } from './unified-config-manager';
-import { resolveApiKeyId } from './route-model-registry-service';
+import { resolveApiKeyId } from './api-key-identity';
 import {
-  buildCustomCliRouteAccountId,
-  buildCustomCliRouteApiKeyId,
-  buildCustomCliRouteSiteId,
   isCustomCliRouteChannel,
   loadCustomCliConfigStorage,
   parseCustomCliRouteApiKeyId,
   parseCustomCliRouteConfigId,
 } from './custom-cli-config-service';
-import { normalizeCustomCliApiKeys } from '../shared/types/custom-cli-config';
-import { normalizeCliTargetProtocol } from '../shared/types/cli-config';
+import { normalizeCliTargetProtocol, type CliUpstreamProtocol } from '../shared/types/cli-config';
 import type {
   RouteRule,
   RouteChannelKey,
@@ -29,12 +25,22 @@ import type {
 } from '../shared/types/route-proxy';
 import { buildRouteApiKeyPriorityKey } from '../shared/types/route-proxy';
 import { isApiKeyActive } from '../shared/types/site';
-import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../shared/types/site';
-import type { TokenService } from './token-service';
+import type { AccountCredential, ApiKeyInfo } from '../shared/types/site';
+import {
+  isMaskedApiKeyValue as isRouteMaskedApiKeyValue,
+  resolveUpstreamCredentials,
+} from './upstream-credential-resolver';
+
+export {
+  configureUpstreamApiKeyResolver as configureRouteApiKeyResolver,
+  isMaskedApiKeyValue as isRouteMaskedApiKeyValue,
+  resolveAccountApiKeyValue,
+} from './upstream-credential-resolver';
 
 export type ResolvedChannel = RouteChannelKey & {
   sourceProtocol: RouteSourceProtocol;
   targetProtocol?: ReturnType<typeof normalizeCliTargetProtocol>;
+  supportedProtocols?: CliUpstreamProtocol[];
   targetEndpoint?: string;
   canonicalModel?: string;
   resolvedModel?: string;
@@ -200,120 +206,45 @@ function buildCanonicalDisplayItems(
   ];
 }
 
-let routeTokenService: TokenService | null = null;
-
-export function configureRouteApiKeyResolver(tokenService: TokenService): void {
-  routeTokenService = tokenService;
-}
-
-export function isRouteMaskedApiKeyValue(value: unknown): boolean {
-  if (typeof value !== 'string') {
-    return false;
-  }
-
-  const normalized = value.trim();
-  if (!normalized) {
-    return false;
-  }
-
-  return normalized.includes('*') || normalized.includes('...') || normalized.includes('…');
-}
-
-function getStoredApiKeyValue(info: ApiKeyInfo | null | undefined): string {
-  return info?.key || info?.token || '';
-}
-
-function withStoredApiKeyValue(info: ApiKeyInfo, rawKey: string): ApiKeyInfo {
-  if ('token' in info && !('key' in info)) {
-    return { ...info, token: rawKey };
-  }
-
-  return { ...info, key: rawKey };
-}
-
-function resolveBrowserSlot(accountId: string): number | undefined {
-  const account = unifiedConfigManager.getAccountById(accountId);
-  if (!account) {
-    return undefined;
-  }
-
-  const siteAccounts = unifiedConfigManager.getAccountsBySiteId(account.site_id);
-  const slotIndex = siteAccounts.findIndex(item => item.id === accountId);
-  return slotIndex >= 0 ? slotIndex : 0;
-}
-
-async function persistResolvedApiKeyValue(
-  accountId: string,
-  apiKeyId: string,
-  rawKey: string
-): Promise<void> {
-  await unifiedConfigManager.updateAccountCachedData(accountId, current => {
-    const currentApiKeys = current?.api_keys || [];
-    return {
-      ...(current || {}),
-      api_keys: currentApiKeys.map(item =>
-        resolveApiKeyId(item) === apiKeyId ? withStoredApiKeyValue(item, rawKey) : item
-      ),
-      last_refresh: Date.now(),
-    };
-  });
-}
-
 function resolveStoredTargetProtocol(
-  account: AccountCredential | null | undefined,
-  sourceProtocol: RouteSourceProtocol
-): RouteSourceProtocol {
-  const configured = normalizeCliTargetProtocol(account?.routeTargetProtocol);
-  return configured === 'native' ? sourceProtocol : configured;
+  account: AccountCredential | null | undefined
+): ReturnType<typeof normalizeCliTargetProtocol> {
+  return normalizeCliTargetProtocol(account?.routeTargetProtocol);
+}
+
+/**
+ * Resolve an upstream protocol while honoring an optional capability declaration.
+ * An omitted declaration preserves the legacy route behavior. A declared list is
+ * authoritative: unsupported sources may only be converted to a declared target,
+ * and automatic conversion is safe only when exactly one target is advertised.
+ */
+export function resolveSupportedTargetProtocol(
+  sourceProtocol: RouteSourceProtocol,
+  configuredTarget: ReturnType<typeof normalizeCliTargetProtocol>,
+  supportedProtocols?: readonly CliUpstreamProtocol[]
+): CliUpstreamProtocol | null {
+  if (supportedProtocols === undefined) {
+    return configuredTarget === 'native' ? sourceProtocol : configuredTarget;
+  }
+
+  const supported = Array.from(new Set(supportedProtocols));
+  const explicitTarget = configuredTarget !== 'native' ? configuredTarget : undefined;
+  if (explicitTarget && !supported.includes(explicitTarget)) {
+    return null;
+  }
+  if (supported.includes(sourceProtocol)) {
+    return explicitTarget ?? sourceProtocol;
+  }
+  if (explicitTarget) {
+    return explicitTarget;
+  }
+  return supported.length === 1 ? supported[0] : null;
 }
 
 function getTargetEndpoint(protocol: RouteSourceProtocol): string {
   if (protocol === 'anthropic-messages') return '/v1/messages';
   if (protocol === 'openai-responses') return '/v1/responses';
   return '/v1/chat/completions';
-}
-
-export async function resolveAccountApiKeyValue(
-  site: UnifiedSite,
-  account: AccountCredential,
-  info: ApiKeyInfo
-): Promise<string | null> {
-  const currentValue = getStoredApiKeyValue(info);
-  if (currentValue && !isRouteMaskedApiKeyValue(currentValue)) {
-    return currentValue;
-  }
-
-  if (!routeTokenService) {
-    return null;
-  }
-
-  const userId = Number(account.user_id || site.user_id || 0);
-  const accessToken = account.access_token || site.access_token || '';
-  if (!userId || !accessToken) {
-    return null;
-  }
-
-  const resolvedValue = await routeTokenService.resolveUsableApiKeyValue(
-    site.url,
-    userId,
-    accessToken,
-    info,
-    {
-      browserSlot: resolveBrowserSlot(account.id),
-      allowBrowserFallback: true,
-      challengeWaitMs: 10000,
-    }
-  );
-
-  if (!resolvedValue) {
-    return null;
-  }
-
-  if (!isRouteMaskedApiKeyValue(resolvedValue) && resolvedValue !== currentValue) {
-    await persistResolvedApiKeyValue(account.id, resolveApiKeyId(info), resolvedValue);
-  }
-
-  return resolvedValue;
 }
 
 function buildCanonicalModelChannels(
@@ -547,7 +478,10 @@ function buildCanonicalModelChannels(
     );
     const channelTargetProtocol = isCustomCliChannel
       ? undefined
-      : resolveStoredTargetProtocol(accountById.get(group.accountId), rule.sourceProtocol);
+      : resolveStoredTargetProtocol(accountById.get(group.accountId));
+    const channelSupportedProtocols = isCustomCliChannel
+      ? undefined
+      : accountById.get(group.accountId)?.supportedProtocols;
 
     orderedOriginalModels.forEach((resolvedModel, originalModelIndex) => {
       channels.push({
@@ -557,6 +491,7 @@ function buildCanonicalModelChannels(
         apiKeyId: group.apiKeyId,
         sourceProtocol: rule.sourceProtocol,
         targetProtocol: channelTargetProtocol,
+        supportedProtocols: channelSupportedProtocols,
         canonicalModel,
         resolvedModel,
         sitePriority: group.sitePriority,
@@ -609,7 +544,8 @@ function buildGenericChannels(
             accountId: account.id,
             apiKeyId: resolveApiKeyId({ key: site.api_key }),
             sourceProtocol: rule.sourceProtocol,
-            targetProtocol: resolveStoredTargetProtocol(account, rule.sourceProtocol),
+            targetProtocol: resolveStoredTargetProtocol(account),
+            supportedProtocols: account.supportedProtocols,
             canonicalModel: canonicalModel || undefined,
             resolvedModel: canonicalModel || undefined,
             sitePriority: nextSiteOrder,
@@ -639,7 +575,8 @@ function buildGenericChannels(
           accountId: account.id,
           apiKeyId: resolveApiKeyId(apiKey),
           sourceProtocol: rule.sourceProtocol,
-          targetProtocol: resolveStoredTargetProtocol(account, rule.sourceProtocol),
+          targetProtocol: resolveStoredTargetProtocol(account),
+          supportedProtocols: account.supportedProtocols,
           canonicalModel: canonicalModel || undefined,
           resolvedModel: canonicalModel || undefined,
           sitePriority: nextSiteOrder,
@@ -683,88 +620,36 @@ export function resolveChannels(
   return buildGenericChannels(rule, canonicalModel, unifiedConfig);
 }
 
-/** 解析通道凭证 */
 export async function resolveChannelCredentials(
   siteId: string,
   accountId: string,
   apiKeyId: string
-): Promise<{ baseUrl: string; apiKey: string; authScheme?: 'bearer' | 'x-api-key' } | null> {
+): ReturnType<typeof resolveUpstreamCredentials> {
   if (isCustomCliRouteChannel(siteId, accountId, apiKeyId)) {
     const configId = parseCustomCliRouteConfigId(siteId);
-    if (!configId) {
-      return null;
-    }
-
-    const storage = await loadCustomCliConfigStorage();
-    const config = storage.configs.find(item => item.id === configId);
-    const baseUrl = config?.baseUrl?.trim();
     const parsedApiKey = parseCustomCliRouteApiKeyId(apiKeyId);
-    const apiKeys = normalizeCustomCliApiKeys(config?.apiKeys, {
-      legacyApiKey: config?.apiKey,
-      legacyName: config?.name,
-      legacyGroupMultiplier: config?.groupMultiplier,
-    });
-    const apiKey = (
-      parsedApiKey?.keyId
-        ? apiKeys.find(item => item.id === parsedApiKey.keyId)?.key
-        : config?.apiKey || apiKeys[0]?.key
-    )?.trim();
-    if (!baseUrl || !apiKey || isRouteMaskedApiKeyValue(apiKey)) {
+    if (!configId || !parsedApiKey) {
       return null;
     }
-
-    return { baseUrl, apiKey, authScheme: config?.routeAuthScheme };
+    return resolveUpstreamCredentials({
+      kind: 'direct',
+      configId,
+      apiKeyId: parsedApiKey.keyId,
+    });
   }
 
-  const unifiedConfig = unifiedConfigManager.exportConfigSync();
-  if (!unifiedConfig) return null;
-
-  const site = unifiedConfig.sites.find(s => s.id === siteId);
-  if (!site) return null;
-
-  const account = unifiedConfig.accounts.find(a => a.id === accountId);
-  if (!account) return null;
-
-  const apiKeys: ApiKeyInfo[] = account.cached_data?.api_keys || [];
-
-  for (const info of apiKeys) {
-    if (resolveApiKeyId(info) === apiKeyId) {
-      const rawKey = await resolveAccountApiKeyValue(site, account, info);
-      if (!rawKey) {
-        return null;
-      }
-      return { baseUrl: site.url, apiKey: rawKey, authScheme: account.routeAuthScheme };
-    }
-  }
-
-  const localApiKey = (account.local_api_keys || []).find(info => info.id === apiKeyId);
-  if (localApiKey?.key && !isRouteMaskedApiKeyValue(localApiKey.key)) {
-    return {
-      baseUrl: site.url,
-      apiKey: localApiKey.key,
-      authScheme: account.routeAuthScheme,
-    };
-  }
-
-  if (site.api_key) {
-    const keyId = resolveApiKeyId({ key: site.api_key });
-    if (keyId === apiKeyId && !isRouteMaskedApiKeyValue(site.api_key)) {
-      return { baseUrl: site.url, apiKey: site.api_key, authScheme: account.routeAuthScheme };
-    }
-  }
-
-  return null;
+  return resolveUpstreamCredentials({ kind: 'managed', siteId, accountId, apiKeyId });
 }
 
 export async function resolveChannelTarget(
   config: Pick<
     ResolvedChannel,
-    'siteId' | 'accountId' | 'apiKeyId' | 'sourceProtocol' | 'targetProtocol'
+    'siteId' | 'accountId' | 'apiKeyId' | 'sourceProtocol' | 'targetProtocol' | 'supportedProtocols'
   >
 ): Promise<{
   targetProtocol: ReturnType<typeof normalizeCliTargetProtocol>;
   targetEndpoint: string;
-}> {
+} | null> {
   if (isCustomCliRouteChannel(config.siteId, config.accountId, config.apiKeyId)) {
     const configId = parseCustomCliRouteConfigId(config.siteId);
     if (configId) {
@@ -773,7 +658,14 @@ export async function resolveChannelTarget(
       const configured = normalizeCliTargetProtocol(
         config.targetProtocol ?? customConfig?.routeTargetProtocol
       );
-      const targetProtocol = configured === 'native' ? config.sourceProtocol : configured;
+      const targetProtocol = resolveSupportedTargetProtocol(
+        config.sourceProtocol,
+        configured,
+        customConfig?.supportedProtocols
+      );
+      if (!targetProtocol) {
+        return null;
+      }
       return {
         targetProtocol,
         targetEndpoint: getTargetEndpoint(targetProtocol),
@@ -784,10 +676,15 @@ export async function resolveChannelTarget(
   const unifiedConfig = unifiedConfigManager.exportConfigSync();
   const account = unifiedConfig?.accounts.find(item => item.id === config.accountId);
   const configured = normalizeCliTargetProtocol(config.targetProtocol);
-  const targetProtocol =
-    configured === 'native'
-      ? resolveStoredTargetProtocol(account, config.sourceProtocol)
-      : configured;
+  const targetProtocol = resolveSupportedTargetProtocol(
+    config.sourceProtocol,
+    configured,
+    config.supportedProtocols ?? account?.supportedProtocols
+  );
+
+  if (!targetProtocol) {
+    return null;
+  }
 
   return {
     targetProtocol,

@@ -24,6 +24,16 @@ export const CLI_TARGET_PROTOCOLS = [
 
 export type CliTargetProtocol = (typeof CLI_TARGET_PROTOCOLS)[number];
 
+/** Concrete protocols an upstream can advertise as natively supported. */
+export const CLI_UPSTREAM_PROTOCOLS = CLI_TARGET_PROTOCOLS.filter(
+  (protocol): protocol is Exclude<CliTargetProtocol, 'native'> => protocol !== 'native'
+);
+
+export type CliUpstreamProtocol = (typeof CLI_UPSTREAM_PROTOCOLS)[number];
+
+/** New and migrated upstreams advertise all concrete protocols by default. */
+export const DEFAULT_CLI_UPSTREAM_PROTOCOLS: CliUpstreamProtocol[] = [...CLI_UPSTREAM_PROTOCOLS];
+
 export const DEFAULT_CLI_TARGET_PROTOCOL: CliTargetProtocol = 'native';
 
 export const BUILTIN_CLI_TYPES = ['claudeCode', 'codex', 'openCode', 'grokBuild'] as const;
@@ -157,6 +167,26 @@ export function normalizeCliTargetProtocol(value: unknown): CliTargetProtocol {
   return typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value as CliTargetProtocol)
     ? (value as CliTargetProtocol)
     : DEFAULT_CLI_TARGET_PROTOCOL;
+}
+
+export function normalizeCliUpstreamProtocols(value: unknown): CliUpstreamProtocol[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = Array.from(
+    new Set(
+      value.filter(
+        (item): item is CliUpstreamProtocol =>
+          typeof item === 'string' && CLI_UPSTREAM_PROTOCOLS.includes(item as CliUpstreamProtocol)
+      )
+    )
+  );
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+/** Normalize a capability declaration, using the compatibility default for old records. */
+export function normalizeCliUpstreamProtocolsWithDefault(value: unknown): CliUpstreamProtocol[] {
+  return normalizeCliUpstreamProtocols(value) ?? [...DEFAULT_CLI_UPSTREAM_PROTOCOLS];
 }
 
 /**

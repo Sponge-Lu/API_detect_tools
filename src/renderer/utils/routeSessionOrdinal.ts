@@ -1,7 +1,7 @@
 /**
  * 输入: RouteInstance 集合
- * 输出: 每个实例在同一客户端(agentId)内的稳定父/子序号
- * 定位: 工具层 - 父会话使用主编号，异模型子代理使用持久化副编号
+ * 输出: 每个实例在同一客户端(agentId)内的稳定父/子序号，以及客户端+编号对应的会话色
+ * 定位: 工具层 - 父会话使用主编号，异模型子代理使用持久化副编号；会话色供卡片/色点等展示层共用
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -93,4 +93,51 @@ export function formatRouteSessionLabel(
   return ordinal === undefined
     ? displayName
     : `${displayName} ${formatRouteSessionOrdinal(ordinal)}`;
+}
+
+/** 会话色板：由会话身份哈希稳定取色，刷新与重启后颜色不变 */
+/** 八色沿色相环均匀分布，相邻至少隔约 27 度，任意两色都能一眼分开 */
+const SESSION_DOT_COLORS = [
+  '#dc2626', // 红 0
+  '#ca8a04', // 黄 41
+  '#65a30d', // 黄绿 85
+  '#16a34a', // 绿 142
+  '#0891b2', // 青 192
+  '#4f46e5', // 靛 243
+  '#c026d3', // 品红 293
+  '#db2777', // 粉 333
+];
+
+function paletteIndexForKey(key: string): number {
+  // FNV-1a + murmur3 终混：直接对弱哈希取模只会用到最低几位，
+  // 会让大量会话挤到少数几种颜色上。
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 2246822507);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 3266489909);
+  hash ^= hash >>> 16;
+
+  return (hash >>> 0) % SESSION_DOT_COLORS.length;
+}
+
+export function sessionColorForKey(key: string): string {
+  return SESSION_DOT_COLORS[paletteIndexForKey(key)];
+}
+
+/**
+ * 颜色由「客户端 + 会话编号」共同决定：客户端定起点、编号定偏移，
+ * 因此同一客户端的相邻编号必然落到不同色板项，而不是碰运气靠哈希散开。
+ */
+export function sessionColorForSession(
+  agentId: string,
+  ordinal: RouteSessionOrdinal | undefined
+): string {
+  const offset = ordinal ? ordinal.primary - 1 + (ordinal.secondary || 0) : 0;
+  const index = (paletteIndexForKey(agentId) + offset) % SESSION_DOT_COLORS.length;
+  return SESSION_DOT_COLORS[index];
 }

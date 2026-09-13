@@ -35,11 +35,6 @@ import type {
   SiteDailySnapshot,
 } from '../shared/types/site';
 import type {
-  EndpointTestResult,
-  EndpointTestSelectionInput,
-  EndpointTestSelectionState,
-  EndpointTestStateView,
-  EndpointTestTarget,
   RouteAnalyticsOverview,
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
@@ -58,6 +53,13 @@ import type {
   RouteInstance,
   RouteInstanceUpdate,
 } from '../shared/types/route-proxy';
+import type {
+  EndpointTestResult,
+  EndpointTestSelectionInput,
+  EndpointTestSelectionState,
+  EndpointTestStateView,
+  EndpointTestTarget,
+} from '../shared/types/endpoint-test';
 import type { ThemeMode } from '../shared/theme/themePresets';
 import type {
   CommitConfigFileProfileInput,
@@ -509,6 +511,9 @@ declare global {
         archiveRouteInstance?: (
           instanceId: string
         ) => Promise<{ success: boolean; data?: { archived: boolean }; error?: string }>;
+        restoreRouteInstance?: (
+          instanceId: string
+        ) => Promise<{ success: boolean; data?: RouteInstance; error?: string }>;
         upsertSessionOverride?: (
           override: RouteSessionOverride
         ) => Promise<{ success: boolean; data?: RouteSessionOverride; error?: string }>;

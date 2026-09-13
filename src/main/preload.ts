@@ -12,8 +12,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ThemeMode } from '../shared/theme/themePresets';
 import type {
-  EndpointTestSelectionInput,
-  EndpointTestTarget,
   RouteAnalyticsWindowQuery,
   RoutePathStateResetParams,
   RouteRequestLogItem,
@@ -23,6 +21,7 @@ import type {
   RouteSessionRoutingConfig,
   RouteInstanceUpdate,
 } from '../shared/types/route-proxy';
+import type { EndpointTestSelectionInput, EndpointTestTarget } from '../shared/types/endpoint-test';
 import type { BrowserProfileOptionId } from '../shared/types/site';
 import type {
   CommitConfigFileProfileInput,
@@ -525,6 +524,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:cancel-armed-route-instance', instanceId),
     archiveRouteInstance: (instanceId: string) =>
       ipcRenderer.invoke('route:archive-route-instance', instanceId),
+    restoreRouteInstance: (instanceId: string) =>
+      ipcRenderer.invoke('route:restore-route-instance', instanceId),
     upsertSessionOverride: (override: RouteSessionOverride) =>
       ipcRenderer.invoke('route:upsert-session-override', override),
     deleteSessionOverride: (key: string) =>

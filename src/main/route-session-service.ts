@@ -57,11 +57,26 @@ export interface ObservedRouteLineage {
   source: 'codex' | 'claudeCode' | 'openCode';
   rootSessionId?: string;
   parentSessionId?: string;
+  requestKind?: string;
+  forkedFromThreadId?: string;
+  threadSource?: string;
+  isUtility?: boolean;
 }
 
 export interface RouteInstanceResolution {
   instance: RouteInstance | null;
   changed: boolean;
+  resolutionPath?:
+    | 'exact'
+    | 'parent'
+    | 'parent-unresolved'
+    | 'root-alias'
+    | 'utility'
+    | 'armed'
+    | 'created';
+  createdReason?: string;
+  memberAppended?: boolean;
+  utilityRequest?: boolean;
 }
 
 interface IdentityPartResolution {
@@ -366,6 +381,71 @@ function mergeDuplicateRouteInstance(target: RouteInstance, duplicate: RouteInst
   }
 }
 
+/**
+ * 迁移：修复将 Codex 卡片身份从 thread_id 锚定到 session_id 后，
+ * 同一会话可能同时存在旧卡（sessionId=thread_id）和新卡（sessionId=session_id）。
+ * 通过 memberSessionIds 重叠检测合并它们：保留最新的一张，关闭其余。
+ */
+function closeDuplicateCodexSessionCards(instances: Record<string, RouteInstance>): boolean {
+  let changed = false;
+  const activeCodexInstances = Object.values(instances).filter(
+    i => i.routingState === 'active' && i.routeKey?.agentId === 'codex' && i.profileId
+  );
+  if (activeCodexInstances.length <= 1) return false;
+
+  // 按 profileId 分组
+  const byProfile = new Map<string, RouteInstance[]>();
+  for (const instance of activeCodexInstances) {
+    const group = byProfile.get(instance.profileId!) || [];
+    group.push(instance);
+    byProfile.set(instance.profileId!, group);
+  }
+
+  for (const [, group] of byProfile) {
+    if (group.length <= 1) continue;
+    // 构建每个实例的会话标识集合（routeKey.sessionId + memberSessionIds）
+    const sessionIds = group.map(instance => {
+      const ids = new Set([instance.routeKey!.sessionId]);
+      for (const sid of instance.memberSessionIds || []) ids.add(sid);
+      return ids;
+    });
+
+    // 查找重叠组：两个实例共享任意 sessionId 即视为同一会话
+    const visited = new Set<number>();
+    for (let i = 0; i < group.length; i++) {
+      if (visited.has(i)) continue;
+      const cluster = [i];
+      visited.add(i);
+      for (let j = i + 1; j < group.length; j++) {
+        if (visited.has(j)) continue;
+        if ([...sessionIds[i]].some(id => sessionIds[j].has(id))) {
+          cluster.push(j);
+          visited.add(j);
+        }
+      }
+      if (cluster.length <= 1) continue;
+
+      // 保留最近活跃的，关闭其余，合并 member
+      cluster.sort((a, b) => (group[b].lastRequestAt || 0) - (group[a].lastRequestAt || 0));
+      const [keepIndex, ...restIndices] = cluster;
+      const keep = group[keepIndex];
+      for (const idx of restIndices) {
+        const dup = group[idx];
+        dup.routingState = 'closed';
+        dup.closedReason = 'replaced';
+        dup.closedAt = keep.lastRequestAt || Date.now();
+        for (const sid of dup.memberSessionIds || []) {
+          appendMemberSessionId(keep, sid);
+        }
+        appendMemberSessionId(keep, dup.routeKey!.sessionId);
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
 export function normalizeRouteInstanceCollections(config: RouteSessionRoutingConfig): boolean {
   ensureRouteInstanceCollections(config);
   let changed = false;
@@ -406,6 +486,11 @@ export function normalizeRouteInstanceCollections(config: RouteSessionRoutingCon
     mergeDuplicateRouteInstance(existing, instance);
     changed = true;
   }
+
+  // 迁移：Codex 卡片身份从 thread_id 锚定到 session_id 后，同一会话可能同时存在
+  // 旧卡（sessionId=thread_id）和新卡（sessionId=session_id）。通过 memberSessionIds
+  // 重叠检测把它们合并，保留最新的一张，关闭其余。
+  changed = closeDuplicateCodexSessionCards(normalizedInstances) || changed;
 
   const currentRouteBySlot: Record<string, string> = {};
   const activeInstances = Object.values(normalizedInstances)
@@ -502,30 +587,89 @@ export function extractObservedRouteInstanceKey(
       req.headers[CODEX_SUBAGENT_HEADER],
       clientMetadata?.[CODEX_SUBAGENT_HEADER],
     ]);
+    const metadataFields = ['request_kind', 'forked_from_thread_id', 'thread_source'] as const;
+    if (
+      [clientMetadata, ...turnMetadataRecords].some(record =>
+        metadataFields.some(
+          field => record?.[field] !== undefined && typeof record[field] !== 'string'
+        )
+      )
+    ) {
+      return null;
+    }
+    const requestKind = resolveConsistentIdentityPart([
+      clientMetadata?.request_kind,
+      ...turnMetadataRecords.map(record => record.request_kind),
+    ]);
+    const forkedFromThread = resolveConsistentIdentityPart([
+      clientMetadata?.forked_from_thread_id,
+      ...turnMetadataRecords.map(record => record.forked_from_thread_id),
+    ]);
+    const threadSource = resolveConsistentIdentityPart([
+      clientMetadata?.thread_source,
+      ...turnMetadataRecords.map(record => record.thread_source),
+    ]);
     if (
       (nativeSession.supplied && !nativeSession.value) ||
       (nativeThread.supplied && !nativeThread.value) ||
       (parentThread.supplied && !parentThread.value) ||
-      (subagentMarker.supplied && !subagentMarker.value)
+      (subagentMarker.supplied && !subagentMarker.value) ||
+      (requestKind.supplied && !requestKind.value) ||
+      (forkedFromThread.supplied && !forkedFromThread.value) ||
+      (threadSource.supplied && !threadSource.value)
     ) {
       return null;
     }
 
-    const hasChildEvidence = parentThread.supplied || subagentMarker.supplied;
+    const hasSystemSubagentKind =
+      threadSource.value === 'system' &&
+      [clientMetadata, ...turnMetadataRecords].some(record => record?.subagent_kind !== undefined);
+    if (hasSystemSubagentKind) {
+      // A system request claiming subagent evidence must project one valid string kind across
+      // every projection; malformed or conflicting kinds fail closed even with a parent chain.
+      const hasMalformedSubagentKind = [clientMetadata, ...turnMetadataRecords].some(
+        record => record?.subagent_kind !== undefined && typeof record.subagent_kind !== 'string'
+      );
+      const subagentKind = resolveConsistentIdentityPart([
+        clientMetadata?.subagent_kind,
+        ...turnMetadataRecords.map(record => record.subagent_kind),
+      ]);
+      if (hasMalformedSubagentKind || !subagentKind.value) return null;
+    }
+    const hasChildEvidence =
+      parentThread.supplied || subagentMarker.supplied || hasSystemSubagentKind;
     if (hasChildEvidence && (!nativeThread.value || !parentThread.value)) return null;
+    const isUtility = threadSource.value === 'system' && !hasChildEvidence;
+
+    // The current thread is the request-level identity. The session id is only a
+    // root-session alias, so it must not collapse distinct verified child threads
+    // into one route key. A session-only request is accepted as a root request;
+    // a subagent marker without a complete parent chain is rejected above.
     const sessionId = nativeThread.value || (!hasChildEvidence ? nativeSession.value : null);
     if (!sessionId) return null;
     if (parentThread.value === sessionId) return null;
+    const rootSessionId = nativeSession.value;
+    const hasLineage = Boolean(
+      rootSessionId ||
+        parentThread.value ||
+        requestKind.value ||
+        forkedFromThread.value ||
+        threadSource.value
+    );
     return {
       agentId: 'codex',
       runtimeSlotId: sessionId,
       sessionId,
-      ...(nativeSession.value || parentThread.value
+      ...(hasLineage
         ? {
             lineage: {
               source: 'codex' as const,
-              ...(nativeSession.value ? { rootSessionId: nativeSession.value } : {}),
+              ...(rootSessionId ? { rootSessionId } : {}),
               ...(parentThread.value ? { parentSessionId: parentThread.value } : {}),
+              ...(requestKind.value ? { requestKind: requestKind.value } : {}),
+              ...(forkedFromThread.value ? { forkedFromThreadId: forkedFromThread.value } : {}),
+              ...(threadSource.value ? { threadSource: threadSource.value } : {}),
+              ...(isUtility ? { isUtility: true } : {}),
             },
           }
         : {}),
@@ -614,13 +758,10 @@ export function extractObservedRouteInstanceKey(
 
 export function listRouteInstances(config: RouteSessionRoutingConfig): RouteInstance[] {
   normalizeRouteInstanceCollections(config);
-  return Object.values(config.instances || {}).sort((left, right) => {
-    if (left.routingState === 'armed' && right.routingState !== 'armed') return -1;
-    if (right.routingState === 'armed' && left.routingState !== 'armed') return 1;
-    return (
-      (right.lastRequestAt || right.createdAt || 0) - (left.lastRequestAt || left.createdAt || 0)
-    );
-  });
+  // 创建顺序稳定排列（无时间戳的 ARMED/已取消卡视为最新，排在末尾），活动不改变卡片位置
+  return Object.values(config.instances || {}).sort(
+    (left, right) => firstRequestAt(left) - firstRequestAt(right)
+  );
 }
 
 export function createArmedRouteInstance(
@@ -702,6 +843,59 @@ export function cancelArmedRouteInstance(
   const instance = config.instances[instanceId];
   if (!instance || instance.routingState !== 'armed') throw new Error('等待中的路由实例不存在');
   instance.routingState = 'cancelled';
+  return instance;
+}
+
+/**
+ * Reopens a terminated route card. Bound generations become the current active
+ * route for their slot; an unbound cancelled pre-creation returns to ARMED so
+ * the next complete identity can claim it.
+ */
+export function restoreRouteInstance(
+  config: RouteSessionRoutingConfig,
+  instanceId: string,
+  now = Date.now()
+): RouteInstance {
+  ensureRouteInstanceCollections(config);
+  const instance = config.instances[instanceId];
+  if (!instance || (instance.routingState !== 'closed' && instance.routingState !== 'cancelled')) {
+    throw new Error('可恢复的路由实例不存在');
+  }
+
+  if (!instance.routeKey) {
+    if (
+      Object.values(config.instances).some(
+        item => item.id !== instance.id && item.routingState === 'armed'
+      )
+    ) {
+      throw new Error('已有一个路由正在等待下一个新会话');
+    }
+    instance.routingState = 'armed';
+    instance.presenceState = 'unknown';
+    delete instance.closedAt;
+    delete instance.closedReason;
+    return instance;
+  }
+
+  const slotKey = buildRouteSlotKey(instance.profileId, instance.routeKey);
+  for (const other of Object.values(config.instances)) {
+    if (
+      other.id === instance.id ||
+      other.routingState !== 'active' ||
+      !other.routeKey ||
+      buildRouteSlotKey(other.profileId, other.routeKey) !== slotKey
+    ) {
+      continue;
+    }
+    other.routingState = 'closed';
+    other.closedReason = 'replaced';
+    other.closedAt = now;
+  }
+  instance.routingState = 'active';
+  instance.presenceState = 'unknown';
+  delete instance.closedAt;
+  delete instance.closedReason;
+  config.currentRouteBySlot[slotKey] = instance.id;
   return instance;
 }
 
@@ -894,6 +1088,15 @@ export function resolveRouteInstanceForRequest(params: {
   requestAt: number;
 }): RouteInstanceResolution {
   const { config, observedKey, profileId } = params;
+  if (observedKey?.agentId === 'codex' && observedKey.lineage?.isUtility) {
+    return {
+      instance: null,
+      changed: false,
+      resolutionPath: 'utility',
+      memberAppended: false,
+      utilityRequest: true,
+    };
+  }
   ensureRouteInstanceCollections(config);
   if (!observedKey) return { instance: null, changed: false };
   let changed = normalizeRouteInstanceCollections(config);
@@ -906,16 +1109,24 @@ export function resolveRouteInstanceForRequest(params: {
       item.routeKey &&
       buildRouteInstanceKey(item.profileId, item.routeKey) === routeKey
   );
+  let resolutionPath: RouteInstanceResolution['resolutionPath'] = 'exact';
+  let createdReason: string | undefined;
 
   if (observedKey.lineage?.parentSessionId) {
     const parent = resolveObservedParentInstance(config, profileId, observedKey);
     const parentClientModel = normalizeIdentityPart(parent?.clientModelId);
     if (!parent || !requestedModel || !parentClientModel) {
-      return { instance: null, changed };
+      return {
+        instance: null,
+        changed,
+        resolutionPath: 'parent-unresolved',
+        memberAppended: false,
+      };
     }
 
     if (requestedModel === parentClientModel) {
-      changed = appendMemberSessionId(parent, observedKey.sessionId) || changed;
+      const memberAppended = appendMemberSessionId(parent, observedKey.sessionId);
+      changed = memberAppended || changed;
       changed =
         closeActiveChildForSession(config, parent, observedKey, params.requestAt) || changed;
       changed =
@@ -927,7 +1138,7 @@ export function resolveRouteInstanceForRequest(params: {
           requestAt: params.requestAt,
           manageSlot: false,
         }) || changed;
-      return { instance: parent, changed };
+      return { instance: parent, changed, resolutionPath: 'parent', memberAppended };
     }
 
     instance = Object.values(config.instances).find(
@@ -943,7 +1154,14 @@ export function resolveRouteInstanceForRequest(params: {
       const reasoningEffort =
         normalizeRouteThinkingEffort(params.requestedReasoningEffort) ||
         normalizeRouteThinkingEffort(params.defaultReasoningEffort);
-      if (!reasoningEffort) return { instance: null, changed };
+      if (!reasoningEffort) {
+        return {
+          instance: null,
+          changed,
+          resolutionPath: 'parent-unresolved',
+          memberAppended: false,
+        };
+      }
       instance = {
         id: randomUUID(),
         profileId,
@@ -963,6 +1181,7 @@ export function resolveRouteInstanceForRequest(params: {
         createdAt: params.requestAt,
       };
       config.instances[instance.id] = instance;
+      createdReason = 'different_model_child';
       changed = true;
     } else if (!instance.childOrdinal) {
       instance.childOrdinal = allocateChildOrdinal(config, parent.id);
@@ -977,7 +1196,13 @@ export function resolveRouteInstanceForRequest(params: {
         requestAt: params.requestAt,
         manageSlot: true,
       }) || changed;
-    return { instance, changed };
+    return {
+      instance,
+      changed,
+      resolutionPath: 'parent',
+      ...(createdReason ? { createdReason } : {}),
+      memberAppended: false,
+    };
   }
 
   if (!instance && observedKey.lineage?.rootSessionId) {
@@ -988,9 +1213,11 @@ export function resolveRouteInstanceForRequest(params: {
         observedKey.agentId,
         observedKey.lineage.rootSessionId
       ) || undefined;
+    if (instance) resolutionPath = 'root-alias';
   }
   if (!instance) {
     instance = Object.values(config.instances).find(item => item.routingState === 'armed');
+    resolutionPath = 'armed';
     if (!instance) {
       const modelId = requestedModel || normalizeIdentityPart(params.defaultModel);
       const reasoningEffort =
@@ -1007,6 +1234,8 @@ export function resolveRouteInstanceForRequest(params: {
         presenceState: 'unknown',
       };
       config.instances[instance.id] = instance;
+      resolutionPath = 'created';
+      createdReason = 'unseen_identity';
     }
     instance.profileId = profileId;
     instance.routeKey = normalizeRouteInstanceKey({
@@ -1021,8 +1250,9 @@ export function resolveRouteInstanceForRequest(params: {
     instance.clientModelId = requestedModel;
     changed = true;
   }
-  changed = appendMemberSessionId(instance, observedKey.lineage?.rootSessionId) || changed;
-  changed = appendMemberSessionId(instance, observedKey.sessionId) || changed;
+  let memberAppended = appendMemberSessionId(instance, observedKey.lineage?.rootSessionId);
+  memberAppended = appendMemberSessionId(instance, observedKey.sessionId) || memberAppended;
+  changed = memberAppended || changed;
   const manageSlot =
     Boolean(instance.routeKey) && buildRouteInstanceKey(profileId, instance.routeKey!) === routeKey;
   changed =
@@ -1034,7 +1264,13 @@ export function resolveRouteInstanceForRequest(params: {
       requestAt: params.requestAt,
       manageSlot,
     }) || changed;
-  return { instance, changed };
+  return {
+    instance,
+    changed,
+    resolutionPath,
+    ...(createdReason ? { createdReason } : {}),
+    memberAppended,
+  };
 }
 
 function normalizeAssociationLevel(

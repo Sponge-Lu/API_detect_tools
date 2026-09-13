@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RouteSessionSection } from '../renderer/components/Route/RouteSessionSection';
 import type { RouteInstance, RoutingConfig } from '../shared/types/route-proxy';
@@ -9,6 +9,7 @@ const mockUpdate = vi.fn();
 const mockClose = vi.fn();
 const mockCancel = vi.fn();
 const mockArchive = vi.fn();
+const mockRestore = vi.fn();
 let mockConfig: RoutingConfig;
 
 vi.mock('../renderer/store/routeStore', () => ({
@@ -57,6 +58,7 @@ beforeEach(() => {
   mockClose.mockReset().mockResolvedValue({ success: true });
   mockCancel.mockReset().mockResolvedValue({ success: true });
   mockArchive.mockReset().mockResolvedValue({ success: true, data: { archived: true } });
+  mockRestore.mockReset().mockResolvedValue({ success: true, data: activeRoute() });
   const route = window.electronAPI.route;
   if (!route) throw new Error('Route bridge is unavailable');
   route.listRouteInstances = mockList;
@@ -65,6 +67,7 @@ beforeEach(() => {
   route.closeRouteInstance = mockClose;
   route.cancelArmedRouteInstance = mockCancel;
   route.archiveRouteInstance = mockArchive;
+  route.restoreRouteInstance = mockRestore;
 });
 
 afterEach(() => {
@@ -103,9 +106,7 @@ describe('route session instance cards', () => {
   it('shows stable session identity and edits display aliases without changing it', async () => {
     render(<RouteSessionSection />);
     expect(await screen.findByText('session-1')).toBeInTheDocument();
-    const stateLabel = screen.getByText('当前');
-    expect(stateLabel).toBeInTheDocument();
-    expect(stateLabel.nextElementSibling).toHaveAttribute('data-agent-logo', 'codex');
+    expect(document.querySelector('[data-agent-logo="codex"]')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Terminal 1')).toBeInTheDocument();
     expect(screen.getByText(/创建 /)).toBeInTheDocument();
     expect(screen.getByText(/最近 /)).toBeInTheDocument();
@@ -115,7 +116,7 @@ describe('route session instance cards', () => {
     );
     expect(screen.getByTestId('route-session-grid-scroll')).toHaveClass('overflow-x-auto');
     expect(screen.getByTestId('route-session-grid')).toHaveClass('grid-cols-3', 'min-w-[60rem]');
-    expect(screen.getByTestId('route-session-ordinal')).toHaveTextContent('#1');
+    expect(screen.getByLabelText('session-1 Agent 名称')).toHaveValue('Codex #1');
     expect(screen.getByTestId('route-session-grid').className).not.toMatch(
       /(?:sm|md|lg|xl):grid-cols/
     );
@@ -154,9 +155,11 @@ describe('route session instance cards', () => {
 
     render(<RouteSessionSection />);
 
-    expect(
-      (await screen.findAllByTestId('route-session-ordinal')).map(node => node.textContent)
-    ).toEqual(['#1', '#1.1']);
+    const nameInputs = await screen.findAllByLabelText(/Agent 名称/);
+    expect(nameInputs.map(input => (input as HTMLInputElement).value)).toEqual([
+      'Codex #1',
+      'Codex #1.1',
+    ]);
   });
 
   it('describes session-scoped Codex routes without exposing context-window labels', async () => {
@@ -258,5 +261,49 @@ describe('route session instance cards', () => {
     await screen.findByText('session-1');
     fireEvent.click(screen.getByRole('button', { name: '关闭 session-1 路由' }));
     await waitFor(() => expect(mockClose).toHaveBeenCalledWith('route-1'));
+  });
+
+  it('offers restore before archive for a closed route card and reloads after restoring', async () => {
+    const closed = { ...activeRoute(), routingState: 'closed' as const, closedAt: 3_000 };
+    mockList.mockResolvedValue({ success: true, data: [closed] });
+    mockRestore.mockResolvedValue({ success: true, data: { ...closed, routingState: 'active' } });
+
+    render(<RouteSessionSection />);
+
+    const card = await screen.findByTestId('route-session-card-route-1');
+    const actionButtons = within(card).getAllByRole('button');
+    expect(actionButtons.map(button => button.getAttribute('aria-label'))).toEqual([
+      '恢复 session-1 路由',
+      '归档 session-1 路由',
+      '复制 session-1 Session ID',
+    ]);
+
+    fireEvent.click(actionButtons[0]);
+    await waitFor(() => expect(mockRestore).toHaveBeenCalledWith('route-1'));
+    expect(mockList).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers restore before archive for a cancelled pre-created route card', async () => {
+    const cancelled: RouteInstance = {
+      id: 'cancelled-route',
+      display: {},
+      modelId: 'model-a',
+      reasoningEffort: 'high',
+      routingState: 'cancelled',
+      presenceState: 'unknown',
+    };
+    mockList.mockResolvedValue({ success: true, data: [cancelled] });
+
+    render(<RouteSessionSection />);
+
+    const card = await screen.findByTestId('route-session-card-cancelled-route');
+    const actionButtons = within(card).getAllByRole('button');
+    expect(actionButtons.map(button => button.getAttribute('aria-label'))).toEqual([
+      '恢复 已取消 路由',
+      '归档 已取消 路由',
+    ]);
+
+    fireEvent.click(actionButtons[0]);
+    await waitFor(() => expect(mockRestore).toHaveBeenCalledWith('cancelled-route'));
   });
 });

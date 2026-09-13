@@ -1587,6 +1587,7 @@ export function adaptRequestToTargetProtocol(
     headers: {
       'content-type': 'application/json',
       accept: normalized.stream ? 'text/event-stream' : 'application/json',
+      ...(targetProtocol === 'anthropic-messages' ? { 'anthropic-version': '2023-06-01' } : {}),
     },
     upstreamMethod: 'POST',
     upstreamPath:

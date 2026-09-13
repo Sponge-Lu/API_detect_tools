@@ -18,6 +18,7 @@ import {
   buildRoutePathStateKey,
   buildStatsKey,
 } from '../shared/types/route-proxy';
+import { CLI_UPSTREAM_PROTOCOLS } from '../shared/types/cli-config';
 import type { UnifiedConfig } from '../shared/types/site';
 
 interface BackupEntry {
@@ -401,7 +402,43 @@ describe('UnifiedConfigManager', () => {
     expect(loadedConfig.accounts[0]).toMatchObject({
       routeTargetProtocol: 'openai-chat-completions',
       routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
     });
+  });
+
+  it('adds route protocol defaults to existing accounts without capability fields', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig() as any;
+    rawConfig.version = '3.0.6';
+    rawConfig.accounts = [
+      {
+        id: 'account-1',
+        site_id: 'site-1',
+        account_name: 'Account',
+        user_id: '',
+        access_token: '',
+        auth_source: 'manual',
+      },
+    ];
+    await fs.writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.accounts[0]).toMatchObject({
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
+    });
+    expect(loadedConfig.accounts[0].routeAuthScheme).toBeUndefined();
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.accounts[0]).toMatchObject({
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
+    });
+    expect(persisted.accounts[0].routeAuthScheme).toBeUndefined();
   });
 
   it('marks conflicting account CLI protocols for confirmation', async () => {
@@ -1542,6 +1579,9 @@ describe('UnifiedConfigManager', () => {
       account_name: '默认账户',
       user_id: '',
       access_token: '',
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: false,
+      supportedProtocols: CLI_UPSTREAM_PROTOCOLS,
     });
     expect(manager.getAccountsBySiteId('site-1')).toHaveLength(1);
   });

@@ -1,4 +1,4 @@
-import { Archive, Copy, RefreshCw, Square, UserRoundPlus, X } from 'lucide-react';
+import { Archive, CircleStop, Copy, RefreshCw, RotateCcw, UserRoundPlus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ROUTE_THINKING_EFFORT_LEVELS,
@@ -14,13 +14,18 @@ import { AppSelect } from '../AppSelect';
 import { AgentLogo } from '../AgentLogo';
 import {
   buildRouteSessionOrdinals,
-  formatRouteSessionOrdinal,
+  formatRouteSessionLabel,
+  sessionColorForSession,
 } from '../../utils/routeSessionOrdinal';
 
 const inputClassName =
   'h-7 min-w-0 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]';
-const noteInputClassName =
-  'h-6 min-w-0 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]';
+// 幽灵输入：平时呈纯文本，悬停/聚焦才露出输入框轮廓，消除卡片表单感
+const ghostInputClassName =
+  'min-w-0 rounded-[var(--radius-sm)] border border-transparent bg-transparent px-1.5 outline-none hover:border-[var(--line-soft)] hover:bg-[var(--surface-1)] focus:border-[var(--accent)] focus:bg-[var(--surface-1)]';
+// 备注是卡片的视觉锚点：全卡最大字号、会话色，空态以灰占位引导填写
+const noteHeroClassName =
+  'h-8 min-w-0 rounded-[var(--radius-sm)] border border-transparent bg-transparent px-1.5 text-[16px] font-semibold outline-none placeholder:font-normal placeholder:text-[var(--text-tertiary)] hover:border-[var(--line-soft)] focus:border-[var(--accent)] focus:bg-[var(--surface-1)]';
 // !py-0：AppSelect size=sm 自带 py-[var(--spacing-sm)]（8px），级联顺序在 py-0 之后，普通 py-0 无效，h-7 下会裁切文字下半
 const selectClassName = 'h-7 rounded-[var(--radius-sm)] !py-0 text-xs leading-4';
 const CUSTOM_REASONING_EFFORT = '__custom__';
@@ -31,13 +36,6 @@ function formatTime(value?: number): string {
   const date = new Date(value);
   const pad = (part: number) => part.toString().padStart(2, '0');
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function stateLabel(instance: RouteInstance): string {
-  if (instance.routingState === 'armed') return '等待下一个新会话';
-  if (instance.routingState === 'active') return '当前';
-  if (instance.routingState === 'closed') return '已关闭';
-  return '已取消';
 }
 
 function effectiveAgentName(instance: RouteInstance): string {
@@ -66,6 +64,12 @@ function defaultRuntimeScopeLabel(instance: RouteInstance): string {
 
 function effectiveRuntimeScopeLabel(instance: RouteInstance): string {
   return instance.display.customRuntimeSlotLabel || defaultRuntimeScopeLabel(instance);
+}
+
+/** input 的 size 按字符宽估算（CJK 记 2），让幽灵输入贴合内容宽度、编号得以紧跟其后 */
+function inputSizeForContent(value: string): number {
+  const width = [...value].reduce((sum, char) => sum + (char.charCodeAt(0) > 0xff ? 2 : 1), 0);
+  return Math.max(2, Math.min(width + 1, 28));
 }
 
 interface ReasoningEffortEditorProps {
@@ -158,6 +162,21 @@ export function RouteSessionSection() {
   const [instances, setInstances] = useState<RouteInstance[]>([]);
   // 同一客户端开多个会话窗口时仅靠名称/色点无法区分，用稳定序号标识
   const sessionOrdinals = useMemo(() => buildRouteSessionOrdinals(instances), [instances]);
+  // 子卡片（parentInstanceId 存在）不再平铺，而是叠放到其主卡片后方（半透明叠层常驻展示）
+  const { rootInstances, childInstancesByParent } = useMemo(() => {
+    const roots: RouteInstance[] = [];
+    const children = new Map<string, RouteInstance[]>();
+    for (const instance of instances) {
+      if (instance.parentInstanceId) {
+        const siblings = children.get(instance.parentInstanceId) || [];
+        siblings.push(instance);
+        children.set(instance.parentInstanceId, siblings);
+      } else {
+        roots.push(instance);
+      }
+    }
+    return { rootInstances: roots, childInstancesByParent: children };
+  }, [instances]);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState({ modelId: '', reasoningEffort: 'medium' });
@@ -221,14 +240,19 @@ export function RouteSessionSection() {
     );
   };
 
-  const runAction = async (action: 'close' | 'cancel' | 'archive', instanceId: string) => {
+  const runAction = async (
+    action: 'close' | 'cancel' | 'restore' | 'archive',
+    instanceId: string
+  ) => {
     const api = window.electronAPI.route;
     const response =
       action === 'close'
         ? await api?.closeRouteInstance?.(instanceId)
         : action === 'cancel'
           ? await api?.cancelArmedRouteInstance?.(instanceId)
-          : await api?.archiveRouteInstance?.(instanceId);
+          : action === 'restore'
+            ? await api?.restoreRouteInstance?.(instanceId)
+            : await api?.archiveRouteInstance?.(instanceId);
     if (!response?.success) {
       toast.error(response?.error || '路由操作失败');
       return;
@@ -337,195 +361,256 @@ export function RouteSessionSection() {
             data-testid="route-session-grid"
             className="grid min-w-[60rem] grid-cols-3 gap-2 p-2"
           >
-            {instances.map(instance => {
+            {rootInstances.map(instance => {
               const bound = Boolean(instance.routeKey);
               const ordinal = sessionOrdinals[instance.id];
+              // 色点与会话卡片共用同一取色逻辑：客户端+编号共同决定，同会话颜色恒定
+              const sessionColor = sessionColorForSession(
+                instance.routeKey?.agentId ?? instance.id,
+                ordinal
+              );
+              const childInstances = childInstancesByParent.get(instance.id) || [];
               return (
-                <article
-                  key={instance.id}
-                  data-testid={`route-session-card-${instance.id}`}
-                  data-density="compact"
-                  className="grid h-auto min-w-0 grid-rows-[auto_auto_auto_auto_auto_auto] gap-1.5 rounded-[var(--radius-md)] border border-[var(--line-muted)] bg-[var(--surface-2)] p-2.5 pb-1.5"
-                >
-                  <div className="flex min-w-0 items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="min-w-0 truncate rounded-[var(--radius-full)] bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent)]">
-                        {stateLabel(instance)}
-                      </span>
-                      {bound ? (
-                        <AgentLogo
-                          agentId={instance.routeKey?.agentId}
-                          agentName={effectiveAgentName(instance)}
-                          className="h-4 w-4"
-                        />
-                      ) : null}
-                      {ordinal ? (
-                        <span
-                          className="shrink-0 text-[11px] font-semibold leading-4 tabular-nums text-[var(--text-secondary)]"
-                          title={`${effectiveAgentName(instance)} 会话 ${formatRouteSessionOrdinal(ordinal)}`}
-                          data-testid="route-session-ordinal"
-                        >
-                          {formatRouteSessionOrdinal(ordinal)}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center">
-                      {instance.routingState === 'armed' ? (
-                        <button
-                          type="button"
-                          aria-label="取消等待路由"
-                          onClick={() => void runAction('cancel', instance.id)}
-                          className="p-1 text-[var(--text-secondary)] hover:text-[var(--danger)]"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      ) : instance.routingState === 'active' ? (
-                        <button
-                          type="button"
-                          aria-label={`关闭 ${instance.routeKey?.sessionId} 路由`}
-                          onClick={() => void runAction('close', instance.id)}
-                          className="p-1 text-[var(--text-secondary)] hover:text-[var(--danger)]"
-                        >
-                          <Square className="h-4 w-4" />
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          aria-label={`归档 ${instance.routeKey?.sessionId || '已取消'} 路由`}
-                          onClick={() => void runAction('archive', instance.id)}
-                          className="p-1 text-[var(--text-secondary)] hover:text-[var(--danger)]"
-                        >
-                          <Archive className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {bound ? (
-                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)] gap-1.5">
-                      <input
-                        key={`${instance.id}-${effectiveAgentName(instance)}`}
-                        className={`${inputClassName} w-full font-medium`}
-                        aria-label={`${instance.routeKey?.sessionId} Agent 名称`}
-                        title={effectiveAgentName(instance)}
-                        defaultValue={effectiveAgentName(instance)}
-                        onBlur={event =>
-                          void updateInstance(instance.id, {
-                            customAgentName:
-                              event.target.value === instance.display.observedAgentName
-                                ? null
-                                : event.target.value,
-                          })
-                        }
-                      />
-                      <input
-                        key={`${instance.id}-${effectiveRuntimeScopeLabel(instance)}`}
-                        className={`${inputClassName} w-full`}
-                        aria-label={`${instance.routeKey?.sessionId} 运行范围标签`}
-                        title={effectiveRuntimeScopeLabel(instance)}
-                        defaultValue={effectiveRuntimeScopeLabel(instance)}
-                        onBlur={event =>
-                          void updateInstance(instance.id, {
-                            customRuntimeSlotLabel:
-                              event.target.value === defaultRuntimeScopeLabel(instance)
-                                ? null
-                                : event.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                  ) : (
-                    <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">
-                      等待首条完整路由键请求
-                    </span>
-                  )}
-
-                  {bound ? (
-                    <div className="grid min-w-0">
-                      <div className="flex h-7 min-w-0 items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--surface-1)] px-2 text-xs text-[var(--text-secondary)]">
-                        <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
-                          Session
-                        </span>
-                        <span
-                          className="min-w-0 flex-1 truncate font-mono"
-                          title={instance.routeKey?.sessionId}
-                        >
-                          {instance.routeKey?.sessionId}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`复制 ${instance.routeKey?.sessionId} Session ID`}
-                          onClick={() =>
-                            void navigator.clipboard.writeText(instance.routeKey!.sessionId)
-                          }
-                          className="shrink-0 p-1"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div />
-                  )}
-
-                  <div className="grid min-h-0 grid-cols-2 content-start gap-1.5">
-                    <div className="grid min-w-0 content-start gap-1">
-                      <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">
-                        模型
-                      </span>
-                      <AppSelect
-                        size="sm"
-                        className={selectClassName}
-                        aria-label={`${instance.id} 路由模型`}
-                        value={instance.modelId}
-                        onChange={event =>
-                          void updateInstance(instance.id, { modelId: event.target.value })
-                        }
-                      >
-                        {modelOptions.map(model => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </AppSelect>
-                    </div>
-                    <div className="grid min-w-0 content-start gap-1">
-                      <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">
-                        思考强度
-                      </span>
-                      <ReasoningEffortEditor
-                        instance={instance}
-                        onSave={value => updateInstance(instance.id, { reasoningEffort: value })}
-                      />
-                    </div>
-                  </div>
-
-                  <input
-                    key={`${instance.id}-note-${instance.display.customNote ?? ''}`}
-                    className={noteInputClassName}
-                    aria-label={`${instance.id} 备注`}
-                    title={instance.display.customNote}
-                    placeholder="备注"
-                    defaultValue={instance.display.customNote ?? ''}
-                    onBlur={event => {
-                      const value = event.target.value.trim();
-                      if (value === (instance.display.customNote ?? '')) return;
-                      void updateInstance(instance.id, { customNote: value || null });
-                    }}
+                <div key={instance.id} className="flex min-w-0 flex-col">
+                  <SessionCard
+                    instance={instance}
+                    bound={bound}
+                    ordinal={ordinal}
+                    sessionColor={sessionColor}
+                    onUpdate={updateInstance}
+                    onRunAction={runAction}
+                    modelOptions={modelOptions}
                   />
-
-                  <div className="grid grid-cols-2 gap-2 border-t border-[var(--line-soft)] pt-1 text-[10px] leading-3 text-[var(--text-tertiary)]">
-                    <span className="min-w-0 truncate">创建 {formatTime(instance.createdAt)}</span>
-                    <span className="min-w-0 truncate text-right">
-                      最近 {formatTime(instance.lastRequestAt)}
-                    </span>
-                  </div>
-                </article>
+                  {childInstances.length > 0 ? (
+                    <div
+                      data-testid={`route-session-children-${instance.id}`}
+                      className="ml-4 flex flex-col"
+                    >
+                      {childInstances.map((child, index) => (
+                        <SessionCard
+                          key={child.id}
+                          instance={child}
+                          bound={Boolean(child.routeKey)}
+                          ordinal={sessionOrdinals[child.id]}
+                          sessionColor={sessionColor}
+                          onUpdate={updateInstance}
+                          onRunAction={runAction}
+                          modelOptions={modelOptions}
+                          isChild
+                          stackLayer={index}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </div>
         </div>
       )}
     </AppCard>
+  );
+}
+
+interface SessionCardProps {
+  instance: RouteInstance;
+  bound: boolean;
+  ordinal: ReturnType<typeof buildRouteSessionOrdinals>[string];
+  sessionColor: string;
+  onUpdate: (instanceId: string, updates: RouteInstanceUpdate) => Promise<void>;
+  onRunAction: (
+    action: 'close' | 'cancel' | 'restore' | 'archive',
+    instanceId: string
+  ) => Promise<void>;
+  modelOptions: string[];
+  isChild?: boolean;
+  stackLayer?: number;
+}
+
+function SessionCard({
+  instance,
+  bound,
+  ordinal,
+  sessionColor,
+  onUpdate,
+  onRunAction,
+  modelOptions,
+  isChild,
+  stackLayer,
+}: SessionCardProps) {
+  // 客户端名称与编号同框展示；编号仅为展示后缀，保存前剥离
+  const nameWithOrdinal = formatRouteSessionLabel(effectiveAgentName(instance), ordinal);
+  const terminated = instance.routingState === 'closed' || instance.routingState === 'cancelled';
+  return (
+    <article
+      data-testid={`route-session-card-${instance.id}`}
+      data-density="compact"
+      className={`grid h-auto min-w-0 grid-rows-[auto_auto_auto_auto_auto] gap-2 rounded-[var(--radius-md)] border border-l-[3px] border-[var(--line-soft)] bg-[var(--surface-2)] p-3 transition-shadow hover:shadow-sm ${
+        terminated ? 'opacity-60' : ''
+      } ${isChild ? '-mt-1.5 opacity-80 shadow-[0_-2px_6px_rgba(0,0,0,0.06)]' : ''}`}
+      style={{
+        borderLeftColor: sessionColor,
+        zIndex: isChild && stackLayer !== undefined ? -(stackLayer + 1) : undefined,
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        {bound ? (
+          <>
+            <AgentLogo
+              agentId={instance.routeKey?.agentId}
+              agentName={effectiveAgentName(instance)}
+              className="h-4 w-4 shrink-0"
+            />
+            <div className="flex min-w-0 flex-1 items-center">
+              <input
+                key={`${instance.id}-${nameWithOrdinal}`}
+                size={inputSizeForContent(nameWithOrdinal)}
+                className={`${ghostInputClassName} h-6 w-auto min-w-0 text-xs font-medium text-[var(--text-primary)]`}
+                aria-label={`${instance.routeKey?.sessionId} Agent 名称`}
+                title={nameWithOrdinal}
+                defaultValue={nameWithOrdinal}
+                onBlur={event => {
+                  const value = event.target.value.replace(/\s+#\d+(?:\.\d+)?$/, '').trim();
+                  void onUpdate(instance.id, {
+                    customAgentName: value === instance.display.observedAgentName ? null : value,
+                  });
+                }}
+              />
+            </div>
+          </>
+        ) : null}
+        <div className="ml-auto flex shrink-0 items-center">
+          {instance.routingState === 'armed' ? (
+            <button
+              type="button"
+              aria-label="取消等待路由"
+              onClick={() => void onRunAction('cancel', instance.id)}
+              className="flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+            >
+              <X className="h-3.5 w-3.5" />
+              取消
+            </button>
+          ) : instance.routingState === 'active' ? (
+            <button
+              type="button"
+              aria-label={`关闭 ${instance.routeKey?.sessionId} 路由`}
+              onClick={() => void onRunAction('close', instance.id)}
+              className="flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+            >
+              <CircleStop className="h-3.5 w-3.5" />
+              关闭
+            </button>
+          ) : terminated ? (
+            <>
+              <button
+                type="button"
+                aria-label={`恢复 ${instance.routeKey?.sessionId || '已取消'} 路由`}
+                onClick={() => void onRunAction('restore', instance.id)}
+                className="flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                恢复
+              </button>
+              <button
+                type="button"
+                aria-label={`归档 ${instance.routeKey?.sessionId || '已取消'} 路由`}
+                onClick={() => void onRunAction('archive', instance.id)}
+                className="flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+              >
+                <Archive className="h-3.5 w-3.5" />
+                归档
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <input
+        key={`${instance.id}-note-${instance.display.customNote ?? ''}`}
+        className={noteHeroClassName}
+        style={{ color: sessionColor }}
+        aria-label={`${instance.id} 备注`}
+        title={instance.display.customNote}
+        placeholder="备注 · 标识这份工作"
+        defaultValue={instance.display.customNote ?? ''}
+        onBlur={event => {
+          const value = event.target.value.trim();
+          if (value === (instance.display.customNote ?? '')) return;
+          void onUpdate(instance.id, { customNote: value || null });
+        }}
+      />
+
+      {bound ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1 text-[11px] leading-4">
+            <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">Session</span>
+            <span
+              className="min-w-0 truncate font-mono text-[var(--text-secondary)]"
+              title={instance.routeKey?.sessionId}
+            >
+              {instance.routeKey?.sessionId}
+            </span>
+            <button
+              type="button"
+              aria-label={`复制 ${instance.routeKey?.sessionId} Session ID`}
+              onClick={() => void navigator.clipboard.writeText(instance.routeKey!.sessionId)}
+              className="shrink-0 p-0.5 text-[var(--text-tertiary)] hover:text-[var(--accent)]"
+            >
+              <Copy className="h-3 w-3" />
+            </button>
+          </div>
+          <input
+            key={`${instance.id}-${effectiveRuntimeScopeLabel(instance)}`}
+            className={`${ghostInputClassName} h-6 w-[30%] shrink-0 text-[11px] text-[var(--text-secondary)]`}
+            aria-label={`${instance.routeKey?.sessionId} 运行范围标签`}
+            title={effectiveRuntimeScopeLabel(instance)}
+            defaultValue={effectiveRuntimeScopeLabel(instance)}
+            onBlur={event =>
+              void onUpdate(instance.id, {
+                customRuntimeSlotLabel:
+                  event.target.value === defaultRuntimeScopeLabel(instance)
+                    ? null
+                    : event.target.value,
+              })
+            }
+          />
+        </div>
+      ) : (
+        <span className="min-w-0 truncate text-xs text-[var(--text-secondary)]">
+          {instance.routingState === 'cancelled' ? '已取消的预创建路由' : '等待首条完整路由键请求'}
+        </span>
+      )}
+
+      <div className="grid min-h-0 grid-cols-2 content-start gap-2 border-t border-[var(--line-soft)] pt-2">
+        <div className="grid min-w-0 content-start gap-1">
+          <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">模型</span>
+          <AppSelect
+            size="sm"
+            className={selectClassName}
+            aria-label={`${instance.id} 路由模型`}
+            value={instance.modelId}
+            onChange={event => void onUpdate(instance.id, { modelId: event.target.value })}
+          >
+            {modelOptions.map(model => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </AppSelect>
+        </div>
+        <div className="grid min-w-0 content-start gap-1">
+          <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">思考强度</span>
+          <ReasoningEffortEditor
+            instance={instance}
+            onSave={value => onUpdate(instance.id, { reasoningEffort: value })}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 text-[10px] leading-3 text-[var(--text-tertiary)]">
+        <span className="min-w-0 truncate">创建 {formatTime(instance.createdAt)}</span>
+        <span className="min-w-0 truncate">最近 {formatTime(instance.lastRequestAt)}</span>
+      </div>
+    </article>
   );
 }
