@@ -232,7 +232,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
             type="button"
             onClick={handleUpload}
             disabled={uploading || loading}
-            className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {uploading ? (
               <>

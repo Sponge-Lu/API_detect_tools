@@ -47,6 +47,40 @@ export interface RestoreStorageBackupResult {
 export interface CreateAppStorageBundleOptions {
   mode?: AppStorageBundleMode;
   roots?: AppStorageRoots;
+  includeSecrets?: boolean;
+}
+
+function omitProxyCredentials(value: string): string {
+  const trimmed = value.trim();
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  try {
+    const url = new URL(hasScheme ? trimmed : `http://${trimmed}`);
+    if (!url.username && !url.password) return value;
+    url.username = '';
+    url.password = '';
+    return hasScheme ? url.href : url.href.slice('http://'.length);
+  } catch {
+    return '';
+  }
+}
+
+export function omitBackupSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitBackupSecrets);
+  if (!isObjectRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      /^(?:api_?key|unifiedApiKey|key|token|access_?token|refresh_?token|system_?token|password|secret|authorization|cookie|session_?token|localRouteCredential)$/i.test(
+        key
+      )
+        ? typeof item === 'object'
+          ? undefined
+          : ''
+        : typeof item === 'string' && /^(?:upstream_?)?proxy_?url$/i.test(key)
+          ? omitProxyCredentials(item)
+          : omitBackupSecrets(item),
+    ])
+  );
 }
 
 function getLocalAppDataPath(): string | undefined {
@@ -217,6 +251,14 @@ export async function createAppStorageBundle(
   const mode = options.mode ?? 'full-manifest';
   const roots = options.roots ?? getCurrentAppStorageRoots();
   const files = await collectBundleFiles(mode, roots);
+  if (options.includeSecrets === false) {
+    for (const file of files) {
+      const sanitized = Buffer.from(JSON.stringify(omitBackupSecrets(JSON.parse(file.content)), null, 2));
+      file.content = sanitized.toString('utf8');
+      file.size = sanitized.length;
+      file.sha256 = hashBuffer(sanitized);
+    }
+  }
 
   return {
     format: APP_STORAGE_BUNDLE_FORMAT,
@@ -240,9 +282,10 @@ export async function createAppStorageBundleContent(
 
 /** 创建可迁移 2 文件包：config.json + custom-cli-configs.json */
 export async function createPortableAppStorageBundleContent(
-  roots: AppStorageRoots = getCurrentAppStorageRoots()
+  roots: AppStorageRoots = getCurrentAppStorageRoots(),
+  includeSecrets = false
 ): Promise<string> {
-  return createAppStorageBundleContent({ mode: 'portable-config', roots });
+  return createAppStorageBundleContent({ mode: 'portable-config', roots, includeSecrets });
 }
 
 export function extractStableConfigFromBackupContent(content: string): unknown {

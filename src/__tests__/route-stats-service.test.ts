@@ -7,6 +7,7 @@ import type {
 
 const mocks = vi.hoisted(() => {
   const routing = {
+    stats: {},
     routePathStates: {},
     routeEndpointCapabilities: {},
     modelRegistry: {
@@ -17,7 +18,10 @@ const mocks = vi.hoisted(() => {
       displayItems: [],
       vendorPriorities: {},
     },
-  } as Pick<RoutingConfig, 'modelRegistry' | 'routeEndpointCapabilities' | 'routePathStates'>;
+  } as Pick<
+    RoutingConfig,
+    'modelRegistry' | 'routeEndpointCapabilities' | 'routePathStates' | 'stats'
+  >;
 
   return {
     routing,
@@ -44,6 +48,19 @@ const mocks = vi.hoisted(() => {
       ].join('|');
       routing.routeEndpointCapabilities![key] = state;
     }),
+    upsertRouteChannelStatsBatch: vi.fn(async (statsList: Array<Record<string, unknown>>) => {
+      for (const stats of statsList) {
+        // 与真实 buildStatsKey 同款拼法：recordOutcome 下一次读 routing.stats 时要能命中
+        const key = [
+          stats.routeRuleId,
+          stats.siteId,
+          stats.accountId,
+          stats.apiKeyId,
+          stats.targetProtocol || 'native',
+        ].join(':');
+        routing.stats![key] = stats as never;
+      }
+    }),
   };
 });
 
@@ -62,13 +79,20 @@ vi.mock('../main/unified-config-manager', () => ({
     getRoutingConfig: vi.fn(() => mocks.routing),
     upsertRoutePathState: mocks.upsertRoutePathState,
     upsertRouteEndpointCapabilityState: mocks.upsertRouteEndpointCapabilityState,
+    upsertRouteChannelStatsBatch: mocks.upsertRouteChannelStatsBatch,
+    persistRouteRuntimeState: vi.fn(async () => undefined),
     recordRouteStats: vi.fn(),
   },
 }));
 
 import {
+  beginRoutePathAttempt,
+  flushToStorage,
+  getRoutePathDisabledUntil,
   isRouteEndpointUnsupported,
   isRoutePathDisabled,
+  recordOutcome,
+  resetRouteSiteBreakers,
   recordRouteEndpointUnsupported,
   recordRoutePathOutcome,
   ROUTE_PATH_DISABLE_LADDER_MINUTES,
@@ -110,7 +134,7 @@ describe('route-stats-service route path state', () => {
     expect(isRoutePathDisabled(routePath, now + 1)).toBe(false);
   });
 
-  it('disables a repeatedly failed route path for 30 minutes when the 5 minute success rate is below 80%', async () => {
+  it('opens the breaker on the first ladder rung when the success rate drops below threshold', async () => {
     const now = 1_100_000;
 
     await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
@@ -119,9 +143,75 @@ describe('route-stats-service route path state', () => {
     expect(state.windowRequestCount).toBe(ROUTE_PATH_MIN_DISABLE_SAMPLES);
     expect(state.windowSuccessCount).toBe(0);
     expect(state.successRate).toBe(0);
-    expect(state.disabledUntil).toBe(now + 1 + ROUTE_PATH_DISABLE_MS);
+    expect(state.disabledReason).toBe('success_rate_below_threshold');
+    expect(state.disabledUntil).toBe(now + 1 + minutes(RUNG_1));
     expect(isRoutePathDisabled(routePath, now + 2)).toBe(true);
-    expect(isRoutePathDisabled(routePath, now + ROUTE_PATH_DISABLE_MS + 1)).toBe(false);
+    expect(isRoutePathDisabled(routePath, now + 1 + minutes(RUNG_1) + 1)).toBe(false);
+  });
+
+  it('admits a single half-open probe once the open period expires', async () => {
+    const now = 1_150_000;
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now + 1);
+    const halfOpenAt = now + 1 + minutes(RUNG_1) + 1;
+
+    expect(beginRoutePathAttempt(routePath, now + 2)).toBe(false);
+    expect(beginRoutePathAttempt(routePath, halfOpenAt)).toBe(true);
+    // 探测在途：其余请求视为不可用，并拿到短 Retry-After 提示
+    expect(isRoutePathDisabled(routePath, halfOpenAt + 1)).toBe(true);
+    expect(getRoutePathDisabledUntil(routePath, halfOpenAt + 1)).toBe(halfOpenAt + 1 + 5_000);
+
+    const closed = await recordRoutePathOutcome(
+      routePath,
+      'success',
+      { statusCode: 200 },
+      halfOpenAt + 2
+    );
+    expect(closed.disabledUntil).toBeUndefined();
+    expect(closed.disabledReason).toBeUndefined();
+    expect(closed.disableStreak).toBeUndefined();
+    // 闭合时重开窗口：旧失败样本不再计入
+    expect(closed.windowRequestCount).toBe(1);
+    expect(closed.successRate).toBe(1);
+    expect(isRoutePathDisabled(routePath, halfOpenAt + 3)).toBe(false);
+  });
+
+  it('re-opens on the next ladder rung when the half-open probe fails', async () => {
+    const now = 1_200_000;
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now + 1);
+    const halfOpenAt = now + 1 + minutes(RUNG_1) + 1;
+    expect(beginRoutePathAttempt(routePath, halfOpenAt)).toBe(true);
+
+    const reopened = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { statusCode: 503 },
+      halfOpenAt
+    );
+
+    expect(reopened.disabledReason).toBe('success_rate_below_threshold');
+    expect(reopened.disableStreak).toBe(2);
+    expect(reopened.disabledUntil).toBe(halfOpenAt + minutes(RUNG_2));
+    expect(isRoutePathDisabled(routePath, halfOpenAt + 1)).toBe(true);
+  });
+
+  it('keeps the half-open state across neutral samples', async () => {
+    const now = 1_250_000;
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now + 1);
+    const halfOpenAt = now + 1 + minutes(RUNG_1) + 1;
+
+    const state = await recordRoutePathOutcome(
+      routePath,
+      'neutral',
+      { statusCode: 400 },
+      halfOpenAt
+    );
+
+    expect(state.disabledUntil).toBeUndefined();
+    expect(state.disabledReason).toBe('success_rate_below_threshold');
+    expect(state.disableStreak).toBe(1);
   });
 
   it('does not count neutral responses as route path health samples', async () => {
@@ -147,13 +237,14 @@ describe('route-stats-service route path state', () => {
     expect(firstFailure.successRate).toBe(0.5);
     expect(firstFailure.disabledUntil).toBeUndefined();
 
+    // 配置的禁用时长是阶梯的上限
     const secondFailure = await recordRoutePathOutcome(routePath, 'failure', undefined, now + 2, {
       successRateWindowMinutes: 5,
-      disableDurationMinutes: 10,
+      disableDurationMinutes: 1,
       minSuccessRate: 0.7,
     });
     expect(secondFailure.successRate).toBeCloseTo(1 / 3);
-    expect(secondFailure.disabledUntil).toBe(now + 2 + 10 * 60 * 1000);
+    expect(secondFailure.disabledUntil).toBe(now + 2 + 1 * 60 * 1000);
   });
 
   it('uses route runtime config for the success rate calculation window', async () => {
@@ -325,6 +416,57 @@ describe('route-stats-service route endpoint capabilities', () => {
   });
 });
 
+describe('route-stats-service buffered stats flush', () => {
+  const flushKey = { ...routePath, targetProtocol: 'anthropic-messages' as const };
+
+  beforeEach(() => {
+    mocks.routing.stats = {};
+    mocks.upsertRouteChannelStatsBatch.mockClear();
+  });
+
+  it('overwrites persisted stats with aggregated in-memory counts and adds no spurious neutral', async () => {
+    // 回归：首个窗口的计数此前经 recordRouteStats('neutral') 落盘时全部丢失
+    recordOutcome(flushKey, 'success', { statusCode: 200, latencyMs: 123 });
+    recordOutcome(flushKey, 'failure', { statusCode: 500 });
+    recordOutcome(flushKey, 'failure', { statusCode: 502 });
+
+    await flushToStorage();
+
+    expect(mocks.upsertRouteChannelStatsBatch).toHaveBeenCalledTimes(1);
+    const statsList = mocks.upsertRouteChannelStatsBatch.mock.calls[0][0];
+    expect(statsList).toHaveLength(1);
+    expect(statsList[0]).toMatchObject({
+      routeRuleId: flushKey.routeRuleId,
+      siteId: flushKey.siteId,
+      accountId: flushKey.accountId,
+      apiKeyId: flushKey.apiKeyId,
+      successCount: 1,
+      failureCount: 2,
+      neutralCount: 0,
+      consecutiveFailures: 2,
+      lastStatusCode: 502,
+      lastLatencyMs: 123,
+    });
+  });
+
+  it('clears the buffer after flush and keeps counting on top of flushed values', async () => {
+    recordOutcome(flushKey, 'success', { statusCode: 200 });
+    await flushToStorage();
+
+    recordOutcome(flushKey, 'success', { statusCode: 200 });
+    await flushToStorage();
+
+    expect(mocks.upsertRouteChannelStatsBatch).toHaveBeenCalledTimes(2);
+    const secondBatch = mocks.upsertRouteChannelStatsBatch.mock.calls[1][0];
+    expect(secondBatch[0]).toMatchObject({ successCount: 2, failureCount: 0, neutralCount: 0 });
+  });
+
+  it('does not write anything when the buffer is empty', async () => {
+    await flushToStorage();
+    expect(mocks.upsertRouteChannelStatsBatch).not.toHaveBeenCalled();
+  });
+});
+
 describe('route-stats-service confirmed unavailability', () => {
   beforeEach(() => {
     mocks.routing.routePathStates = {};
@@ -469,15 +611,15 @@ describe('route-stats-service confirmed unavailability', () => {
     expect(second.disabledUntil).toBe(now + minutes(5));
   });
 
-  it('leaves the statistical path on its flat duration and reason', async () => {
+  it('puts the statistical path on the same ladder as confirmed rejections', async () => {
     const now = 2_500_000;
 
     await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
     const state = await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now + 1);
 
     expect(state.disabledReason).toBe('success_rate_below_threshold');
-    expect(state.disabledUntil).toBe(now + 1 + ROUTE_PATH_DISABLE_MS);
-    expect(state.disableStreak).toBeUndefined();
+    expect(state.disabledUntil).toBe(now + 1 + minutes(RUNG_1));
+    expect(state.disableStreak).toBe(1);
   });
 
   it('never disables or touches the streak on a neutral sample', async () => {
@@ -489,5 +631,64 @@ describe('route-stats-service confirmed unavailability', () => {
     expect(state.disabledUntil).toBeUndefined();
     expect(state.disableStreak).toBeUndefined();
     expect(isRoutePathDisabled(routePath, now + 1)).toBe(false);
+  });
+});
+
+describe('route-stats-service site-level breaker', () => {
+  const keyA = { ...routePath, apiKeyId: 'site-key-a' };
+  const keyB = { ...routePath, apiKeyId: 'site-key-b' };
+  const keyC = { ...routePath, apiKeyId: 'site-key-c' };
+
+  beforeEach(() => {
+    mocks.routing.routePathStates = {};
+    resetRouteSiteBreakers();
+  });
+
+  it('skips every key of a site after consecutive transport failures', async () => {
+    const now = 5_000_000;
+
+    await recordRoutePathOutcome(keyA, 'failure', { error: 'net::ERR_CONNECTION_RESET' }, now);
+    expect(isRoutePathDisabled(keyC, now + 1)).toBe(false);
+    await recordRoutePathOutcome(keyB, 'failure', { error: 'ECONNREFUSED 1.2.3.4:443' }, now + 2);
+
+    expect(isRoutePathDisabled(keyC, now + 3)).toBe(true);
+    expect(getRoutePathDisabledUntil(keyC, now + 3)).toBe(now + 2 + 60_000);
+    expect(isRoutePathDisabled(keyC, now + 2 + 60_000 + 1)).toBe(false);
+  });
+
+  it('scopes 404-class rejections to the same site and model only', async () => {
+    const now = 5_100_000;
+    const otherModel = { ...keyC, resolvedModel: 'claude-sonnet-4.6' };
+
+    for (const key of [keyA, keyB]) {
+      await recordRoutePathOutcome(
+        key,
+        'failure',
+        { statusCode: 404, confirmedUnavailable: 'upstream_model_unavailable' },
+        now
+      );
+    }
+
+    expect(isRoutePathDisabled(keyC, now + 1)).toBe(true);
+    expect(isRoutePathDisabled(otherModel, now + 1)).toBe(false);
+  });
+
+  it('clears the site breaker on any success from the site', async () => {
+    const now = 5_200_000;
+    await recordRoutePathOutcome(keyA, 'failure', { error: 'ETIMEDOUT' }, now);
+    await recordRoutePathOutcome(keyB, 'failure', { error: 'ETIMEDOUT' }, now + 1);
+    expect(isRoutePathDisabled(keyC, now + 2)).toBe(true);
+
+    await recordRoutePathOutcome(keyA, 'success', { statusCode: 200 }, now + 3);
+
+    expect(isRoutePathDisabled(keyC, now + 4)).toBe(false);
+  });
+
+  it('ignores HTTP failures and adapter errors for the site scope', async () => {
+    const now = 5_300_000;
+    await recordRoutePathOutcome(keyA, 'failure', { statusCode: 500, error: 'boom' }, now);
+    await recordRoutePathOutcome(keyB, 'failure', { error: 'adapter_response-adapt:x' }, now + 1);
+
+    expect(isRoutePathDisabled(keyC, now + 2)).toBe(false);
   });
 });

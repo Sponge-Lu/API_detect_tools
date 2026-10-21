@@ -6,10 +6,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import {
   Check,
-  ChevronDown,
   Copy,
   Eye,
   EyeOff,
@@ -22,16 +20,18 @@ import {
 } from 'lucide-react';
 import type {
   ConfigFileApplyMode,
+  ConfigFileAuthMode,
   ConfigFileDefinition,
   ConfigFilePreviewTransaction,
   ConfigFileProfile,
   ConfigFileResolvedTargetValues,
   ConfigFileSnapshot,
+  ConfigFileBackup,
   ConfigFileTarget,
   ConfigFileTargetCatalogEntry,
-  SessionRecordConnector,
 } from '../../../shared/types/config-file-profile';
 import { DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS } from '../../../shared/types/config-file-profile';
+import { BUILTIN_CLI_IDS, BUILTIN_CLI_TYPES } from '../../../shared/types/cli-config';
 import { AppButton } from '../AppButton/AppButton';
 import { AppCard } from '../AppCard';
 import { AppModal } from '../AppModal/AppModal';
@@ -61,17 +61,6 @@ function createProfile(): ConfigFileProfile {
     target: { kind: 'local-route', model: null },
     createdAt: now,
     updatedAt: now,
-  };
-}
-
-function createSessionConnector(profileId: string): SessionRecordConnector {
-  return {
-    id: `${profileId}:session:${crypto.randomUUID()}`,
-    path: '',
-    format: 'jsonl',
-    namespace: 'custom',
-    sessionIdPath: 'session_id',
-    recursive: false,
   };
 }
 
@@ -181,6 +170,18 @@ export function ConfigProfilesSection() {
   const [applyMode, setApplyMode] = useState<ConfigFileApplyMode>('merge');
   const [preview, setPreview] = useState<ConfigFilePreviewTransaction | null>(null);
   const [restoreProfileId, setRestoreProfileId] = useState<string | null>(null);
+  const [backupDialog, setBackupDialog] = useState<{
+    profileId: string;
+    fileId: string;
+    path: string;
+    revision?: number;
+    entries: ConfigFileBackup[];
+  } | null>(null);
+  const [loadingBackup, setLoadingBackup] = useState(false);
+  const [authModeTarget, setAuthModeTarget] = useState<{
+    profile: ConfigFileProfile;
+    authMode: ConfigFileAuthMode;
+  } | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [visibleRouteKeys, setVisibleRouteKeys] = useState<Record<string, boolean>>({});
@@ -267,6 +268,13 @@ export function ConfigProfilesSection() {
   const selectedProfile = profiles.find(profile => profile.id === selectedProfileId) || null;
   const applyProfile = profiles.find(profile => profile.id === applyProfileId) || null;
   const restoreProfile = profiles.find(profile => profile.id === restoreProfileId) || null;
+  const missingBuiltinCount = BUILTIN_CLI_TYPES.filter(
+    clientType =>
+      !profiles.some(
+        profile =>
+          profile.builtin?.clientType === clientType || profile.id === BUILTIN_CLI_IDS[clientType]
+      )
+  ).length;
 
   const updateProfile = (
     profileId: string,
@@ -489,6 +497,47 @@ export function ConfigProfilesSection() {
     }
   };
 
+  const showBackups = async (profile: ConfigFileProfile, fileId: string) => {
+    const file = profile.files.find(item => item.id === fileId);
+    if (!file) return;
+    try {
+      const entries = await window.electronAPI.configFileProfiles.listBackups({
+        profileId: profile.id,
+        fileId,
+      });
+      setBackupDialog({
+        profileId: profile.id,
+        fileId,
+        path: file.path,
+        revision: profile.revision,
+        entries,
+      });
+    } catch (error) {
+      toast.error(errorMessage(error, '加载备份列表失败'));
+    }
+  };
+
+  const previewBackup = async (backup: ConfigFileBackup) => {
+    if (!backupDialog || loadingBackup) return;
+    setLoadingBackup(true);
+    try {
+      const transaction = await window.electronAPI.configFileProfiles.previewBackupRestore({
+        profileId: backupDialog.profileId,
+        fileId: backupDialog.fileId,
+        expectedRevision: backupDialog.revision,
+        backupId: backup.id,
+        expectedHash: backup.sha256,
+      });
+      setApplyProfileId(backupDialog.profileId);
+      setPreview(transaction);
+      setBackupDialog(null);
+    } catch (error) {
+      toast.error(errorMessage(error, '生成备份恢复预览失败'));
+    } finally {
+      setLoadingBackup(false);
+    }
+  };
+
   const buildDirectEditPreview = async (profile: ConfigFileProfile) => {
     const profileSnapshots = snapshots[profile.id] || [];
     try {
@@ -518,7 +567,23 @@ export function ConfigProfilesSection() {
         if (operation === 'apply' || operation === 'key-rotation') {
           await reload();
         }
-        if (operation !== 'key-rotation') {
+        if (operation === 'backup-restore') {
+          const restoredFileIds = new Set(preview.files.map(file => file.fileId));
+          setSnapshots(current => ({
+            ...current,
+            [applyProfile.id]: (current[applyProfile.id] || []).filter(
+              file => !restoredFileIds.has(file.fileId)
+            ),
+          }));
+          setEdits(current => ({
+            ...current,
+            [applyProfile.id]: Object.fromEntries(
+              Object.entries(current[applyProfile.id] || {}).filter(
+                ([fileId]) => !restoredFileIds.has(fileId)
+              )
+            ),
+          }));
+        } else if (operation !== 'key-rotation') {
           await readLocalFiles(applyProfile);
         }
       } catch (refreshError) {
@@ -530,9 +595,11 @@ export function ConfigProfilesSection() {
       toast.success(
         operation === 'key-rotation'
           ? 'API Key 与本地配置已同步轮换'
-          : operation === 'direct-edit'
-            ? '本地文件已保存'
-            : '配置已应用到本地'
+          : operation === 'backup-restore'
+            ? '配置文件已从备份恢复'
+            : operation === 'direct-edit'
+              ? '本地文件已保存'
+              : '配置已应用到本地'
       );
     } catch (error) {
       toast.error(errorMessage(error, '写入本地配置失败'));
@@ -564,6 +631,45 @@ export function ConfigProfilesSection() {
       toast.success('已恢复为最新内置示例');
     } catch (error) {
       toast.error(errorMessage(error, '恢复内置示例失败'));
+    }
+  };
+
+  const restoreMissingBuiltins = async () => {
+    try {
+      await window.electronAPI.configFileProfiles.restoreMissingBuiltins();
+      await reload();
+      toast.success('内置模板已恢复');
+    } catch (error) {
+      toast.error(errorMessage(error, '恢复内置模板失败'));
+    }
+  };
+
+  const switchAuthMode = async () => {
+    if (!authModeTarget) return;
+    const { profile, authMode } = authModeTarget;
+    try {
+      const saved = await persistProfile(profile);
+      const switched = await window.electronAPI.configFileProfiles.switchAuthMode({
+        profileId: saved.id,
+        authMode,
+        expectedRevision: saved.revision,
+      });
+      setProfiles(current => current.map(item => (item.id === switched.id ? switched : item)));
+      setProfileBaselines(current => ({ ...current, [switched.id]: switched }));
+      setSnapshots(current => {
+        const next = { ...current };
+        delete next[switched.id];
+        return next;
+      });
+      setEdits(current => {
+        const next = { ...current };
+        delete next[switched.id];
+        return next;
+      });
+      setAuthModeTarget(null);
+      toast.success('接入方式已切换');
+    } catch (error) {
+      toast.error(errorMessage(error, '切换接入方式失败'));
     }
   };
 
@@ -652,24 +758,38 @@ export function ConfigProfilesSection() {
             个文件
           </p>
         </div>
-        <AppButton
-          size="sm"
-          onClick={() => {
-            const profile = createProfile();
-            setProfiles(current => [...current, profile]);
-            setSelectedProfileId(profile.id);
-            setHasUnsavedChanges(true);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          新增配置
-        </AppButton>
+        <div className="flex items-center gap-2">
+          {missingBuiltinCount > 0 ? (
+            <AppButton
+              variant="tertiary"
+              size="sm"
+              title="恢复已删除的内置模板"
+              onClick={() => void restoreMissingBuiltins()}
+            >
+              <RefreshCw className="h-4 w-4" />
+              恢复内置模板
+            </AppButton>
+          ) : null}
+          <AppButton
+            size="sm"
+            onClick={() => {
+              const profile = createProfile();
+              setProfiles(current => [...current, profile]);
+              setSelectedProfileId(profile.id);
+              setHasUnsavedChanges(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            新增配置
+          </AppButton>
+        </div>
       </div>
 
       <div className="overflow-x-auto p-2">
         <div className="grid min-w-[56rem] grid-cols-4 gap-3">
           {profiles.map(profile => {
             const entry = targetEntryFor(profile);
+            const isOfficial = profile.authMode === 'official';
             const cardValues = profile.lastApplied || savedResolvedValues[profile.id];
             return (
               <AppCard
@@ -704,23 +824,38 @@ export function ConfigProfilesSection() {
                           内置
                         </span>
                       ) : null}
-                      {!entry || !entry.available ? (
+                      {isOfficial ? (
+                        <span className="shrink-0 rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
+                          官方登录
+                        </span>
+                      ) : null}
+                      {!isOfficial && (!entry || !entry.available) ? (
                         <span className="shrink-0 rounded-full bg-[var(--danger-soft)] px-2 py-0.5 text-xs font-medium text-[var(--danger)]">
                           需修复
                         </span>
                       ) : null}
                     </div>
                     <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
-                      {entry?.label || '目标已不存在'}
+                      {isOfficial ? '官方账号登录' : entry?.label || '目标已不存在'}
                     </p>
                   </div>
                 </div>
                 <div className="space-y-1.5 border-y border-[var(--line-muted)] bg-[var(--surface-2)]/40 px-3 py-2 text-xs">
                   {[
-                    ['配置目标', cardValues?.targetLabel || entry?.label || '未设置'],
-                    ['BaseURL', cardValues?.baseUrl || '未设置'],
-                    ['APIKey 名称', cardValues?.apiKeyName || '未设置'],
-                    ['模型', cardValues?.model || profile.target.model || '未设置'],
+                    [
+                      '配置目标',
+                      isOfficial
+                        ? '官方账号登录'
+                        : cardValues?.targetLabel || entry?.label || '未设置',
+                    ],
+                    ['BaseURL', isOfficial ? '—' : cardValues?.baseUrl || '未设置'],
+                    ['APIKey 名称', isOfficial ? '—' : cardValues?.apiKeyName || '未设置'],
+                    [
+                      '模型',
+                      isOfficial
+                        ? '模板内置'
+                        : cardValues?.model || profile.target.model || '未设置',
+                    ],
                   ].map(([label, value]) => (
                     <div
                       key={label}
@@ -813,6 +948,15 @@ export function ConfigProfilesSection() {
                   </button>
                 ))}
               </div>
+              {selectedProfile?.isExample ? (
+                <AppButton
+                  variant="secondary"
+                  onClick={() => setRestoreProfileId(selectedProfile.id)}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  恢复最新示例
+                </AppButton>
+              ) : null}
               <AppButton variant="tertiary" onClick={handleCloseModal}>
                 取消
               </AppButton>
@@ -821,7 +965,10 @@ export function ConfigProfilesSection() {
                 保存配置
               </AppButton>
               <AppButton
-                disabled={!selectedProfile || !targetEntryFor(selectedProfile)}
+                disabled={
+                  !selectedProfile ||
+                  (selectedProfile.authMode !== 'official' && !targetEntryFor(selectedProfile))
+                }
                 onClick={() => void saveAndBuildApplyPreview()}
               >
                 <Eye className="h-4 w-4" />
@@ -866,7 +1013,9 @@ export function ConfigProfilesSection() {
                 .then(() => toast.success('API Key 已复制'));
             }}
             onUpdateFile={(fileId, updates) => updateFile(selectedProfile.id, fileId, updates)}
-            onRestore={() => setRestoreProfileId(selectedProfile.id)}
+            onRequestAuthMode={authMode =>
+              setAuthModeTarget({ profile: selectedProfile, authMode })
+            }
             onReadLocal={() => void readLocalFiles(selectedProfile)}
             onEditLocal={(fileId, content) => {
               setHasUnsavedChanges(true);
@@ -876,6 +1025,8 @@ export function ConfigProfilesSection() {
               }));
             }}
             onSaveLocal={() => void buildDirectEditPreview(selectedProfile)}
+            canBrowseBackups={persistedIds.has(selectedProfile.id) && !hasUnsavedChanges}
+            onShowBackups={fileId => void showBackups(selectedProfile, fileId)}
             onRequestDeleteFile={fileId =>
               setDeleteFileTarget({ profileId: selectedProfile.id, fileId })
             }
@@ -904,6 +1055,69 @@ export function ConfigProfilesSection() {
           将用最新的完整内置模板替换“{restoreProfile?.name}
           ”当前的模板和说明。配置目标与对话记录路径会保留,本地文件不会立即写入。
         </p>
+      </AppModal>
+
+      <AppModal
+        isOpen={authModeTarget !== null}
+        onClose={() => setAuthModeTarget(null)}
+        title="切换接入方式"
+        titleIcon={<RefreshCw className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <AppButton variant="tertiary" onClick={() => setAuthModeTarget(null)}>
+              取消
+            </AppButton>
+            <AppButton variant="danger" onClick={() => void switchAuthMode()}>
+              确认切换
+            </AppButton>
+          </>
+        }
+      >
+        <p className="text-sm text-[var(--text-secondary)]">
+          将把“{authModeTarget?.profile.name}”的模板替换为“
+          {authModeTarget?.authMode === 'official' ? '官方账号登录' : '第三方 API'}
+          ”内置模板，未保存的模板修改会丢失。本地文件不会立即写入。
+        </p>
+      </AppModal>
+
+      <AppModal
+        isOpen={backupDialog !== null}
+        onClose={() => {
+          if (!loadingBackup) setBackupDialog(null);
+        }}
+        title="配置文件备份"
+        size="md"
+      >
+        <p className="mb-3 break-all text-xs text-[var(--text-secondary)]">{backupDialog?.path}</p>
+        <div className="max-h-80 space-y-2 overflow-auto">
+          {backupDialog?.entries.length === 0 ? (
+            <p className="text-sm text-[var(--text-tertiary)]">暂无备份</p>
+          ) : (
+            backupDialog?.entries.map(backup => (
+              <div key={backup.id} className="flex items-center justify-between gap-3">
+                <span className="text-sm">
+                  {backup.kind === 'original'
+                    ? '首次原始备份'
+                    : backup.kind === 'legacy'
+                      ? '迁移备份'
+                      : '自动备份'}
+                  {' · '}
+                  {new Date(backup.createdAt).toLocaleString()}
+                  {' · '}
+                  {backup.size} B
+                </span>
+                <AppButton
+                  size="sm"
+                  disabled={loadingBackup}
+                  onClick={() => void previewBackup(backup)}
+                >
+                  预览恢复
+                </AppButton>
+              </div>
+            ))
+          )}
+        </div>
       </AppModal>
 
       <AppModal
@@ -1013,7 +1227,12 @@ function ApplyPreviewPanel(props: { preview: ConfigFilePreviewTransaction; onBac
         <div>
           <h3 className="text-sm font-semibold">确认写入内容</h3>
           <p className="mt-1 text-xs font-medium text-[var(--accent-strong)]">
-            写入模式：{props.preview.applyMode === 'overwrite' ? '覆盖' : '合并'}
+            写入模式：
+            {props.preview.operation === 'backup-restore'
+              ? '恢复备份'
+              : props.preview.applyMode === 'overwrite'
+                ? '覆盖'
+                : '合并'}
           </p>
           <p className="mt-1 text-xs text-[var(--text-tertiary)]">
             共 {props.preview.files.length} 个文件
@@ -1035,7 +1254,11 @@ function ApplyPreviewPanel(props: { preview: ConfigFilePreviewTransaction; onBac
           <div className="truncate font-mono text-xs" title={file.path}>
             {file.path}
           </div>
-          <DiffView oldText={file.content} newText={file.nextContent} />
+          {props.preview.operation === 'backup-restore' ? (
+            <p className="text-sm text-[var(--text-secondary)]">将恢复所选备份的完整内容。</p>
+          ) : (
+            <DiffView oldText={file.content} newText={file.nextContent} />
+          )}
         </section>
       ))}
     </div>
@@ -1092,13 +1315,17 @@ function RuleEditor(props: {
   onGenerateRouteKey: () => void;
   onCopyRouteKey: () => void;
   onUpdateFile: (fileId: string, updates: Partial<ConfigFileDefinition>) => void;
-  onRestore: () => void;
+  onRequestAuthMode: (authMode: ConfigFileAuthMode) => void;
   onReadLocal: () => void;
   onEditLocal: (fileId: string, content: string) => void;
   onSaveLocal: () => void;
+  canBrowseBackups: boolean;
+  onShowBackups: (fileId: string) => void;
   onRequestDeleteFile: (fileId: string) => void;
 }) {
   const { profile } = props;
+  const authMode = profile.authMode ?? 'third-party';
+  const isOfficial = authMode === 'official';
   const [resolvedValues, setResolvedValues] = useState<ConfigFileResolvedTargetValues | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const unavailableTarget = !props.currentEntry || !props.currentEntry.available;
@@ -1120,7 +1347,7 @@ function RuleEditor(props: {
     let active = true;
     setResolvedValues(null);
     setApiKeyVisible(false);
-    if (!props.currentEntry?.available) return () => undefined;
+    if (isOfficial || !props.currentEntry?.available) return () => undefined;
     void window.electronAPI.configFileProfiles
       .resolveValues({ profile })
       .then(values => {
@@ -1140,12 +1367,48 @@ function RuleEditor(props: {
 
   return (
     <div className="space-y-3 p-3">
+      {profile.isExample ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+          <div>
+            <span className="text-sm font-semibold">接入方式</span>
+            <p className="mt-0.5 text-xs text-[var(--text-tertiary)]">
+              {isOfficial
+                ? '使用客户端官方账号登录，无需站点 API Key'
+                : '使用第三方 API 站点或本地路由'}
+            </p>
+          </div>
+          <div
+            role="group"
+            aria-label="接入方式"
+            className="flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] p-0.5"
+          >
+            {(['third-party', 'official'] as const).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={authMode === mode}
+                onClick={() => {
+                  if (authMode !== mode) props.onRequestAuthMode(mode);
+                }}
+                className={`rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs transition-colors ${
+                  authMode === mode
+                    ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
+                    : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
+                }`}
+              >
+                {mode === 'third-party' ? '第三方 API' : '官方账号登录'}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <section className="space-y-2">
         <div className="flex items-center justify-between border-b border-[var(--line-muted)] pb-1.5">
           <div>
             <h3 className="text-sm font-semibold">基本信息</h3>
           </div>
-          {unavailableTarget ? (
+          {!isOfficial && unavailableTarget ? (
             <span className="text-xs text-[var(--danger)]">
               {props.currentEntry?.unavailableReason || '目标需要重新选择'}
             </span>
@@ -1173,212 +1436,229 @@ function RuleEditor(props: {
               />
             </div>
           </div>
-          <AppSelect
-            size="sm"
-            label="配置目标"
-            aria-label={`${profile.name} 目标`}
-            containerClassName="min-w-0"
-            value={encodeTarget(profile.target)}
-            onChange={event =>
-              props.onUpdate(item => ({ ...item, target: decodeTarget(event.target.value) }))
-            }
-          >
-            {unavailableTarget ? (
-              <option value={encodeTarget(profile.target)} disabled>
-                当前目标已不可用
-              </option>
-            ) : null}
-            {props.catalog
-              .filter(entry => entry.available)
-              .map(entry => (
-                <option key={entry.value} value={entry.value} disabled={!entry.available}>
-                  {entry.label}
-                  {!entry.available && entry.unavailableReason
-                    ? `（${entry.unavailableReason}）`
-                    : ''}
-                </option>
-              ))}
-          </AppSelect>
-          <div className="min-w-0 xl:min-w-0">
-            {profile.target.kind === 'managed' ? (
-              <div className="flex min-w-0 items-end gap-0.5">
-                <AppSelect
-                  size="sm"
-                  label="API Key"
-                  aria-label={`${profile.name} API Key`}
-                  value={selectedKey || ''}
-                  containerClassName="min-w-0 flex-1"
-                  onChange={event =>
-                    props.onUpdate(item => ({
-                      ...item,
-                      target:
-                        item.target.kind === 'managed'
-                          ? {
-                              ...item.target,
-                              apiKeyId: event.target.value || undefined,
-                              model: null,
-                            }
-                          : item.target,
-                    }))
-                  }
-                >
-                  <option value="">选择 API Key</option>
-                  {selectedKey &&
-                  !props.currentEntry?.apiKeys.some(key => key.id === selectedKey) ? (
-                    <option value={selectedKey} disabled>
-                      当前 API Key 已不可用
-                    </option>
-                  ) : null}
-                  {props.currentEntry?.apiKeys.map(key => (
-                    <option key={key.id} value={key.id}>
-                      {key.label}
+          {isOfficial ? (
+            <div className="min-w-0 md:col-span-2 xl:col-span-3">
+              <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--line-soft)] px-3 py-2.5 text-xs leading-5 text-[var(--text-tertiary)]">
+                官方账号登录由客户端自行完成（首次使用请运行 claude / codex login / opencode auth
+                login / grok login），无需选择站点、API Key 或模型。
+              </p>
+            </div>
+          ) : (
+            <>
+              <AppSelect
+                size="sm"
+                label="配置目标"
+                aria-label={`${profile.name} 目标`}
+                containerClassName="min-w-0"
+                value={encodeTarget(profile.target)}
+                onChange={event =>
+                  props.onUpdate(item => ({ ...item, target: decodeTarget(event.target.value) }))
+                }
+              >
+                {unavailableTarget ? (
+                  <option value={encodeTarget(profile.target)} disabled>
+                    当前目标已不可用
+                  </option>
+                ) : null}
+                {props.catalog
+                  .filter(entry => entry.available)
+                  .map(entry => (
+                    <option key={entry.value} value={entry.value} disabled={!entry.available}>
+                      {entry.label}
+                      {!entry.available && entry.unavailableReason
+                        ? `（${entry.unavailableReason}）`
+                        : ''}
                     </option>
                   ))}
-                </AppSelect>
-                <button
-                  type="button"
-                  className={`${CREDENTIAL_ICON_BUTTON_CLASS} mb-0.5`}
-                  title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                  aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                  onClick={() => setApiKeyVisible(current => !current)}
-                >
-                  {apiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            ) : profile.target.kind === 'local-route' ? (
-              <div className="space-y-1">
-                <span className="block text-sm font-medium text-[var(--text-primary)]">
-                  API Key
-                </span>
-                <div className="flex min-w-0 gap-0.5">
-                  <AppInput
-                    size="sm"
-                    readOnly
-                    className="min-w-0 flex-1 font-mono"
-                    containerClassName="min-w-0 flex-1"
-                    aria-label={`${profile.name} API Key`}
-                    type={props.routeKeyVisible ? 'text' : 'password'}
-                    value={profile.localRouteCredential?.apiKey || ''}
-                    placeholder="尚未生成独立 API Key"
-                  />
-                  {profile.localRouteCredential ? (
-                    <>
+              </AppSelect>
+              <div className="min-w-0 xl:min-w-0">
+                {profile.target.kind === 'managed' ? (
+                  <div className="flex min-w-0 items-end gap-0.5">
+                    <AppSelect
+                      size="sm"
+                      label="API Key"
+                      aria-label={`${profile.name} API Key`}
+                      value={selectedKey || ''}
+                      containerClassName="min-w-0 flex-1"
+                      onChange={event =>
+                        props.onUpdate(item => ({
+                          ...item,
+                          target:
+                            item.target.kind === 'managed'
+                              ? {
+                                  ...item.target,
+                                  apiKeyId: event.target.value || undefined,
+                                  model: null,
+                                }
+                              : item.target,
+                        }))
+                      }
+                    >
+                      <option value="">选择 API Key</option>
+                      {selectedKey &&
+                      !props.currentEntry?.apiKeys.some(key => key.id === selectedKey) ? (
+                        <option value={selectedKey} disabled>
+                          当前 API Key 已不可用
+                        </option>
+                      ) : null}
+                      {props.currentEntry?.apiKeys.map(key => (
+                        <option key={key.id} value={key.id}>
+                          {key.label}
+                        </option>
+                      ))}
+                    </AppSelect>
+                    <button
+                      type="button"
+                      className={`${CREDENTIAL_ICON_BUTTON_CLASS} mb-0.5`}
+                      title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                      aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                      onClick={() => setApiKeyVisible(current => !current)}
+                    >
+                      {apiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                ) : profile.target.kind === 'local-route' ? (
+                  <div className="space-y-1">
+                    <span className="block text-sm font-medium text-[var(--text-primary)]">
+                      API Key
+                    </span>
+                    <div className="flex min-w-0 gap-0.5">
+                      <AppInput
+                        size="sm"
+                        readOnly
+                        className="min-w-0 flex-1 font-mono"
+                        containerClassName="min-w-0 flex-1"
+                        aria-label={`${profile.name} API Key`}
+                        type={props.routeKeyVisible ? 'text' : 'password'}
+                        value={profile.localRouteCredential?.apiKey || ''}
+                        placeholder="尚未生成独立 API Key"
+                      />
+                      {profile.localRouteCredential ? (
+                        <>
+                          <button
+                            type="button"
+                            className={CREDENTIAL_ICON_BUTTON_CLASS}
+                            title={props.routeKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                            aria-label={props.routeKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                            onClick={props.onToggleRouteKey}
+                          >
+                            {props.routeKeyVisible ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className={CREDENTIAL_ICON_BUTTON_CLASS}
+                            title="复制 API Key"
+                            aria-label="复制 API Key"
+                            onClick={props.onCopyRouteKey}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </button>
+                        </>
+                      ) : null}
                       <button
                         type="button"
                         className={CREDENTIAL_ICON_BUTTON_CLASS}
-                        title={props.routeKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                        aria-label={props.routeKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                        onClick={props.onToggleRouteKey}
+                        title={profile.localRouteCredential ? '重新生成 API Key' : '生成 API Key'}
+                        aria-label={
+                          profile.localRouteCredential ? '重新生成 API Key' : '生成 API Key'
+                        }
+                        onClick={props.onGenerateRouteKey}
                       >
-                        {props.routeKeyVisible ? (
+                        <RefreshCw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <span className="block text-sm font-medium text-[var(--text-primary)]">
+                      API Key
+                    </span>
+                    <div className="flex items-center gap-0.5">
+                      <div className="flex h-9 min-w-0 flex-1 items-center truncate rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 font-mono text-xs text-[var(--text-secondary)]">
+                        {resolvedValues?.apiKeyName ||
+                          (profile.target.kind === 'direct' ? '直连 API Key' : '未选择 API Key')}
+                      </div>
+                      <button
+                        type="button"
+                        className={`${CREDENTIAL_ICON_BUTTON_CLASS} mb-0.5`}
+                        title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                        aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
+                        onClick={() => setApiKeyVisible(current => !current)}
+                      >
+                        {apiKeyVisible ? (
                           <EyeOff className="h-4 w-4" />
                         ) : (
                           <Eye className="h-4 w-4" />
                         )}
                       </button>
-                      <button
-                        type="button"
-                        className={CREDENTIAL_ICON_BUTTON_CLASS}
-                        title="复制 API Key"
-                        aria-label="复制 API Key"
-                        onClick={props.onCopyRouteKey}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </button>
-                    </>
-                  ) : null}
-                  <button
-                    type="button"
-                    className={CREDENTIAL_ICON_BUTTON_CLASS}
-                    title={profile.localRouteCredential ? '重新生成 API Key' : '生成 API Key'}
-                    aria-label={profile.localRouteCredential ? '重新生成 API Key' : '生成 API Key'}
-                    onClick={props.onGenerateRouteKey}
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <span className="block text-sm font-medium text-[var(--text-primary)]">
-                  API Key
-                </span>
-                <div className="flex items-center gap-0.5">
-                  <div className="flex h-9 min-w-0 flex-1 items-center truncate rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 font-mono text-xs text-[var(--text-secondary)]">
-                    {resolvedValues?.apiKeyName ||
-                      (profile.target.kind === 'direct' ? '直连 API Key' : '未选择 API Key')}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className={`${CREDENTIAL_ICON_BUTTON_CLASS} mb-0.5`}
-                    title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                    aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                    onClick={() => setApiKeyVisible(current => !current)}
+                )}
+              </div>
+              <div className="flex items-end gap-2">
+                <AppSelect
+                  size="sm"
+                  label="模型"
+                  aria-label={`${profile.name} 模型`}
+                  value={profile.target.model || ''}
+                  onChange={event =>
+                    props.onUpdate(item => ({
+                      ...item,
+                      target: { ...item.target, model: event.target.value || null },
+                    }))
+                  }
+                  containerClassName="min-w-0 flex-1"
+                >
+                  <option value="">选择模型</option>
+                  {props.models.map(model => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </AppSelect>
+                {profile.target.kind === 'managed' ? (
+                  <div
+                    role="group"
+                    aria-label="模型显示范围"
+                    className="flex shrink-0 items-center overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] text-xs"
                   >
-                    {apiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      aria-pressed={!props.showAll}
+                      onClick={() => props.onSelectScope(false)}
+                      className={`flex h-9 items-center px-3 transition-colors ${
+                        !props.showAll
+                          ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
+                          : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      按分组
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={props.showAll}
+                      onClick={() => props.onSelectScope(true)}
+                      className={`flex h-9 items-center border-l border-[var(--line-soft)] px-3 transition-colors ${
+                        props.showAll
+                          ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
+                          : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      显示全部
+                    </button>
+                  </div>
+                ) : null}
               </div>
-            )}
-          </div>
-          <div className="flex items-end gap-2">
-            <AppSelect
-              size="sm"
-              label="模型"
-              aria-label={`${profile.name} 模型`}
-              value={profile.target.model || ''}
-              onChange={event =>
-                props.onUpdate(item => ({
-                  ...item,
-                  target: { ...item.target, model: event.target.value || null },
-                }))
-              }
-              containerClassName="min-w-0 flex-1"
-            >
-              <option value="">选择模型</option>
-              {props.models.map(model => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </AppSelect>
-            {profile.target.kind === 'managed' ? (
-              <div
-                role="group"
-                aria-label="模型显示范围"
-                className="flex shrink-0 items-center overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] text-xs"
-              >
-                <button
-                  type="button"
-                  aria-pressed={!props.showAll}
-                  onClick={() => props.onSelectScope(false)}
-                  className={`flex h-9 items-center px-3 transition-colors ${
-                    !props.showAll
-                      ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
-                      : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
-                  }`}
-                >
-                  按分组
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={props.showAll}
-                  onClick={() => props.onSelectScope(true)}
-                  className={`flex h-9 items-center border-l border-[var(--line-soft)] px-3 transition-colors ${
-                    props.showAll
-                      ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
-                      : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
-                  }`}
-                >
-                  显示全部
-                </button>
-              </div>
-            ) : null}
-          </div>
+            </>
+          )}
         </div>
       </section>
 
-      {props.currentEntry && (
+      {!isOfficial && props.currentEntry && (
         <section className="flex flex-wrap gap-3 rounded-[var(--radius-md)] bg-[var(--surface-2)] p-3">
           <div className="flex items-center gap-2 text-xs">
             <span className="font-mono text-[var(--text-tertiary)]">{'{{BASE_URL}}'}</span>
@@ -1499,6 +1779,15 @@ function RuleEditor(props: {
                           <Save className="h-3.5 w-3.5" />
                           保存
                         </AppButton>
+                        <AppButton
+                          variant="tertiary"
+                          size="sm"
+                          disabled={!props.canBrowseBackups}
+                          title="保存配置后可查看备份并预览恢复"
+                          onClick={() => props.onShowBackups(file.id)}
+                        >
+                          备份
+                        </AppButton>
                         <AppButton variant="tertiary" size="sm" onClick={props.onReadLocal}>
                           <RefreshCw className="h-3.5 w-3.5" />
                           读取
@@ -1529,263 +1818,6 @@ function RuleEditor(props: {
           </div>
         ) : null}
       </div>
-
-      <details className="group rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)]">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
-          <div>
-            <span className="text-sm font-semibold">会话关联</span>
-            <p className="mt-0.5 text-xs text-[var(--text-tertiary)]">按需关联外部会话记录路径</p>
-          </div>
-          <ChevronDown className="h-4 w-4 shrink-0 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-[var(--line-muted)] p-3">
-          <ConversationPathEditor profile={profile} onUpdate={props.onUpdate} />
-        </div>
-      </details>
-
-      <div className="flex justify-end border-t border-[var(--line-muted)] pt-3">
-        {profile.isExample ? (
-          <AppButton variant="secondary" onClick={props.onRestore}>
-            <RefreshCw className="h-4 w-4" />
-            恢复最新示例
-          </AppButton>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ConversationPathEditor(props: {
-  profile: ConfigFileProfile;
-  onUpdate: (update: (profile: ConfigFileProfile) => ConfigFileProfile) => void;
-}) {
-  const { profile } = props;
-  const validate = async (connector: SessionRecordConnector) => {
-    try {
-      const result = await window.electronAPI.configFileProfiles.validateSessionRecord({
-        connector,
-      });
-      const errors = result.diagnostics.filter(item => item.status === 'error');
-      if (errors.length) toast.error(errors[0].message || '对话记录路径无法读取');
-      else toast.success(`已检测到 ${result.records.length} 个对话`);
-    } catch (error) {
-      toast.error(errorMessage(error, '验证对话记录路径失败'));
-    }
-  };
-  const updateConnector = (connectorId: string, updates: Partial<SessionRecordConnector>) => {
-    props.onUpdate(item => ({
-      ...item,
-      sessionRecordConnectors: item.sessionRecordConnectors.map(value =>
-        value.id === connectorId ? { ...value, ...updates } : value
-      ),
-    }));
-  };
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-[var(--text-tertiary)]">
-          可选。用于发现可能属于同一对话的本地记录,不会单独作为精确会话身份。
-        </p>
-        <AppButton
-          variant="tertiary"
-          size="sm"
-          onClick={() =>
-            props.onUpdate(item => ({
-              ...item,
-              sessionRecordConnectors: [
-                ...item.sessionRecordConnectors,
-                createSessionConnector(item.id),
-              ],
-            }))
-          }
-        >
-          <Plus className="h-4 w-4" />
-          添加路径
-        </AppButton>
-      </div>
-      {profile.sessionRecordConnectors.length === 0 ? (
-        <p className="text-xs text-[var(--text-tertiary)]">尚未配置对话记录路径。</p>
-      ) : null}
-      {profile.sessionRecordConnectors.map(connector => (
-        <div
-          key={connector.id}
-          className="space-y-3 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-3"
-        >
-          <div className="flex gap-2">
-            <AppInput
-              size="sm"
-              className="min-w-0 flex-1 font-mono"
-              containerClassName="min-w-0 flex-1"
-              aria-label={`${profile.name} 对话记录路径`}
-              value={connector.path}
-              placeholder="对话记录文件或目录"
-              onChange={event => updateConnector(connector.id, { path: event.target.value })}
-            />
-            <AppButton variant="secondary" size="sm" onClick={() => void validate(connector)}>
-              <RefreshCw className="h-4 w-4" />
-              验证
-            </AppButton>
-            <AppButton
-              variant="tertiary"
-              size="sm"
-              title="删除路径"
-              onClick={() =>
-                props.onUpdate(item => ({
-                  ...item,
-                  sessionRecordConnectors: item.sessionRecordConnectors.filter(
-                    value => value.id !== connector.id
-                  ),
-                }))
-              }
-            >
-              <Trash2 className="h-4 w-4" />
-            </AppButton>
-          </div>
-          <details className="group">
-            <summary className="flex cursor-pointer list-none items-center justify-between text-xs text-[var(--text-secondary)] [&::-webkit-details-marker]:hidden">
-              <span>解析规则</span>
-              <ChevronDown className="h-3.5 w-3.5 text-[var(--text-tertiary)] transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-3 space-y-3">
-              <div className="grid gap-3 md:grid-cols-2">
-                <AppSelect
-                  size="sm"
-                  label="记录格式"
-                  aria-label={`${profile.name} 对话记录格式`}
-                  value={connector.format}
-                  onChange={event =>
-                    updateConnector(connector.id, {
-                      format: event.target.value as 'json' | 'jsonl',
-                    })
-                  }
-                >
-                  <option value="json">JSON</option>
-                  <option value="jsonl">JSONL</option>
-                </AppSelect>
-                <label className="flex items-end gap-2 pb-2 text-xs text-[var(--text-secondary)]">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 accent-[var(--accent)]"
-                    checked={connector.recursive === true}
-                    onChange={event =>
-                      updateConnector(connector.id, { recursive: event.target.checked })
-                    }
-                  />
-                  递归扫描目录
-                </label>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <ParseRuleGroup title="记录定位">
-                  <AppInput
-                    size="sm"
-                    label="命名空间"
-                    placeholder="例如 codex"
-                    value={connector.namespace}
-                    onChange={event =>
-                      updateConnector(connector.id, { namespace: event.target.value })
-                    }
-                  />
-                  <AppInput
-                    size="sm"
-                    label="记录列表路径"
-                    placeholder="例如 sessions"
-                    value={connector.recordsPath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { recordsPath: event.target.value })
-                    }
-                  />
-                </ParseRuleGroup>
-                <ParseRuleGroup title="会话身份">
-                  <AppInput
-                    size="sm"
-                    label="Session ID 路径"
-                    placeholder="例如 id / session_id"
-                    value={connector.sessionIdPath}
-                    onChange={event =>
-                      updateConnector(connector.id, { sessionIdPath: event.target.value })
-                    }
-                  />
-                  <AppInput
-                    size="sm"
-                    label="对话名称路径"
-                    placeholder="例如 title"
-                    value={connector.displayNamePath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { displayNamePath: event.target.value })
-                    }
-                  />
-                </ParseRuleGroup>
-                <ParseRuleGroup title="时间与工作区">
-                  <AppInput
-                    size="sm"
-                    label="工作区路径"
-                    placeholder="例如 cwd"
-                    value={connector.workspacePath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { workspacePath: event.target.value })
-                    }
-                  />
-                  <AppInput
-                    size="sm"
-                    label="更新时间路径"
-                    placeholder="例如 updated_at"
-                    value={connector.updatedAtPath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { updatedAtPath: event.target.value })
-                    }
-                  />
-                </ParseRuleGroup>
-                <ParseRuleGroup title="窗口状态">
-                  <AppInput
-                    size="sm"
-                    label="打开状态路径"
-                    placeholder="例如 is_open / active / current"
-                    value={connector.activePath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { activePath: event.target.value })
-                    }
-                  />
-                  <AppInput
-                    size="sm"
-                    label="窗口打开状态路径"
-                    placeholder="JSON 顶层路径,例如 window.is_open"
-                    value={connector.windowOpenPath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { windowOpenPath: event.target.value })
-                    }
-                  />
-                  <AppInput
-                    size="sm"
-                    label="窗口当前 Session ID 路径"
-                    placeholder="JSON 顶层路径,例如 window.current_session_id"
-                    value={connector.currentSessionIdPath || ''}
-                    onChange={event =>
-                      updateConnector(connector.id, { currentSessionIdPath: event.target.value })
-                    }
-                  />
-                </ParseRuleGroup>
-              </div>
-              <p className="text-xs leading-5 text-[var(--text-tertiary)]">
-                “窗口打开状态路径”和“窗口当前 Session ID
-                路径”需要配合使用:只有窗口状态明确为打开时,当前 ID
-                匹配的会话才标记为打开;窗口关闭时全部标记为关闭,状态缺失时保持未知。“打开状态路径”用于每条记录已自带窗口状态的格式,支持布尔值、0/1,以及
-                open、active、current、selected、closed、inactive
-                等值。未提供明确窗口状态时只发现会话,不会根据当前
-                ID、更新时间或请求时间猜测窗口仍然打开。
-              </p>
-            </div>
-          </details>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ParseRuleGroup(props: { title: string; children: ReactNode }) {
-  return (
-    <div className="space-y-2 rounded-[var(--radius-md)] bg-[var(--surface-2)] p-2.5">
-      <span className="block text-xs font-medium text-[var(--text-tertiary)]">{props.title}</span>
-      {props.children}
     </div>
   );
 }

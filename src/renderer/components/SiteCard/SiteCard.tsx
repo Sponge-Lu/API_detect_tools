@@ -27,6 +27,7 @@ import { SiteCardActions } from './SiteCardActions';
 import { useDateString } from '../../hooks';
 import type { SiteCardProps } from './types';
 import { getSiteDailyStats } from '../../utils/siteDailyStats';
+import { isSameLocalDay } from '../../../shared/utils/date';
 
 /**
  * 站点列表行组件
@@ -75,7 +76,7 @@ export const SiteCard = React.memo(
       const now = new Date();
 
       // 今天
-      if (dt.toDateString() === now.toDateString()) {
+      if (isSameLocalDay(dt.getTime(), now.getTime())) {
         const hour = String(dt.getHours()).padStart(2, '0');
         const minute = String(dt.getMinutes()).padStart(2, '0');
         return `${hour}:${minute}`;
@@ -87,26 +88,6 @@ export const SiteCard = React.memo(
       // 非当天时间：x天前，超过7天全部显示7天前
       return diffDays >= 7 ? '7天前' : `${diffDays}天前`;
     }, [siteResult?.lastRefresh, siteAccount?.last_sync_time, dateStr]);
-
-    // 从错误信息中提取 Error Code
-    const errorCode = useMemo(() => {
-      if (!siteResult?.error) return null;
-      const codeMatch = siteResult.error.match(/status code (\d{3})/i);
-      return codeMatch ? codeMatch[1] : null;
-    }, [siteResult?.error]);
-
-    // 从错误信息中提取超时秒数
-    const timeoutSeconds = useMemo(() => {
-      if (!siteResult?.error) return null;
-      const timeoutMatch = siteResult.error.match(/timeout.*?(\d+)\s*ms/i);
-      if (timeoutMatch) {
-        const ms = parseInt(timeoutMatch[1], 10);
-        if (!isNaN(ms) && ms > 0) {
-          return Math.round(ms / 1000);
-        }
-      }
-      return null;
-    }, [siteResult?.error]);
 
     const dailyStats = useMemo(
       () => getSiteDailyStats(siteResult, new Date()),
@@ -185,8 +166,6 @@ export const SiteCard = React.memo(
               site={site}
               siteResult={normalizedSiteResult}
               lastSyncDisplay={lastSyncDisplay}
-              errorCode={errorCode}
-              timeoutSeconds={timeoutSeconds}
               columnWidths={columnWidths}
               todayTotalTokens={todayTotalTokens}
               todayPromptTokens={todayPromptTokens}

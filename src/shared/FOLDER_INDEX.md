@@ -23,11 +23,11 @@
 
 | 文件夹 | 职责 | 关键文件 |
 |--------|------|--------|
-| **types/** | TypeScript 类型定义 | site.ts, endpoint-test.ts, route-proxy.ts, credit.ts |
+| **types/** | TypeScript 类型定义 | site.ts, endpoint-test.ts, route-proxy.ts |
 | **schemas/** | Zod 数据验证规则 | index.ts |
 | **constants/** | 常量定义 | index.ts；含站点列表列宽默认值、列宽版本与最大宽度 |
 | **theme/** | 主题预设与模式归一化 | themePresets.ts |
-| **utils/** | 工具函数 | customCliRouteId.ts, groupLabel.ts, headers.ts, log-filter.ts |
+| **utils/** | 工具函数 | apiConfig.ts, customCliRouteId.ts, groupLabel.ts, headers.ts, log-filter.ts |
 
 ---
 

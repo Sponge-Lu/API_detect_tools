@@ -45,9 +45,9 @@ function isSameWebdavConfig(left: WebDAVConfig, right: WebDAVConfig): boolean {
 }
 
 const WEBDAV_SAVE_DIRTY_CLASS =
-  'px-3 py-1.5 bg-[var(--danger)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
+  'px-3 py-1.5 bg-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_85%,var(--text-primary))] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 const WEBDAV_SAVE_CLEAN_CLASS =
-  'px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-[var(--text-on-accent)] rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
+  'px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 
 // 设置分类定义
 const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
@@ -269,11 +269,11 @@ export function SettingsPanel({
   const renderGeneralSection = () => (
     <div className="space-y-6">
       {/* 外观主题 */}
-      <div className="bg-[var(--surface-1)] rounded-xl p-5 border border-[var(--line-soft)] shadow-sm">
+      <div className="bg-[var(--surface-1)] rounded-[var(--radius-md)] p-5 border border-[var(--line-soft)] shadow-sm">
         <label className="block text-sm font-medium text-[var(--text-primary)] mb-3">
           外观主题
         </label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {THEME_PRESETS.map(preset => {
             const selected = themeMode === preset.id;
             const ThemeIcon = themeIcons[preset.id];
@@ -283,7 +283,7 @@ export function SettingsPanel({
                 key={preset.id}
                 type="button"
                 onClick={() => changeThemeMode(preset.id)}
-                className={`rounded-xl border px-4 py-3 text-left transition-all ${
+                className={`rounded-[var(--radius-md)] border px-4 py-3 text-left transition-all ${
                   selected
                     ? 'border-[var(--accent)] ring-1 ring-[var(--accent-soft)]'
                     : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
@@ -332,7 +332,7 @@ export function SettingsPanel({
       </div>
 
       {/* 关闭行为 */}
-      <div className="bg-[var(--surface-1)] rounded-xl p-5 border border-[var(--line-soft)] shadow-sm">
+      <div className="bg-[var(--surface-1)] rounded-[var(--radius-md)] p-5 border border-[var(--line-soft)] shadow-sm">
         <label className="block text-sm font-medium text-[var(--text-primary)] mb-3">
           点击关闭按钮时
         </label>
@@ -342,8 +342,14 @@ export function SettingsPanel({
             <span className="text-sm">加载中...</span>
           </div>
         ) : (
-          <div className="space-y-3">
-            <label className="flex items-start gap-3 cursor-pointer">
+          <div className="grid gap-3 md:grid-cols-3">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-all ${
+                closeBehavior === 'ask'
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-soft)]'
+                  : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+              }`}
+            >
               <input
                 type="radio"
                 name="closeBehavior"
@@ -360,7 +366,13 @@ export function SettingsPanel({
                 </p>
               </div>
             </label>
-            <label className="flex items-start gap-3 cursor-pointer">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-all ${
+                closeBehavior === 'quit'
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-soft)]'
+                  : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+              }`}
+            >
               <input
                 type="radio"
                 name="closeBehavior"
@@ -377,7 +389,13 @@ export function SettingsPanel({
                 </p>
               </div>
             </label>
-            <label className="flex items-start gap-3 cursor-pointer">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-all ${
+                closeBehavior === 'minimize'
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-soft)]'
+                  : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+              }`}
+            >
               <input
                 type="radio"
                 name="closeBehavior"
@@ -407,7 +425,7 @@ export function SettingsPanel({
   );
 
   const renderSyncSection = () => (
-    <div className="bg-[var(--surface-1)] rounded-xl p-5 space-y-4 border border-[var(--line-soft)] shadow-sm">
+    <div className="bg-[var(--surface-1)] rounded-[var(--radius-md)] p-5 space-y-4 border border-[var(--line-soft)] shadow-sm">
       <div className="flex items-start gap-3">
         <input
           type="checkbox"
@@ -424,58 +442,67 @@ export function SettingsPanel({
             启用 WebDAV 备份
           </label>
           <p className="text-xs text-[var(--text-secondary)] mt-1">
-            将配置备份到支持 WebDAV 的云存储（如坚果云、NextCloud）
+            将配置备份到支持 WebDAV 的云存储（如坚果云、NextCloud）。导出默认不含密钥，恢复后需重新填写凭据。
           </p>
         </div>
       </div>
 
       {webdavConfig.enabled && (
-        <div className="space-y-4 pl-7 border-l-2 border-[var(--accent)]/20">
-          <div>
-            <AppInput
-              type="text"
-              label="服务器地址"
-              size="md"
-              value={webdavConfig.serverUrl}
-              onChange={e => setWebdavConfig({ ...webdavConfig, serverUrl: e.target.value })}
-              placeholder="https://dav.jianguoyun.com/dav/"
-            />
+        <div className="space-y-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={webdavConfig.includeSecrets === true}
+              onChange={event => setWebdavConfig({ ...webdavConfig, includeSecrets: event.target.checked })} />
+            云备份包含密钥（持有备份者可读取凭据）
+          </label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <AppInput
+                type="text"
+                label="服务器地址"
+                size="md"
+                value={webdavConfig.serverUrl}
+                onChange={e => setWebdavConfig({ ...webdavConfig, serverUrl: e.target.value })}
+                placeholder="https://dav.jianguoyun.com/dav/"
+              />
+            </div>
+            <div>
+              <AppInput
+                type="text"
+                label="远程备份路径"
+                size="md"
+                value={webdavConfig.remotePath}
+                onChange={e => setWebdavConfig({ ...webdavConfig, remotePath: e.target.value })}
+                placeholder="/api-hub-backups"
+              />
+            </div>
           </div>
-          <div>
-            <AppInput
-              type="text"
-              label="用户名"
-              size="md"
-              value={webdavConfig.username}
-              onChange={e => setWebdavConfig({ ...webdavConfig, username: e.target.value })}
-              placeholder="your-email@example.com"
-            />
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <AppInput
+                type="text"
+                label="用户名"
+                size="md"
+                value={webdavConfig.username}
+                onChange={e => setWebdavConfig({ ...webdavConfig, username: e.target.value })}
+                placeholder="your-email@example.com"
+              />
+            </div>
+            <div>
+              <AppInput
+                type="password"
+                label="密码 / 应用密码"
+                size="md"
+                value={webdavConfig.password}
+                onChange={e => setWebdavConfig({ ...webdavConfig, password: e.target.value })}
+                placeholder="应用专用密码"
+                showPasswordToggle
+              />
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
+                建议使用应用专用密码而非账户密码
+              </p>
+            </div>
           </div>
-          <div>
-            <AppInput
-              type="password"
-              label="密码 / 应用密码"
-              size="md"
-              value={webdavConfig.password}
-              onChange={e => setWebdavConfig({ ...webdavConfig, password: e.target.value })}
-              placeholder="应用专用密码"
-              showPasswordToggle
-            />
-            <p className="text-xs text-[var(--text-secondary)] mt-1">
-              建议使用应用专用密码而非账户密码
-            </p>
-          </div>
-          <div>
-            <AppInput
-              type="text"
-              label="远程备份路径"
-              size="md"
-              value={webdavConfig.remotePath}
-              onChange={e => setWebdavConfig({ ...webdavConfig, remotePath: e.target.value })}
-              placeholder="/api-hub-backups"
-            />
-          </div>
-          <div>
+          <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
             <AppInput
               type="number"
               label="最大备份数量"
@@ -491,14 +518,55 @@ export function SettingsPanel({
               max={100}
               containerClassName="w-32"
             />
-            <p className="text-xs text-[var(--text-secondary)] mt-1">
-              超过此数量时自动删除最旧的备份
-            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={testingConnection || !webdavConfig.serverUrl}
+                className="px-3 py-1.5 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:bg-[var(--surface-2)] disabled:opacity-50 rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+              >
+                {testingConnection ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    测试中...
+                  </>
+                ) : (
+                  '测试连接'
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveWebdavConfig}
+                disabled={savingWebdav}
+                data-testid="webdav-save-button"
+                data-dirty={isWebdavDirty ? 'true' : 'false'}
+                className={isWebdavDirty ? WEBDAV_SAVE_DIRTY_CLASS : WEBDAV_SAVE_CLEAN_CLASS}
+              >
+                {savingWebdav ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    保存中...
+                  </>
+                ) : (
+                  '保存设置'
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowBackupDialog(true)}
+                disabled={!webdavConfig.serverUrl}
+                className="px-3 py-1.5 bg-[var(--success)] hover:bg-[color-mix(in_srgb,var(--success)_85%,var(--text-primary))] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+              >
+                <FolderOpen className="w-4 h-4" />
+                管理备份
+              </button>
+            </div>
           </div>
+          <p className="text-xs text-[var(--text-secondary)]">超过此数量时自动删除最旧的备份</p>
 
           {connectionTestResult && (
             <div
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${connectionTestResult.success ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-sm ${connectionTestResult.success ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}
             >
               {connectionTestResult.success ? (
                 <Check className="w-4 h-4" />
@@ -508,57 +576,13 @@ export function SettingsPanel({
               {connectionTestResult.message}
             </div>
           )}
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleTestConnection}
-              disabled={testingConnection || !webdavConfig.serverUrl}
-              className="px-3 py-1.5 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:bg-[var(--surface-2)] disabled:opacity-50 rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
-            >
-              {testingConnection ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  测试中...
-                </>
-              ) : (
-                '测试连接'
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveWebdavConfig}
-              disabled={savingWebdav}
-              data-testid="webdav-save-button"
-              data-dirty={isWebdavDirty ? 'true' : 'false'}
-              className={isWebdavDirty ? WEBDAV_SAVE_DIRTY_CLASS : WEBDAV_SAVE_CLEAN_CLASS}
-            >
-              {savingWebdav ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  保存中...
-                </>
-              ) : (
-                '保存设置'
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowBackupDialog(true)}
-              disabled={!webdavConfig.serverUrl}
-              className="px-3 py-1.5 bg-[var(--success)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
-            >
-              <FolderOpen className="w-4 h-4" />
-              管理备份
-            </button>
-          </div>
         </div>
       )}
     </div>
   );
 
   const renderUpdateSection = () => (
-    <div className="bg-[var(--surface-1)] rounded-xl p-5 space-y-4 border border-[var(--line-soft)] shadow-sm">
+    <div className="bg-[var(--surface-1)] rounded-[var(--radius-md)] p-5 space-y-4 border border-[var(--line-soft)] shadow-sm">
       <div className="flex items-center justify-between">
         <div>
           <span className="text-sm font-medium text-[var(--text-primary)]">当前版本</span>
@@ -570,7 +594,7 @@ export function SettingsPanel({
           type="button"
           onClick={checkForUpdates}
           disabled={isChecking}
-          className="px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-[var(--text-on-accent)] rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+          className="px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
         >
           {isChecking ? (
             <>
@@ -587,7 +611,7 @@ export function SettingsPanel({
       </div>
 
       {updateError && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-[var(--danger-soft)] text-[var(--danger)]">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-sm bg-[var(--danger-soft)] text-[var(--danger)]">
           <AlertCircle className="w-4 h-4" />
           {updateError}
         </div>
@@ -596,7 +620,7 @@ export function SettingsPanel({
       {updateInfo && !updateError && (
         <div className="space-y-2">
           <div
-            className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${updateInfo.hasUpdate ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'}`}
+            className={`flex items-center justify-between px-3 py-2 rounded-[var(--radius-md)] text-sm ${updateInfo.hasUpdate ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'}`}
           >
             <div className="flex items-center gap-2">
               <Check className="w-4 h-4" />
@@ -608,7 +632,7 @@ export function SettingsPanel({
               <button
                 type="button"
                 onClick={() => openDownloadPanel(updateInfo.releaseInfo!)}
-                className="text-xs px-2 py-1 bg-[var(--success)] hover:opacity-90 text-white rounded transition-colors"
+                className="text-xs px-2 py-1 bg-[var(--success)] hover:bg-[color-mix(in_srgb,var(--success)_85%,var(--text-primary))] text-[var(--text-on-accent)] rounded-[var(--radius-sm)] transition-colors"
               >
                 查看详情
               </button>
@@ -617,7 +641,7 @@ export function SettingsPanel({
 
           {updateInfo.latestPreReleaseVersion && (
             <div
-              className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${updateInfo.hasPreReleaseUpdate ? 'bg-[var(--warning-soft)] text-[var(--warning)]' : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'}`}
+              className={`flex items-center justify-between px-3 py-2 rounded-[var(--radius-md)] text-sm ${updateInfo.hasPreReleaseUpdate ? 'bg-[var(--warning-soft)] text-[var(--warning)]' : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'}`}
             >
               <div className="flex items-center gap-2">
                 {updateInfo.hasPreReleaseUpdate ? (
@@ -633,7 +657,7 @@ export function SettingsPanel({
                 <button
                   type="button"
                   onClick={() => openDownloadPanel(updateInfo.preReleaseInfo!)}
-                  className="text-xs px-2 py-1 bg-[var(--warning)] hover:opacity-90 text-white rounded transition-colors"
+                  className="text-xs px-2 py-1 bg-[var(--warning)] hover:bg-[color-mix(in_srgb,var(--warning)_85%,var(--text-primary))] text-[var(--text-on-accent)] rounded-[var(--radius-sm)] transition-colors"
                 >
                   查看详情
                 </button>
@@ -643,59 +667,61 @@ export function SettingsPanel({
         </div>
       )}
 
-      <div className="flex items-start gap-3">
-        <input
-          type="checkbox"
-          id="auto_check_update"
-          checked={updateSettings.autoCheckEnabled}
-          onChange={e => saveUpdateSettings({ autoCheckEnabled: e.target.checked })}
-          className="mt-1 h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
-        />
-        <div className="flex-1">
-          <label
-            htmlFor="auto_check_update"
-            className="text-sm font-medium block text-[var(--text-primary)] cursor-pointer"
-          >
-            启动时自动检查更新
-          </label>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">
-            应用启动时自动在后台检查是否有新版本
-          </p>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="auto_check_update"
+            checked={updateSettings.autoCheckEnabled}
+            onChange={e => saveUpdateSettings({ autoCheckEnabled: e.target.checked })}
+            className="mt-1 h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
+          />
+          <div className="flex-1">
+            <label
+              htmlFor="auto_check_update"
+              className="text-sm font-medium block text-[var(--text-primary)] cursor-pointer"
+            >
+              启动时自动检查更新
+            </label>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">
+              应用启动时自动在后台检查是否有新版本
+            </p>
+          </div>
         </div>
-      </div>
 
-      <div className="flex items-start gap-3">
-        <input
-          type="checkbox"
-          id="include_pre_release"
-          checked={updateSettings.includePreRelease}
-          onChange={e => saveUpdateSettings({ includePreRelease: e.target.checked })}
-          className="mt-1 h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
-        />
-        <div className="flex-1">
-          <label
-            htmlFor="include_pre_release"
-            className="text-sm font-medium block text-[var(--text-primary)] cursor-pointer"
-          >
-            包含预发布版本
-          </label>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">
-            检查更新时包含 Beta、Alpha 等预发布版本
-          </p>
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="include_pre_release"
+            checked={updateSettings.includePreRelease}
+            onChange={e => saveUpdateSettings({ includePreRelease: e.target.checked })}
+            className="mt-1 h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
+          />
+          <div className="flex-1">
+            <label
+              htmlFor="include_pre_release"
+              className="text-sm font-medium block text-[var(--text-primary)] cursor-pointer"
+            >
+              包含预发布版本
+            </label>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">
+              检查更新时包含 Beta、Alpha 等预发布版本
+            </p>
+          </div>
         </div>
       </div>
     </div>
   );
 
   const renderDataSection = () => (
-    <div className="bg-[var(--surface-1)] rounded-xl p-5 border border-[var(--line-soft)] shadow-sm">
+    <div className="bg-[var(--surface-1)] rounded-[var(--radius-md)] p-5 border border-[var(--line-soft)] shadow-sm">
       {config ? (
         <>
           <div className="flex gap-3">
             <button
               type="button"
               onClick={handleExport}
-              className="flex-1 px-4 py-2.5 bg-[var(--accent)] hover:opacity-90 text-[var(--text-on-accent)] rounded-lg transition-all flex items-center justify-center gap-2 font-medium text-sm shadow-sm"
+              className="flex-1 px-4 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center justify-center gap-2 font-medium text-sm shadow-sm"
             >
               <Download className="w-4 h-4" />
               导出配置
@@ -703,7 +729,7 @@ export function SettingsPanel({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex-1 px-4 py-2.5 bg-[var(--surface-2)] hover:bg-[var(--surface-3)] text-[var(--text-primary)] rounded-lg transition-all flex items-center justify-center gap-2 font-medium text-sm border border-[var(--line-soft)]"
+              className="flex-1 px-4 py-2.5 bg-[var(--surface-2)] hover:bg-[var(--surface-3)] text-[var(--text-primary)] rounded-[var(--radius-md)] transition-all flex items-center justify-center gap-2 font-medium text-sm border border-[var(--line-soft)]"
             >
               <Upload className="w-4 h-4" />
               导入配置
@@ -727,8 +753,8 @@ export function SettingsPanel({
     </div>
   );
 
-  const renderSectionContent = () => {
-    switch (activeSection) {
+  const renderSectionContent = (sectionId: SettingsSection = activeSection) => {
+    switch (sectionId) {
       case 'general':
         return renderGeneralSection();
       case 'sync':
@@ -750,45 +776,23 @@ export function SettingsPanel({
     <WebDAVBackupDialog isOpen={showBackupDialog} onClose={() => setShowBackupDialog(false)} />
   );
 
-  // ===== 页面模式：左右分栏 =====
+  // ===== 页面模式：全部区块单栏纵向排布，卡片内部自适应宽度 =====
   if (asPage) {
     return (
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左侧导航 */}
-        <aside className="w-56 shrink-0 border-r border-[var(--line-soft)] bg-[var(--surface-2)]/72 p-3 space-y-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="space-y-6">
           {sections.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveSection(id)}
-              aria-current={activeSection === id ? 'page' : undefined}
-              className={`
-                w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-left
-                ${
-                  activeSection === id
-                    ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]'
-                }
-              `}
-            >
-              <Icon
-                className={`w-4 h-4 shrink-0 ${activeSection === id ? 'text-[var(--accent)]' : ''}`}
-              />
-              <span>{label}</span>
-            </button>
-          ))}
-        </aside>
-
-        {/* 右侧内容 */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-4xl">
-              <h2 className="text-lg font-bold text-[var(--text-primary)] mb-5">
-                {getSectionTitle()}
+            <section key={id} aria-labelledby={`settings-section-${id}`}>
+              <h2
+                id={`settings-section-${id}`}
+                className="mb-4 flex items-center gap-2 text-lg font-semibold text-[var(--text-primary)]"
+              >
+                <Icon className="h-5 w-5 shrink-0 text-[var(--accent)]" />
+                {label}
               </h2>
-              {renderSectionContent()}
-            </div>
-          </div>
+              {renderSectionContent(id)}
+            </section>
+          ))}
         </div>
 
         {dialogs}
@@ -798,13 +802,15 @@ export function SettingsPanel({
 
   // ===== 弹窗模式（保持旧逻辑） =====
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-6">
-      <div className="bg-[var(--surface-1)] rounded-2xl shadow-2xl max-w-4xl w-full border border-[var(--line-soft)] flex flex-col max-h-[80vh]">
+    <div className="fixed inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] flex items-center justify-center z-[var(--z-modal)] p-6">
+      <div className="bg-[var(--surface-1)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] max-w-4xl w-full border border-[var(--line-soft)] flex flex-col max-h-[80vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--line-soft)] shrink-0">
-          <h2 className="text-xl font-bold text-[var(--text-primary)]">设置</h2>
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">设置</h2>
           <button
+            type="button"
             onClick={onCancel}
-            className="p-2 hover:bg-[var(--surface-2)] rounded-lg transition-all"
+            aria-label="关闭设置"
+            className="p-2 hover:bg-[var(--surface-2)] rounded-[var(--radius-md)] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -817,7 +823,7 @@ export function SettingsPanel({
                 type="button"
                 onClick={() => setActiveSection(id)}
                 className={`
-                  w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all text-left
+                  w-full flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-sm font-medium transition-all text-left
                   ${
                     activeSection === id
                       ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm'
@@ -833,7 +839,7 @@ export function SettingsPanel({
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex-1 overflow-y-auto p-6">
               <div className="max-w-3xl">
-                <h3 className="text-lg font-bold text-[var(--text-primary)] mb-4">
+                <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-4">
                   {getSectionTitle()}
                 </h3>
                 {renderSectionContent()}

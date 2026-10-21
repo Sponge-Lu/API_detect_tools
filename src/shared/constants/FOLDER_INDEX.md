@@ -164,29 +164,19 @@ export const THEME_CONFIG = {
   SYSTEM: 'system'
 } as const;
 
-// 站点列表默认列宽（站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型数 / LDC / History）
-export const COLUMN_WIDTHS_VERSION = 4;
+// 站点列表默认列宽（站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型数 / History）
+export const COLUMN_WIDTHS_VERSION = 7;
 export const DEFAULT_COLUMN_WIDTHS = [
   180, // 站点名
   112, // 账户
   84,  // 刷新时间
   84,  // 余额
-  84,  // 今日消费
-  64,  // 模型数
-  320, // History（表头端点选择器 + 24个时间桶）
+  70,  // 今日消费
+  50,  // 模型数
+  400, // History（24个时间桶条形图 320px 轨道 + 8px 间距 + 72px 固定统计区）
 ] as const;
 
 export const COLUMN_MAX_WIDTH = 480;
-
-// LDC 支付方式名称匹配列表（不同站点可能使用不同名称）
-export const LDC_PAYMENT_NAMES = [
-  'Linuxdo Credit',
-  'LinuxDo Credit',
-  'Linux Do Credit',
-  'LDC',
-  'linuxdo credit',
-  'linux do credit',
-] as const;
 
 // 语言配置
 export const LANGUAGE_CONFIG = {

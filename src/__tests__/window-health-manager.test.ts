@@ -4,6 +4,7 @@ import type { WebContents } from 'electron';
 import {
   buildRendererRecoveryPage,
   createRendererHealthMonitor,
+  loadApplicationRenderer,
   type RendererHealthLogger,
 } from '../main/window-health-manager';
 
@@ -153,4 +154,57 @@ describe('buildRendererRecoveryPage', () => {
     expect(page).toContain('apihub-recovery://retry');
     expect(page).toContain('role="alert"');
   });
+});
+
+describe('loadApplicationRenderer', () => {
+  it.each([false, true])(
+    'loads built assets without a development URL (isPackaged=%s)',
+    async isPackaged => {
+      const window = { loadURL: vi.fn(), loadFile: vi.fn() };
+      await loadApplicationRenderer(window, {
+        isPackaged,
+        htmlPath: '/app/dist-renderer/index.html',
+      });
+      expect(window.loadFile).toHaveBeenCalledWith('/app/dist-renderer/index.html');
+      expect(window.loadURL).not.toHaveBeenCalled();
+    }
+  );
+
+  it('ignores inherited development URLs in a packaged app', async () => {
+    const window = { loadURL: vi.fn(), loadFile: vi.fn() };
+    await loadApplicationRenderer(window, {
+      isPackaged: true,
+      htmlPath: '/app/dist-renderer/index.html',
+      devServerUrl: 'http://localhost:5173',
+    });
+    expect(window.loadFile).toHaveBeenCalledOnce();
+    expect(window.loadURL).not.toHaveBeenCalled();
+  });
+
+  it('uses the exact ready development URL without scanning other ports', async () => {
+    const window = { loadURL: vi.fn(), loadFile: vi.fn() };
+    await loadApplicationRenderer(window, {
+      isPackaged: false,
+      htmlPath: '/app/dist-renderer/index.html',
+      devServerUrl: 'http://127.0.0.1:5173',
+    });
+    expect(window.loadURL).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:5173/');
+    expect(window.loadFile).not.toHaveBeenCalled();
+  });
+
+  it.each(['https://example.com', 'file:///tmp/index.html', 'http://user:password@localhost:5173'])(
+    'rejects invalid development origins: %s',
+    async devServerUrl => {
+      const window = { loadURL: vi.fn(), loadFile: vi.fn() };
+      await expect(
+        loadApplicationRenderer(window, {
+          isPackaged: false,
+          htmlPath: '/app/dist-renderer/index.html',
+          devServerUrl,
+        })
+      ).rejects.toThrow('Development renderer must use a local HTTP server');
+      expect(window.loadURL).not.toHaveBeenCalled();
+      expect(window.loadFile).not.toHaveBeenCalled();
+    }
+  );
 });

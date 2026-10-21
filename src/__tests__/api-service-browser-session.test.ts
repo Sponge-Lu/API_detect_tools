@@ -13,18 +13,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 interface LoadOptions {
   httpGetResult?: any;
   httpPostResult?: any;
+  httpGetError?: any;
+  httpPostError?: any;
 }
 
 async function loadApiService(options: LoadOptions = {}) {
   vi.resetModules();
 
-  const httpGet = vi.fn(async () => options.httpGetResult);
-  const httpPost = vi.fn(async () => options.httpPostResult);
+  const httpGet = vi.fn(async () => {
+    if (options.httpGetError) throw options.httpGetError;
+    return options.httpGetResult;
+  });
+  const httpPost = vi.fn(async () => {
+    if (options.httpPostError) throw options.httpPostError;
+    return options.httpPostResult;
+  });
 
   vi.doMock('../main/utils/http-client', () => ({ httpGet, httpPost }));
   vi.doMock('../main/utils/request-manager', () => ({
     requestManager: {
       request: vi.fn(async (_key: string, fetcher: () => Promise<any>) => fetcher()),
+      invalidate: vi.fn(),
     },
     RequestManager: class RequestManager {
       static key(...parts: Array<string | number>) {
@@ -129,7 +138,6 @@ describe('ApiService browser-session fallback', () => {
       (data: any) => data.data.map((item: any) => item.id),
       undefined,
       undefined,
-      undefined,
       { browserSlot: 2 }
     );
 
@@ -153,15 +161,21 @@ describe('ApiService browser-session fallback', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it('浏览器会话仍返回挑战页时只重试一次，并透传 POST body', async () => {
+  it('浏览器会话仍返回挑战页时只重试一次', async () => {
     const { ApiService } = await loadApiService({
-      httpPostResult: {
+      httpGetResult: {
         status: 403,
         data: '<html><title>Just a moment...</title></html>',
-        headers: { 'cf-mitigated': 'challenge' },
       },
     });
-    const page = { isClosed: vi.fn(() => false) };
+    const page = {
+      isClosed: vi.fn(() => false),
+      evaluate: vi.fn(async () => ({
+        status: 200,
+        statusText: 'OK',
+        text: '{"success":true,"data":[{"id":"model-a"}]}',
+      })),
+    };
     const release = vi.fn();
     const requestWithBrowserSession = vi
       .fn()
@@ -196,10 +210,7 @@ describe('ApiService browser-session fallback', () => {
         system_token: 'durable-token',
       },
       15,
-      (data: any) => data.data,
-      undefined,
-      undefined,
-      { method: 'POST', data: { refresh: true } }
+      (data: any) => data.data
     );
 
     expect(result.result).toEqual({ ok: true });
@@ -208,17 +219,133 @@ describe('ApiService browser-session fallback', () => {
       page,
       'https://chy.example.com/api/refresh',
       expect.objectContaining({
-        method: 'POST',
-        body: '{"refresh":true}',
+        method: 'GET',
         allowNodeFallback: false,
       })
     );
     expect(waitForChallenge).toHaveBeenCalledTimes(2);
   });
 
+  it('TLS 握手失败（EPROTO/SSL alert）应回退到浏览器会话', async () => {
+    const tlsError: any = new Error(
+      'write EPROTO 9963776:error:10000410:SSL routines:OPENSSL_internal:SSLV3_ALERT_HANDSHAKE_FAILURE:../../../deps/boringssl/src/ssl/tls_record.cc:592:SSL alert number 40'
+    );
+    tlsError.code = 'EPROTO';
+    const { ApiService } = await loadApiService({
+      httpGetError: tlsError,
+    });
+    const page = {
+      isClosed: vi.fn(() => false),
+      evaluate: vi.fn(),
+    };
+    const release = vi.fn();
+    const requestWithBrowserSession = vi.fn(async () => ({
+      status: 200,
+      statusText: 'OK',
+      text: '{"success":true,"data":[{"id":"claude-opus-4-6"}]}',
+    }));
+    const chromeManager = {
+      createPage: vi.fn(async () => ({ page, release })),
+      requestWithBrowserSession,
+    };
+    const service = new ApiService({ chromeManager } as any);
+    vi.spyOn(service as any, 'waitForCloudflareChallenge').mockResolvedValue(undefined);
+
+    const result = await (service as any).fetchWithBrowserFallback(
+      'https://anyrouter.top/api/user/models',
+      { Authorization: 'Bearer durable-token' },
+      {
+        id: 'site-1',
+        name: 'AnyRouter',
+        url: 'https://anyrouter.top',
+        site_type: 'newapi',
+        user_id: '7',
+        system_token: 'durable-token',
+      },
+      15,
+      (data: any) => data.data.map((item: any) => item.id)
+    );
+
+    expect(result.result).toEqual(['claude-opus-4-6']);
+    expect(chromeManager.createPage).toHaveBeenCalled();
+    expect(requestWithBrowserSession).toHaveBeenCalled();
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('ETIMEDOUT 应回退到浏览器会话', async () => {
+    const timeoutError: any = new Error('connect ETIMEDOUT 108.160.166.9:443');
+    timeoutError.code = 'ETIMEDOUT';
+    const { ApiService } = await loadApiService({ httpGetError: timeoutError });
+    const page = {
+      isClosed: vi.fn(() => false),
+      evaluate: vi.fn(async () => ({
+        status: 200,
+        statusText: 'OK',
+        text: '{"success":true,"data":[{"id":"model-a"}]}',
+      })),
+    };
+    const chromeManager = {
+      createPage: vi.fn(async () => ({ page, release: vi.fn() })),
+      requestWithBrowserSession: vi.fn(),
+    };
+    const service = new ApiService({ chromeManager } as any);
+    vi.spyOn(service as any, 'waitForCloudflareChallenge').mockResolvedValue(undefined);
+
+    const result = await (service as any).fetchWithBrowserFallback(
+      'https://agentrouter.org/api/user/models',
+      { Authorization: 'Bearer durable-token' },
+      {
+        id: 'site-1',
+        name: 'AgentRouter',
+        url: 'https://agentrouter.org',
+        site_type: 'newapi',
+        user_id: '7',
+        system_token: 'durable-token',
+      },
+      15,
+      (data: any) => data.data.map((item: any) => item.id)
+    );
+
+    expect(result.result).toEqual(['model-a']);
+    expect(chromeManager.createPage).toHaveBeenCalled();
+    expect(page.evaluate).toHaveBeenCalled();
+    expect(chromeManager.requestWithBrowserSession).not.toHaveBeenCalled();
+  });
+
+  it('普通连接错误（非 TLS 握手）不应误入浏览器回退', async () => {
+    const connErr: any = new Error('connect ECONNREFUSED 192.168.1.1:443');
+    connErr.code = 'ECONNREFUSED';
+    const { ApiService } = await loadApiService({
+      httpGetError: connErr,
+    });
+    const chromeManager = {
+      createPage: vi.fn(),
+      requestWithBrowserSession: vi.fn(),
+    };
+    const service = new ApiService({ chromeManager } as any);
+
+    await expect(
+      (service as any).fetchWithBrowserFallback(
+        'https://anyrouter.top/api/user/models',
+        { Authorization: 'Bearer durable-token' },
+        {
+          id: 'site-1',
+          name: 'AnyRouter',
+          url: 'https://anyrouter.top',
+          site_type: 'newapi',
+          user_id: '7',
+          system_token: 'durable-token',
+        },
+        15,
+        (data: any) => data
+      )
+    ).rejects.toMatchObject({ code: 'ECONNREFUSED' });
+    expect(chromeManager.createPage).not.toHaveBeenCalled();
+  });
+
   it.each([401, 403])('JSON HTTP %s 不应误入 Cloudflare 浏览器回退', async status => {
     const { ApiService } = await loadApiService({
-      httpPostResult: { status, data: { success: false, message: 'Unauthorized' } },
+      httpGetResult: { status, data: { success: false, message: 'Unauthorized' } },
     });
     const chromeManager = {
       createPage: vi.fn(),
@@ -239,10 +366,7 @@ describe('ApiService browser-session fallback', () => {
           system_token: 'expired-token',
         },
         15,
-        (data: any) => data,
-        undefined,
-        undefined,
-        { method: 'POST', data: {} }
+        (data: any) => data
       )
     ).rejects.toMatchObject({ response: { status } });
     expect(chromeManager.createPage).not.toHaveBeenCalled();

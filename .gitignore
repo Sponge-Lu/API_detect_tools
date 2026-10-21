@@ -33,6 +33,7 @@ lpt2
 .claude/
 .windsurf/
 .opencode/
+.workbuddy-ai/
 
 # 本地配置（含敏感信息，不提交）
 .claude/settings.local.json
@@ -92,3 +93,7 @@ openspec/
 .tmp-vitest-credit/
 CLAUDE-FABLE-5.md
 .run-shots/
+
+# 内置 Chromium 构建产物（npm run fetch:chromium 生成，不入库）
+resources/chromium/*/*
+!resources/chromium/*/.gitkeep

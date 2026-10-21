@@ -4,7 +4,7 @@
  * 定位: 处理器层 - 站点检测和 CLI 配置检测相关 IPC 处理
  *
  * 多账户支持:
- * - detect-site: accountId → 凭证替换 + browserSlot 计算（基于账户在站点列表中的位置）
+ * - detect-site: accountId → 凭证替换 + 已保存的浏览器 Profile 槽位
  * - checkin-and-refresh: accountId → 凭证替换 + 账户级缓存写入
  * - refresh-balance-only: accountId → 账户级缓存写入
  *
@@ -23,7 +23,9 @@ import type { ApiService } from '../api-service';
 import type { ChromeManager } from '../chrome-manager';
 import type { TokenService } from '../token-service';
 import { unifiedConfigManager } from '../unified-config-manager';
+import { browserProfileManager } from '../browser-profile-manager';
 import { configDetectionService } from '../config-detection-service';
+import { isSameLocalDay } from '../../shared/utils/date';
 import { CLI_CONFIG_PATHS } from '../../shared/types/config-detection';
 import type { SiteInfo, CliType } from '../../shared/types/config-detection';
 
@@ -45,6 +47,24 @@ function shouldRetryWithRefreshedToken(error?: string): boolean {
     /HTTP 401/i.test(error) ||
     /HTTP 403/i.test(error)
   );
+}
+
+// 批量刷新/签到的 in-flight 互斥：防止连点或与手动操作重叠互相清理浏览器
+let refreshAllInFlight = false;
+let checkinAllInFlight = false;
+
+/**
+ * 解析账户的浏览器自动化槽位。
+ * 优先使用账户上持久化的 automation_slot（创建时分配，删账户/排序不漂移）；
+ * 旧数据缺失时按绑定 Profile 分配并持久化。
+ */
+async function resolveAccountBrowserSlot(siteId: string, accountId: string): Promise<number> {
+  const slot = await browserProfileManager.ensureAutomationSlot(siteId, accountId);
+  if (typeof slot === 'number') {
+    return slot;
+  }
+
+  throw new Error(`Account not found: ${accountId}`);
 }
 
 export function registerDetectionHandlers(
@@ -102,7 +122,7 @@ export function registerDetectionHandlers(
       let resolvedSite = site;
       let detectionContext: { accountId: string; browserSlot?: number } | undefined;
       if (accountId) {
-        await unifiedConfigManager.loadConfig();
+        await unifiedConfigManager.getConfig();
         const account = unifiedConfigManager.getAccountById(accountId);
         if (!account) {
           throw new Error(`Account not found: ${accountId}`);
@@ -119,13 +139,13 @@ export function registerDetectionHandlers(
           ...canonicalSite,
           system_token: account.access_token,
           user_id: account.user_id,
+          api_key: account.api_key || '',
         };
-        // 根据账户在站点账户列表中的位置确定浏览器槽位
-        const siteAccounts = unifiedConfigManager.getAccountsBySiteId(account.site_id);
-        const slotIndex = siteAccounts.findIndex(a => a.id === accountId);
+        // 浏览器槽位：优先账户持久化的 automation_slot，避免账户增删/排序导致串号
+        const slot = await resolveAccountBrowserSlot(account.site_id, accountId);
         detectionContext = {
           accountId: account.id,
-          browserSlot: slotIndex >= 0 ? slotIndex : 0,
+          browserSlot: slot,
         };
         const firstResult = await apiService.detectSite(
           resolvedSite,
@@ -219,6 +239,7 @@ export function registerDetectionHandlers(
     }
 
     // 如果指定了 accountId，用该账户的凭证覆盖站点配置
+    let browserSlot: number | undefined;
     if (accountId) {
       const account = unifiedConfigManager.getAccountById(accountId);
       if (!account) {
@@ -242,18 +263,20 @@ export function registerDetectionHandlers(
         };
       }
       site = { ...site, system_token: account.access_token, user_id: account.user_id };
+      browserSlot = await resolveAccountBrowserSlot(account.site_id, accountId);
     }
 
     try {
       Logger.info('📝 [IPC] 收到签到并刷新请求');
 
-      // 执行签到
+      // 执行签到（browserSlot 用于 Cloudflare 拦截时的浏览器回退，避免多账户共用 slot-0 会话）
       const checkinResult = await tokenService.checkIn(
         site.url,
         parseInt(site.user_id),
         site.system_token,
         undefined,
-        site.site_type
+        site.site_type,
+        browserSlot
       );
 
       // 如果签到失败，直接返回
@@ -264,7 +287,7 @@ export function registerDetectionHandlers(
         };
       }
 
-      // 签到成功，使用浏览器页面刷新余额（如果有）
+      // 签到成功，使用浏览器页面刷新余额（如果有）；跳过 HTTP 缓存避免回显签到前旧余额
       let balanceResult;
       try {
         balanceResult = await apiService.refreshBalanceOnly(
@@ -272,7 +295,8 @@ export function registerDetectionHandlers(
           timeout,
           checkinResult.checkinStats,
           checkinResult.browserPage,
-          accountId
+          accountId,
+          { skipHttpCache: true }
         );
       } catch (balanceError: any) {
         Logger.warn('⚠️ [IPC] 余额刷新失败:', balanceError.message);
@@ -302,14 +326,6 @@ export function registerDetectionHandlers(
       };
     }
   });
-
-  // 检测所有站点
-  ipcMain.handle(
-    'detect-all-sites',
-    async (_, config, quickRefresh = false, cachedResults = undefined) => {
-      return await apiService.detectAllSites(config, quickRefresh, cachedResults);
-    }
-  );
 
   // 打开外部 URL
   ipcMain.handle('open-url', async (_, url: string) => {
@@ -492,6 +508,15 @@ export function registerDetectionHandlers(
         customConfigs: [],
       };
     }
+    if (refreshAllInFlight) {
+      return {
+        success: false,
+        error: '批量刷新正在进行中，请等待完成',
+        sites: [],
+        customConfigs: [],
+      };
+    }
+    refreshAllInFlight = true;
 
     try {
       Logger.info('[IPC] 批量刷新所有托管站点账号 + 直连配置模型');
@@ -524,9 +549,7 @@ export function registerDetectionHandlers(
           }
 
           try {
-            const siteAccounts = config.accounts.filter(a => a.site_id === site.id);
-            const slotIndex = siteAccounts.findIndex(a => a.id === account.id);
-            const browserSlot = slotIndex >= 0 ? slotIndex : 0;
+            const browserSlot = await resolveAccountBrowserSlot(site.id, account.id);
 
             const refreshedToken =
               site.site_type === 'sub2api'
@@ -568,6 +591,8 @@ export function registerDetectionHandlers(
     } catch (error: any) {
       Logger.error('❌ [IPC] 批量刷新失败:', error);
       return { success: false, error: error.message, sites: [], customConfigs: [] };
+    } finally {
+      refreshAllInFlight = false;
     }
   });
 
@@ -576,6 +601,10 @@ export function registerDetectionHandlers(
     if (!tokenService) {
       return { success: false, error: 'TokenService 未初始化', results: [] };
     }
+    if (checkinAllInFlight) {
+      return { success: false, error: '批量签到正在进行中，请等待完成', results: [] };
+    }
+    checkinAllInFlight = true;
 
     try {
       Logger.info('[IPC] 批量签到所有托管站点账号');
@@ -591,6 +620,12 @@ export function registerDetectionHandlers(
       for (const site of checkinSites) {
         const accounts = config.accounts.filter(acc => acc.site_id === site.id);
         for (const account of accounts) {
+          // 今日已签的账户跳过，避免对站点重复 POST 得到"已签到"错误
+          const cached = account.cached_data;
+          if (cached?.can_check_in === false && isSameLocalDay(cached.last_refresh)) {
+            results.push({ siteId: site.id, accountId: account.id, success: true });
+            continue;
+          }
           if (!account.access_token || !account.user_id) {
             results.push({
               siteId: site.id,
@@ -602,12 +637,14 @@ export function registerDetectionHandlers(
           }
 
           try {
+            const browserSlot = await resolveAccountBrowserSlot(site.id, account.id);
             const checkinResult = await tokenService.checkIn(
               site.url,
               parseInt(account.user_id),
               account.access_token,
               undefined,
-              site.site_type
+              site.site_type,
+              browserSlot
             );
 
             if (checkinResult.pageRelease) {
@@ -644,6 +681,8 @@ export function registerDetectionHandlers(
     } catch (error: any) {
       Logger.error('❌ [IPC] 批量签到失败:', error);
       return { success: false, error: error.message, results: [] };
+    } finally {
+      checkinAllInFlight = false;
     }
   });
 }

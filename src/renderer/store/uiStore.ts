@@ -31,15 +31,7 @@ interface RefreshMessage {
 }
 
 // Tab 页面类型（一级页面由 page metadata registry 定义；旧 route 子页仍需兼容）
-export type TabId =
-  | 'overview'
-  | 'sites'
-  | 'route'
-  | 'model-mapping'
-  | 'config-files'
-  | 'logs'
-  | 'credit'
-  | 'settings';
+export type TabId = 'overview' | 'sites' | 'route' | 'config-files' | 'logs' | 'settings';
 
 export type VisibleTabId = TabId;
 export type OverviewSubtab = 'site' | 'route';
@@ -47,7 +39,7 @@ export type SidebarDisplayMode = 'expanded' | 'icon-only';
 export type SettingsSection = 'general' | 'detection' | 'sync' | 'update' | 'data';
 
 // 路由相关的 TabId
-export const ROUTE_TAB_IDS: TabId[] = ['route', 'model-mapping', 'config-files'];
+export const ROUTE_TAB_IDS: TabId[] = ['route', 'config-files'];
 export const isRouteTab = (id: TabId) => ROUTE_TAB_IDS.includes(id);
 
 // 排序字段类型
@@ -62,8 +54,7 @@ export type SortField =
   | 'rpm'
   | 'tpm'
   | 'modelCount'
-  | 'lastUpdate'
-  | 'ldcRatio';
+  | 'lastUpdate';
 
 // 排序方向
 export type SortOrder = 'asc' | 'desc';

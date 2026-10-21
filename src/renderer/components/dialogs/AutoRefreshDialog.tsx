@@ -80,12 +80,12 @@ export function AutoRefreshDialog({
             onBlur={() => {
               if (interval < 15) setInterval(15);
             }}
-            className="w-full rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-2 text-[var(--text-primary)] outline-none transition-all focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]"
+            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-2 text-[var(--text-primary)] outline-none transition-all focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]"
           />
           <p className="mt-1 text-xs text-[var(--text-secondary)]">最小间隔为 15 分钟</p>
         </div>
 
-        <div className="flex items-start gap-3 rounded-lg border border-[var(--warning)]/20 bg-[var(--warning-soft)] p-3">
+        <div className="flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--warning)]/20 bg-[var(--warning-soft)] p-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-[var(--warning)]" />
           <div className="text-sm text-[var(--text-primary)]">
             <p className="mb-1 font-medium">Cloudflare 保护站点提示</p>

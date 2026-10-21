@@ -422,6 +422,44 @@ describe('useAutoRefresh Property Tests', () => {
 });
 
 describe('useAutoRefresh implementation regressions', () => {
+  it('honors account overrides while keeping site defaults for other accounts', async () => {
+    const site = {
+      id: 'site-1',
+      name: 'Site',
+      url: 'https://example.com',
+      api_key: '',
+      enabled: true,
+      auto_refresh: true,
+      auto_refresh_interval: 30,
+    };
+    const accounts = ['off', 'override', 'inherited'].map(id => ({
+      id,
+      site_id: site.id,
+      account_name: id,
+      user_id: id,
+      access_token: 'access',
+      auth_source: 'manual' as const,
+      created_at: 1,
+      updated_at: 1,
+      ...(id === 'off'
+        ? { auto_refresh: false }
+        : id === 'override'
+          ? { auto_refresh: true, auto_refresh_interval: 15 }
+          : {}),
+    }));
+    const detectSingle = vi.fn().mockResolvedValue({ status: '成功' });
+    const { unmount } = renderHook(() => useAutoRefresh({ sites: [site], accounts, detectSingle }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15 * 60000);
+    });
+    expect(detectSingle.mock.calls.map(call => call[3])).toEqual(['override']);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15 * 60000);
+    });
+    expect(detectSingle.mock.calls.map(call => call[3])).toContain('inherited');
+    expect(detectSingle.mock.calls.map(call => call[3])).not.toContain('off');
+    unmount();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
   });

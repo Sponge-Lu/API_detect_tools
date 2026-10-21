@@ -93,12 +93,6 @@ export const DEFAULT_WINDOW_WIDTH = 1280;
 /** 默认窗口高度 */
 export const DEFAULT_WINDOW_HEIGHT = 800;
 
-/** LDC 相关 UI 显示开关（旧导航兼容路径仍会读取） */
-export const LDC_UI_VISIBILITY = {
-  showRatioColumn: true,
-  showCreditTab: false,
-} as const;
-
 // ============= 分页相关 =============
 
 /** 日志查询每页条数 */
@@ -158,9 +152,9 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
  * 站点列表默认列宽版本号
  * 当 DEFAULT_COLUMN_WIDTHS 形状发生变化时递增；uiStore 会据此一次性重置已持久化的列宽
  */
-export const COLUMN_WIDTHS_VERSION = 5;
+export const COLUMN_WIDTHS_VERSION = 7;
 
-/** 站点列表默认列宽（像素）— 站点、账户、刷新时间拆列，History 列保留 24 个时间桶展示空间 */
+/** 站点列表默认列宽（像素）— 站点、账户、刷新时间拆列，History 列保留 24 个时间桶展示空间 + 固定统计区 */
 export const DEFAULT_COLUMN_WIDTHS = [
   180, // 站点名
   112, // 账户
@@ -168,18 +162,7 @@ export const DEFAULT_COLUMN_WIDTHS = [
   84, // 余额
   70, // 今日消费（减少约一个汉字宽度）
   50, // 模型数（减少约一个汉字宽度，保留最小列宽）
-  64, // LDC
-  320, // History（端点选择器 + 24个时间桶条形图）
-] as const;
-
-/** LDC 支付方式名称匹配列表（不同站点可能使用不同名称） */
-export const LDC_PAYMENT_NAMES = [
-  'Linuxdo Credit',
-  'LinuxDo Credit',
-  'Linux Do Credit',
-  'LDC',
-  'linuxdo credit',
-  'linux do credit',
+  400, // History（24个时间桶条形图保持原 320px 轨道宽度 + 8px 间距 + 72px 固定统计区）
 ] as const;
 
 /** 列宽最小值 */

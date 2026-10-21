@@ -52,9 +52,9 @@ export function registerBackupHandlers(backupManager: BackupManager) {
   });
 
   // 导出 portable 配置包（config.json + custom-cli-configs.json）
-  ipcMain.handle('backup:export-config-package', async () => {
+  ipcMain.handle('backup:export-config-package', async (_, includeSecrets = false) => {
     try {
-      const content = await createPortableAppStorageBundleContent();
+      const content = await createPortableAppStorageBundleContent(undefined, includeSecrets === true);
       // 与 WebDAV/手动备份一致：缺少 stable-config 时拒绝导出
       extractStableConfigFromBackupContent(content);
       return {

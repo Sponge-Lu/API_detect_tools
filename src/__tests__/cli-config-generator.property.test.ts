@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { buildVersionedApiUrl } from '../shared/utils/apiConfig';
 import * as fc from 'fast-check';
 import {
   CODEX_PROVIDER_NAME,
@@ -37,6 +38,41 @@ import {
 import { ROUTE_CLI_MARKER_HEADER, ROUTE_CLI_MARKER_VALUES } from '../shared/types/route-proxy';
 
 // ============= Arbitraries =============
+
+describe('API key source and versioned URL regressions', () => {
+  it('adds sk- only for keys acquired from managed sites', () => {
+    expect(normalizeApiKey('plain-secret', 'remote')).toBe('sk-plain-secret');
+    expect(normalizeApiKey('sk-plain-secret', 'remote')).toBe('sk-plain-secret');
+    expect(normalizeApiKey('plain-secret')).toBe('plain-secret');
+    expect(normalizeApiKey('plain-secret', 'local')).toBe('plain-secret');
+    expect(normalizeApiKey('sk-***', 'remote')).toBe('');
+  });
+
+  it('preserves manual keys in all four clients and avoids duplicate v1 paths', () => {
+    const params = {
+      siteName: 'Manual',
+      siteUrl: 'https://api.example/prefix/v1/',
+      apiKey: 'plain-secret',
+      model: 'model-a',
+    };
+    for (const generate of [
+      generateClaudeCodeConfig,
+      generateCodexConfig,
+      generateOpenCodeConfig,
+      generateGrokBuildConfig,
+    ]) {
+      const output = generate(params)
+        .files.map(file => file.content)
+        .join(' ');
+      expect(output).toContain('plain-secret');
+      expect(output).not.toContain('sk-plain-secret');
+      expect(output).not.toContain('/v1/v1');
+    }
+    expect(buildVersionedApiUrl(params.siteUrl, 'models')).toBe(
+      'https://api.example/prefix/v1/models'
+    );
+  });
+});
 
 /**
  * Generate a valid URL without trailing slashes
@@ -397,7 +433,8 @@ describe('Property 2: Codex config generation produces valid output', () => {
         expect(content).toContain(`model_provider = "${CODEX_PROVIDER_NAME}"`);
         expect(content).toContain(`[model_providers.${CODEX_PROVIDER_NAME}]`);
         expect(content).toContain(`name = "${CODEX_PROVIDER_NAME}"`);
-        expect(content).toContain('env_key = "OPENAI_API_KEY"');
+        expect(content).toContain('experimental_bearer_token = "');
+        expect(content).not.toContain('env_key =');
       }),
       { numRuns: 100 }
     );
@@ -412,6 +449,23 @@ describe('Property 2: Codex config generation produces valid output', () => {
         const content = configFile!.content;
 
         expect(content).toContain('wire_api = "responses"');
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should keep web_search at the top level and omit removed Codex keys', () => {
+    fc.assert(
+      fc.property(configParamsArb, params => {
+        const config = generateCodexConfig(params);
+        const configFile = config.files.find(f => f.path.includes('config.toml'));
+        const content = configFile!.content;
+
+        expect(content).not.toContain('disable_response_storage');
+        expect(content).not.toContain('network_access');
+        expect(content.indexOf('web_search = "disabled"')).toBeLessThan(
+          content.indexOf('[model_providers.')
+        );
       }),
       { numRuns: 100 }
     );
@@ -450,6 +504,7 @@ describe('OpenCode config generation', () => {
       model: 'anthropic/test-model',
       provider: {
         anthropic: {
+          options: { baseURL: 'https://api.example.com/v1', apiKey: 'sk-test-key' },
           models: {
             'test-model': {
               options: {
@@ -476,6 +531,7 @@ describe('OpenCode config generation', () => {
         model: 'openai/test-model',
         provider: {
           openai: {
+            options: { baseURL: 'https://api.example.com/v1', apiKey: 'sk-test-key' },
             models: {
               'test-model': {
                 options: { reasoningEffort: 'high' },
@@ -527,6 +583,7 @@ describe('OpenCode config generation', () => {
     for (const providerId of Object.values(OPENCODE_ROUTE_PROVIDER_IDS)) {
       expect(content.provider[providerId].options).toMatchObject({
         baseURL: 'https://api.example.com/v1',
+        apiKey: 'sk-test-key',
       });
       expect(content.provider[providerId].options.headers).toBeUndefined();
       expect(content.provider[providerId].models['test-model']).toEqual({ name: 'test-model' });
@@ -552,8 +609,12 @@ describe('OpenCode config generation', () => {
     expect(routeToml.match(/stream_tool_calls = false/g)).toHaveLength(3);
     expect(directToml).not.toContain(ROUTE_CLI_MARKER_HEADER);
     expect(routeToml).not.toContain(ROUTE_CLI_MARKER_HEADER);
-    expect(directToml).toContain('extra_headers = { "x-api-key" = "sk-test-key" }');
-    expect(routeToml).toContain('extra_headers = { "x-api-key" = "sk-test-key" }');
+    expect(directToml).toContain(
+      'extra_headers = { "x-api-key" = "sk-test-key", "anthropic-version" = "2023-06-01" }'
+    );
+    expect(routeToml).toContain(
+      'extra_headers = { "x-api-key" = "sk-test-key", "anthropic-version" = "2023-06-01" }'
+    );
   });
 
   it('should preserve Grok Build API keys with non-OpenAI prefixes', () => {
@@ -564,11 +625,14 @@ describe('OpenCode config generation', () => {
     });
 
     expect(config.files[0].content).toContain('api_key = "xai-test-key"');
-    expect(config.files[0].content).toContain('extra_headers = { "x-api-key" = "xai-test-key" }');
+    expect(config.files[0].content).toContain(
+      'extra_headers = { "x-api-key" = "xai-test-key", "anthropic-version" = "2023-06-01" }'
+    );
     expect(config.files[0].content).not.toContain('sk-xai-test-key');
     const messagesBlock = config.files[0].content.split(
       `[model.${GROK_BUILD_MANAGED_MODEL_IDS.messages}]`
     )[1];
+    expect(messagesBlock).toContain('"anthropic-version" = "2023-06-01"');
     expect(messagesBlock).not.toContain('\napi_key =');
   });
 

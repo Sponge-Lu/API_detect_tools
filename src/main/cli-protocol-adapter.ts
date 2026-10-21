@@ -823,7 +823,7 @@ function validateFunctionTools(
     if (sourceProtocol === 'anthropic-messages') {
       assertAllowedKeys(
         record,
-        new Set(['name', 'description', 'input_schema']),
+        new Set(['name', 'description', 'input_schema', 'cache_control']),
         `tools[${index}]`,
         sourceCliType,
         targetProtocol
@@ -960,6 +960,26 @@ function validateParallelToolCalls(
   }
 }
 
+/**
+ * 转换时会被丢弃、丢弃无害的 anthropic 字段。
+ * 这些字段对目标协议无语义（OpenAI 侧无对应字段），
+ * 但真实 CLI（Claude Code 的 prompt caching 与元数据）总是携带——
+ * 因此校验放行、转换时静默忽略，绝不抛 unsupported_field。
+ */
+const ANTHROPIC_TOP_LEVEL_DROP_KEYS = new Set(['metadata', 'thinking', 'speed', 'service_tier']);
+const ANTHROPIC_BLOCK_DROP_KEYS = new Set(['cache_control']);
+/**
+ * OpenAI 侧同理：这些字段只影响存储/遥测/缓存路由（官方 API 参考如此归类），
+ * 不影响生成结果；跨协议转换时静默丢弃，避免真实 CLI 流量整包被拒。
+ */
+const OPENAI_TOP_LEVEL_DROP_KEYS = new Set([
+  'metadata',
+  'user',
+  'safety_identifier',
+  'prompt_cache_key',
+  'service_tier',
+]);
+
 function validateAnthropicRequest(
   body: JsonRecord,
   sourceCliType: RouteCliType,
@@ -975,11 +995,13 @@ function validateAnthropicRequest(
       'stream',
       'temperature',
       'top_p',
+      'top_k',
       'stop_sequences',
       'stop',
       'tools',
       'tool_choice',
       'output_config',
+      ...ANTHROPIC_TOP_LEVEL_DROP_KEYS,
     ]),
     'request',
     sourceCliType,
@@ -995,7 +1017,7 @@ function validateAnthropicRequest(
     const record = normalizeObject(message);
     assertAllowedKeys(
       record,
-      new Set(['role', 'content']),
+      new Set(['role', 'content', 'cache_control']),
       `messages[${messageIndex}]`,
       sourceCliType,
       targetProtocol
@@ -1022,9 +1044,11 @@ function validateAnthropicRequest(
       const path = `messages[${messageIndex}].content[${partIndex}]`;
       const type = normalizeText(content.type);
       const allowedByType: Record<string, ReadonlySet<string>> = {
-        text: new Set(['type', 'text']),
-        tool_use: new Set(['type', 'id', 'name', 'input']),
-        tool_result: new Set(['type', 'tool_use_id', 'id', 'content', 'is_error']),
+        text: new Set(['type', 'text', 'cache_control', 'citations']),
+        thinking: new Set(['type', 'thinking', 'signature', 'cache_control']),
+        redacted_thinking: new Set(['type', 'data', 'cache_control']),
+        tool_use: new Set(['type', 'id', 'name', 'input', 'cache_control']),
+        tool_result: new Set(['type', 'tool_use_id', 'id', 'content', 'is_error', 'cache_control']),
       };
       const allowed = allowedByType[type];
       if (!allowed) {
@@ -1074,6 +1098,7 @@ function validateResponsesRequest(
       'tool_choice',
       'parallel_tool_calls',
       'store',
+      ...OPENAI_TOP_LEVEL_DROP_KEYS,
     ]),
     'request',
     sourceCliType,
@@ -1149,6 +1174,7 @@ function validateChatRequest(
       'reasoningEffort',
       'tool_choice',
       'parallel_tool_calls',
+      ...OPENAI_TOP_LEVEL_DROP_KEYS,
     ]),
     'request',
     sourceCliType,

@@ -2084,7 +2084,7 @@ function ModelHeatmapList({
             }
             className={`absolute box-border overflow-hidden border px-1.5 py-1 transition-[opacity,box-shadow] duration-150 ${
               isSelected
-                ? 'border-[color-mix(in_srgb,var(--accent)_42%,var(--line-muted))] shadow-[0_0_0_2px_var(--surface-3),0_4px_18px_-4px_rgba(0,0,0,0.45)] z-10'
+                ? 'border-[color-mix(in_srgb,var(--accent)_42%,var(--line-muted))] shadow-[0_0_0_2px_var(--surface-3),0_4px_18px_-4px_color-mix(in_srgb,var(--text-primary)_45%,transparent)] z-10'
                 : 'border-[var(--surface-2)]'
             } ${dim ? 'opacity-40' : 'opacity-100'} ${onSelectModel ? 'cursor-pointer' : ''}`}
             style={{
@@ -2544,7 +2544,7 @@ function CheckinStatusList({
                   </div>
                 </div>
                 <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${statusClass}`}
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusClass}`}
                 >
                   {statusLabel}
                 </span>

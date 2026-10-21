@@ -2,14 +2,16 @@
  * 路由代理服务器
  * 输入: CLI 请求 (HTTP), RoutingConfig, ModelRegistry
  * 输出: 透明转发到上游站点（含 model 重写 + metrics 采集）
- * 定位: 服务层 - 监听本地端口，canonical→raw 模型重写，Electron net raw 上游转发，透传+统计
+ * 定位: 服务层 - 串行启停本地监听，canonical→raw 模型重写，上游转发与统计
  */
 
 import * as http from 'http';
 import { createHash } from 'crypto';
 import { URL } from 'url';
 import Logger from './utils/logger';
-import { httpRawRequest, httpRawStreamRequest } from './utils/http-client';
+import { rectifyRejectedRequest } from './request-rectifier';
+import { getModelMetadata } from './model-metadata-service';
+
 import { unifiedConfigManager } from './unified-config-manager';
 import {
   detectCliTypeFromPath,
@@ -25,22 +27,25 @@ import {
 } from './route-channel-resolver';
 import type { ResolvedChannel } from './route-channel-resolver';
 import {
+  beginRoutePathAttempt,
   sortChannelsByScore,
   recordOutcome,
+  getRoutePathDisabledUntil,
   isRoutePathDisabled,
   recordRoutePathOutcome,
   isRouteEndpointUnsupported,
   recordRouteEndpointUnsupported,
 } from './route-stats-service';
-import { startHealthCheckTimer, stopHealthCheckTimer } from './route-health-service';
-import { recordRouteRequest } from './route-analytics-service';
+
 import type {
   RouteChannelKey,
   RouteCliType,
+  RouteInstance,
   RouteModelRegistryConfig,
   RoutePathState,
   RouteRuntimeConfig,
   RouteSessionChannelBinding,
+  RouteSessionRoutingConfig,
   RouteThinkingEffort,
   RoutingConfig,
 } from '../shared/types/route-proxy';
@@ -67,17 +72,7 @@ import {
   CliProtocolAdapterError,
   type CliProtocolResponseAdapter,
 } from './cli-protocol-adapter';
-import {
-  IncrementalProtocolSseTransformer,
-  type StreamingProtocol,
-} from './protocol-sse-transformer';
-import {
-  createIncrementalStreamingValidator,
-  STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES,
-  StreamingProtocolValidationError,
-  type CompletedStreamValidation,
-  type StreamingValidationProtocol,
-} from './streaming-protocol-validator';
+
 import { routeSessionActivityService } from './route-session-activity-service';
 import { routeSessionBindingService } from './route-session-binding-service';
 import {
@@ -118,6 +113,43 @@ import {
   summarizeUpstreamFailureBodyRaw,
   type RouteUpstreamFailure,
 } from './route-upstream-failure';
+import {
+  asRecord,
+  getRequestPathname,
+  inferSourceProtocol,
+  normalizeHeaderValue,
+  type ConcreteCliTargetProtocol,
+} from './route-proxy-shared';
+import {
+  extractRouteReasoningEffort,
+  hasRouteUsageValues,
+  isAllZeroRouteUsage,
+  type RouteUsageStats,
+} from './route-usage';
+import {
+  EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE,
+  NATIVE_STREAM_MISSING_TERMINAL_ERROR,
+  NativeAnthropicSseGuardError,
+  buildBufferedResponseHeaders,
+  canStreamResponseAdapters,
+  forwardToUpstream,
+  getIncrementalProtocolResponseAdapter,
+  isRetryableEmptyStreamingResponse,
+  isStreamingRequest,
+  parseSseBlocks,
+  parseSseJsonRecord,
+  resolveUpstreamTimeouts,
+} from './route-upstream-forwarder';
+import {
+  RouteRequestContext,
+  createRouteClientCancelledError,
+  isRouteClientCancelledError,
+  markRouteTerminalError,
+  nextRequestId,
+} from './route-request-context';
+
+export { buildUpstreamHeaders, buildUpstreamRequestUrl } from './route-upstream-forwarder';
+export { extractRouteReasoningEffort, extractUsageFromBody } from './route-usage';
 
 export {
   classifyRouteStatusCode,
@@ -128,14 +160,30 @@ export {
 
 const log = Logger.scope('RouteProxyService');
 
+const JSON_RESPONSE_HEADERS: http.OutgoingHttpHeaders = { 'Content-Type': 'application/json' };
+
+function writeRouteProxyErrorHead(
+  res: http.ServerResponse,
+  statusCode: number,
+  error: string,
+  headers: http.OutgoingHttpHeaders = JSON_RESPONSE_HEADERS
+): void {
+  markRouteTerminalError(res, error);
+  res.writeHead(statusCode, { 'X-Route-Proxy-Error': error, ...headers });
+}
+
 let proxyServer: http.Server | null = null;
 let isRunning = false;
-let requestSequence = 0;
+let proxyLifecycle: Promise<void> = Promise.resolve();
 const ALL_ROUTE_PATHS_DISABLED_ERROR_CODE = 'all_route_paths_disabled';
-const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
+/**
+ * 全部路径挂起回 503 而非 400：Claude Code/Codex 视 4xx 为不可重试并终止本轮对话，
+ * 而挂起是暂时的；Retry-After 取最早解禁时间，让 CLI 自行退避重试。
+ */
+const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 503;
+const ALL_ROUTE_PATHS_DISABLED_RETRY_AFTER_MAX_SECONDS = 30;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
-const EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE = 'empty_response_zero_usage';
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE = 'upstream_temporarily_unavailable';
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE = 503;
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE =
@@ -148,11 +196,145 @@ const EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS = 1;
 const ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS = 200;
 /** Retry-After 超过该阈值则跳过该次计划尝试，绝不为等待阻塞 CLI。 */
 const ROUTE_SAME_PATH_RETRY_MAX_DELAY_MS = 2000;
-const EMPTY_STREAMING_RESPONSE_ERROR = 'invalid_streaming_response:empty_streaming_response';
+/**
+ * 全局尝试预算：单个请求跨所有候选通道的实际尝试上限。
+ * 通道数 × maxAttemptsPerRoutePath 的无约束组合会让 CLI 等到自行超时
+ * （线上日志出现过单请求 13 次尝试、92 秒后被客户端取消）。
+ */
+const ROUTE_GLOBAL_MAX_ATTEMPTS = 6;
+/**
+ * 请求级重试决策预算：请求开始超过该时长后不再发起新的故障转移尝试。
+ * 只约束"是否开始下一次尝试"，不限制已在上游执行的请求。
+ */
+const ROUTE_RETRY_DECISION_BUDGET_MS = 120 * 1000;
+/**
+ * request_fatal（400/413/422）负缓存：通道拒绝了某种请求形状后，
+ * TTL 内后续同形状请求直接跳过该通道，避免每个请求都先撞一次坏通道
+ * （request_fatal 记 neutral、不影响成功率窗口，因此没有其他机制能记住它）。
+ * 若全部候选都被负缓存命中则忽略缓存照常尝试，保底全 request_fatal 时的透传语义。
+ */
+const ROUTE_REQUEST_FATAL_NEGATIVE_CACHE_TTL_MS = 10 * 60 * 1000;
+const ROUTE_REQUEST_FATAL_NEGATIVE_CACHE_MAX_ENTRIES = 500;
+
+/**
+ * request_fatal 负缓存：key 为 routePathKey + 请求形状指纹。
+ * 指纹只取请求的结构性特征（顶层字段、tools 形状、内容块类型、思考/工具开关），
+ * 不含消息文本与请求体长度——CLI 会话逐轮增长，取内容会永远打不中缓存。
+ */
+const requestFatalNegativeCache = new Map<string, number>();
+
+function collectRequestShapeTypes(value: unknown, out: Set<string>, depth: number): void {
+  if (out.size >= 64 || depth > 3) return;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectRequestShapeTypes(item, out, depth + 1);
+      if (out.size >= 64) return;
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (typeof record.type === 'string' && record.type) {
+      out.add(record.type);
+    }
+    for (const key of ['content', 'input', 'blocks']) {
+      if (record[key] !== undefined) {
+        collectRequestShapeTypes(record[key], out, depth + 1);
+      }
+    }
+  }
+}
+
+export function buildRequestFatalFingerprint(bodyJson: unknown, bodyByteLength?: number): string {
+  if (!bodyJson || typeof bodyJson !== 'object' || Array.isArray(bodyJson)) {
+    return '';
+  }
+  const record = bodyJson as Record<string, unknown>;
+  const blockTypes = new Set<string>();
+  collectRequestShapeTypes(record.messages, blockTypes, 0);
+  collectRequestShapeTypes(record.input, blockTypes, 0);
+  collectRequestShapeTypes(record.system, blockTypes, 0);
+  const tools = Array.isArray(record.tools) ? record.tools.slice(0, 32) : [];
+  const toolShapes = tools
+    .map(tool => {
+      if (!tool || typeof tool !== 'object') return '?';
+      const toolRecord = tool as Record<string, unknown>;
+      return `${String(toolRecord.type ?? '')}:${String(toolRecord.name ?? '')}`;
+    })
+    .sort()
+    .join(';');
+  const flags: string[] = [];
+  if (record.thinking && typeof record.thinking === 'object') {
+    flags.push(`thinking:${String((record.thinking as Record<string, unknown>).type ?? '')}`);
+  }
+  if (record.reasoning && typeof record.reasoning === 'object') {
+    flags.push(`reasoning:${String((record.reasoning as Record<string, unknown>).effort ?? '')}`);
+  }
+  if (record.tool_choice !== undefined) {
+    flags.push(
+      `tool_choice:${
+        typeof record.tool_choice === 'string'
+          ? record.tool_choice
+          : String((record.tool_choice as Record<string, unknown>)?.type ?? '')
+      }`
+    );
+  }
+
+  return [
+    Object.keys(record).sort().join(','),
+    `tools=${toolShapes}`,
+    `blocks=${Array.from(blockTypes).sort().join(',')}`,
+    ...flags,
+    // 粗粒度体积桶（2 的幂）："上下文超长"类 400 与请求大小相关，
+    // 会话逐轮增长或新会话变小都应视为不同的缓存键。
+    bodyByteLength && bodyByteLength > 0 ? `len=${Math.floor(Math.log2(bodyByteLength))}` : '',
+  ]
+    .filter(Boolean)
+    .join('|');
+}
+
+function pruneRequestFatalNegativeCache(now: number): void {
+  for (const [key, expiresAt] of requestFatalNegativeCache) {
+    if (expiresAt <= now) {
+      requestFatalNegativeCache.delete(key);
+    }
+  }
+  while (requestFatalNegativeCache.size > ROUTE_REQUEST_FATAL_NEGATIVE_CACHE_MAX_ENTRIES) {
+    const oldestKey = requestFatalNegativeCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    requestFatalNegativeCache.delete(oldestKey);
+  }
+}
+
+function readRequestFatalNegativeCache(
+  routePathKey: string,
+  fingerprint: string,
+  now: number
+): boolean {
+  if (!fingerprint) return false;
+  const expiresAt = requestFatalNegativeCache.get(`${routePathKey}::${fingerprint}`);
+  return expiresAt !== undefined && expiresAt > now;
+}
+
+function writeRequestFatalNegativeCache(
+  routePathKey: string,
+  fingerprint: string,
+  now: number
+): void {
+  if (!fingerprint) return;
+  requestFatalNegativeCache.set(
+    `${routePathKey}::${fingerprint}`,
+    now + ROUTE_REQUEST_FATAL_NEGATIVE_CACHE_TTL_MS
+  );
+  pruneRequestFatalNegativeCache(now);
+}
+
+/** 清空 request_fatal 负缓存（测试隔离用）。 */
+export function clearRequestFatalNegativeCache(): void {
+  requestFatalNegativeCache.clear();
+}
 const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'target_lock_upstream_attempt_exhausted';
 const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
-const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
-const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
 const CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT = 'claude_messages_count_tokens';
 const OPENAI_STATEFUL_ROUTE_PREFIXES = [
@@ -162,23 +344,9 @@ const OPENAI_STATEFUL_ROUTE_PREFIXES = [
   '/v1/vector_stores',
   '/v1/containers',
 ] as const;
-const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
-const NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
-const NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES = 1024 * 1024;
-const NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
-/**
- * 原生 Anthropic 流的下游提交窗口。窗口内的上游截断可以丢弃缓冲并换通道重试，
- * 客户端无感；窗口一旦过去，已发出的字节无法撤回，只能靠可重试错误事件收尾。
- */
-const NATIVE_ANTHROPIC_SSE_COMMIT_DELAY_MS = 3_000;
-const NATIVE_ANTHROPIC_SSE_COMMIT_BYTES = 64 * 1024;
-const NATIVE_STREAM_MISSING_TERMINAL_ERROR = 'incomplete_streaming_response:missing_terminal_event';
 const ROUTE_PROXY_STOPPED_ERROR_CODE = 'route_proxy_stopped';
 const ROUTE_PROXY_STOPPED_STATUS_CODE = 503;
-const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
-const ROUTE_CLIENT_CANCELLED_STATUS_CODE = 499;
 
-type ConcreteCliTargetProtocol = Exclude<CliTargetProtocol, 'native'>;
 type RouteOperationCapability =
   | 'generation-convertible'
   | 'stateless-native-only'
@@ -192,24 +360,6 @@ export interface RouteEndpointOperation {
   operation: string;
   capability: RouteOperationCapability;
   resourceId?: string;
-}
-
-class RouteClientCancelledError extends Error {
-  constructor(message = 'Route client cancelled request') {
-    super(message);
-    this.name = 'RouteClientCancelledError';
-  }
-}
-
-function isRouteClientCancelledError(error: unknown): boolean {
-  return (
-    error instanceof RouteClientCancelledError ||
-    (error instanceof Error && error.name === 'RouteClientCancelledError')
-  );
-}
-
-function createRouteClientCancelledError(): RouteClientCancelledError {
-  return new RouteClientCancelledError(ROUTE_CLIENT_CANCELLED_ERROR_CODE);
 }
 
 /** 可取消延时：客户端断开时立即走既有取消路径，不拖慢拆除。 */
@@ -273,11 +423,6 @@ async function recordCancelledUpstreamPathSuccess(params: {
     },
     params.routeRuntimeConfig
   );
-}
-
-function nextRequestId(cliType: RouteCliType): string {
-  requestSequence += 1;
-  return `${cliType}-${Date.now()}-${requestSequence}`;
 }
 
 function getEffectiveRouteDisplayItem(
@@ -355,14 +500,6 @@ async function resolveChannelTargets(channels: ResolvedChannel[]): Promise<Resol
     })
   );
   return resolved.filter((channel): channel is ResolvedChannel => channel !== null);
-}
-
-function normalizeHeaderValue(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) {
-    return value[0] || '';
-  }
-
-  return value || '';
 }
 
 function extractBearerToken(req: Pick<http.IncomingMessage, 'headers'>): string {
@@ -504,10 +641,6 @@ export function detectMarkedRouteCliType(
   return null;
 }
 
-function getRequestPathname(requestUrl: string | undefined): string {
-  return (requestUrl || '/').split('?')[0] || '/';
-}
-
 function getRouteDiagnosticPath(pathname: string): string {
   const routePath = [
     CLAUDE_COUNT_TOKENS_PATH,
@@ -575,25 +708,6 @@ function buildRouteModelDiscoveryResponse(
         }
       : { object: 'list', data },
   };
-}
-
-function inferSourceProtocol(requestUrl: string | undefined): ConcreteCliTargetProtocol | null {
-  const pathname = getRequestPathname(requestUrl);
-  if (pathname === '/v1/messages' || pathname.startsWith('/v1/messages/')) {
-    return 'anthropic-messages';
-  }
-  if (
-    pathname === '/v1/responses' ||
-    pathname.startsWith('/v1/responses/') ||
-    pathname === '/v1/conversations' ||
-    pathname.startsWith('/v1/conversations/')
-  ) {
-    return 'openai-responses';
-  }
-  if (pathname === '/v1/chat/completions' || pathname.startsWith('/v1/chat/completions/')) {
-    return 'openai-chat-completions';
-  }
-  return null;
 }
 
 export function classifyRouteEndpointOperation(
@@ -798,10 +912,7 @@ function writeStateAffinityError(
   error: string,
   message: string
 ): void {
-  res.writeHead(statusCode, {
-    'Content-Type': 'application/json',
-    'X-Route-Proxy-Error': error,
-  });
+  writeRouteProxyErrorHead(res, statusCode, error);
   res.end(
     JSON.stringify({
       error: {
@@ -1195,900 +1306,6 @@ function rewriteRequestModel(bodyBuffer: Buffer, upstreamModel: string): Buffer 
   return bodyBuffer;
 }
 
-function deleteAuthHeaders(headers: Record<string, string | string[] | undefined>): void {
-  for (const key of Object.keys(headers)) {
-    const normalizedKey = key.toLowerCase();
-    if (normalizedKey === 'authorization' || normalizedKey === 'x-api-key') {
-      delete headers[key];
-    }
-  }
-}
-
-function compactHeaders(
-  headers: Record<string, string | string[] | undefined>
-): Record<string, string | string[]> {
-  return Object.fromEntries(
-    Object.entries(headers).filter((entry): entry is [string, string | string[]] => {
-      const value = entry[1];
-      return typeof value === 'string' || Array.isArray(value);
-    })
-  );
-}
-
-function isEventStreamResponse(headers: http.IncomingHttpHeaders): boolean {
-  return normalizeHeaderValue(headers['content-type']).toLowerCase().includes('text/event-stream');
-}
-
-function isStreamingRequest(bodyJson: unknown, requestUrl: string | undefined): boolean {
-  void requestUrl;
-  const record = asRecord(bodyJson);
-  if (record?.stream === true) return true;
-
-  return false;
-}
-
-function resolveUpstreamTimeouts(params: {
-  siteName?: string;
-  baseTimeoutMs: number;
-  streamingRequest: boolean;
-}): { timeoutMs: number; streamIdleTimeoutMs?: number } {
-  const siteTimeoutMs =
-    params.siteName && isAnyRouterSite(params.siteName)
-      ? ANYROUTER_REQUEST_TIMEOUT_MS
-      : params.baseTimeoutMs;
-
-  if (!params.streamingRequest) {
-    return { timeoutMs: siteTimeoutMs };
-  }
-
-  return {
-    timeoutMs: siteTimeoutMs,
-    streamIdleTimeoutMs: Math.max(siteTimeoutMs, ACTIVE_STREAM_IDLE_TIMEOUT_MS),
-  };
-}
-
-function canStreamResponseAdapters(
-  anyRouterAdapter: AnyRouterResponseAdapter,
-  protocolAdapters: CliProtocolResponseAdapter[]
-): boolean {
-  if (anyRouterAdapter.type !== 'transparent') return false;
-  if (protocolAdapters.every(adapter => adapter.type === 'transparent')) return true;
-  return getIncrementalProtocolResponseAdapter(protocolAdapters) !== null;
-}
-
-type SourceProtocolResponseAdapter = Extract<CliProtocolResponseAdapter, { type: 'source' }>;
-
-function getIncrementalProtocolResponseAdapter(
-  protocolAdapters: CliProtocolResponseAdapter[]
-): SourceProtocolResponseAdapter | null {
-  if (protocolAdapters.length !== 1) return null;
-  const adapter = protocolAdapters[0];
-  return adapter.type === 'source' &&
-    adapter.stream &&
-    adapter.sourceProtocol !== undefined &&
-    adapter.sourceProtocol !== adapter.targetProtocol
-    ? adapter
-    : null;
-}
-
-const ROUTE_PROXY_BLOCKED_RESPONSE_HEADERS = new Set([
-  'connection',
-  'content-encoding',
-  'content-length',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-]);
-
-function buildRouteProxyResponseHeaders(
-  headers: http.IncomingHttpHeaders
-): http.OutgoingHttpHeaders {
-  const outgoing: http.OutgoingHttpHeaders = {};
-
-  for (const [key, value] of Object.entries(headers)) {
-    if (value === undefined || ROUTE_PROXY_BLOCKED_RESPONSE_HEADERS.has(key.toLowerCase())) {
-      continue;
-    }
-    outgoing[key] = value;
-  }
-
-  return outgoing;
-}
-
-function buildStreamingResponseHeaders(
-  headers: http.IncomingHttpHeaders
-): http.OutgoingHttpHeaders {
-  return buildRouteProxyResponseHeaders(headers);
-}
-
-function buildBufferedResponseHeaders(
-  headers: http.IncomingHttpHeaders,
-  body: Buffer
-): http.OutgoingHttpHeaders {
-  return {
-    ...buildRouteProxyResponseHeaders(headers),
-    'content-length': String(body.length),
-  };
-}
-
-type InitialEventStreamValidation =
-  | { status: 'accepted' }
-  | { status: 'pending' }
-  | { status: 'rejected'; reason: string };
-
-type StreamingTerminalProtocol = StreamingValidationProtocol | 'none';
-
-function getStreamingTerminalProtocolForWireProtocol(
-  protocol: StreamingProtocol
-): StreamingTerminalProtocol {
-  if (protocol === 'anthropic-messages') return 'anthropic';
-  if (protocol === 'openai-responses') return 'openaiResponses';
-  return 'openaiChat';
-}
-interface ParsedSseBlock {
-  event?: string;
-  data: string;
-}
-
-interface StreamingSseObservationState {
-  buffer: Buffer;
-  errorSeen: boolean;
-  failureCode?: string;
-  nextSequenceNumber: number;
-  terminalSeen: boolean;
-}
-
-interface AnthropicSseCompatibilityNormalizerState {
-  decodeBlock: (block: Buffer) => string;
-  frameBuffer: IncrementalSseFrameBuffer;
-  openBlocks: Map<number, { type: string }>;
-  completedToolBlocks: number;
-}
-
-class NativeAnthropicSseGuardError extends Error {
-  constructor(
-    readonly reason: string,
-    readonly protocolMessage: string
-  ) {
-    super(`malformed_streaming_response:${reason}`);
-    this.name = 'NativeAnthropicSseGuardError';
-  }
-}
-
-interface NativeAnthropicSseGuardState {
-  buffer: Buffer;
-  openBlocks: Set<number>;
-  pendingFrames: Buffer[];
-  pendingBytes: number;
-  released: boolean;
-  sawMessageStart: boolean;
-}
-
-function validateInitialEventStreamChunk(buffer: Buffer): InitialEventStreamValidation {
-  if (!buffer.length) {
-    return { status: 'pending' };
-  }
-
-  const text = buffer.toString('utf-8');
-  const trimmed = text.replace(/^\uFEFF/, '').trimStart();
-  if (!trimmed) {
-    return buffer.length >= INITIAL_STREAM_VALIDATION_MAX_BYTES
-      ? { status: 'rejected', reason: 'empty_initial_stream' }
-      : { status: 'pending' };
-  }
-
-  const firstBytes = trimmed.slice(0, 256).toLowerCase();
-  if (firstBytes.startsWith('<!doctype') || firstBytes.startsWith('<html') || trimmed[0] === '<') {
-    return { status: 'rejected', reason: 'html_response' };
-  }
-  if (trimmed[0] === '{' || trimmed[0] === '[') {
-    return { status: 'rejected', reason: 'json_response' };
-  }
-
-  const hasCompleteLine = /\r?\n/.test(trimmed);
-  const firstLine = trimmed.split(/\r?\n/, 1)[0];
-  if (/^(?::|event\s*:|data\s*:|id\s*:|retry\s*:)/.test(firstLine.trimStart())) {
-    return { status: 'accepted' };
-  }
-
-  if (hasCompleteLine) {
-    return { status: 'rejected', reason: 'non_sse_response' };
-  }
-
-  return buffer.length >= INITIAL_STREAM_VALIDATION_MAX_BYTES
-    ? { status: 'rejected', reason: 'non_sse_response' }
-    : { status: 'pending' };
-}
-
-function getStreamingTerminalProtocol(requestUrl?: string): StreamingTerminalProtocol {
-  const sourceProtocol = inferSourceProtocol(requestUrl);
-  if (sourceProtocol === 'anthropic-messages') return 'anthropic';
-  if (sourceProtocol === 'openai-responses') return 'openaiResponses';
-  if (sourceProtocol === 'openai-chat-completions') return 'openaiChat';
-  return 'none';
-}
-
-function buildStreamingErrorChunk(
-  protocol: StreamingTerminalProtocol,
-  message: string,
-  sequenceNumber = 0,
-  anthropicErrorType: 'api_error' | 'overloaded_error' = 'api_error'
-): Buffer {
-  if (protocol === 'anthropic') {
-    return Buffer.from(
-      `event: error\ndata: ${JSON.stringify({
-        type: 'error',
-        error: { type: anthropicErrorType, message },
-      })}\n\n`,
-      'utf-8'
-    );
-  }
-
-  if (protocol === 'openaiResponses') {
-    return Buffer.from(
-      `event: error\ndata: ${JSON.stringify({
-        type: 'error',
-        code: 'upstream_stream_error',
-        message,
-        param: null,
-        sequence_number: sequenceNumber,
-      })}\n\n`,
-      'utf-8'
-    );
-  }
-
-  // 不补 [DONE]：它是成功终结标记，错误后补发会让客户端把截断的回答当作完整结果接受。
-  return Buffer.from(
-    `data: ${JSON.stringify({
-      error: {
-        message,
-        type: 'server_error',
-        code: 'upstream_stream_error',
-        param: null,
-      },
-    })}\n\n`,
-    'utf-8'
-  );
-}
-
-function parseSseBlocks(text: string): ParsedSseBlock[] {
-  const normalized = text.replace(/\r\n?/g, '\n');
-  const blocks: ParsedSseBlock[] = [];
-
-  for (const block of normalized.split(/\n\n+/)) {
-    const lines = block.split('\n');
-    const dataLines: string[] = [];
-    let event: string | undefined;
-
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        event = line.slice('event:'.length).trim();
-      } else if (line.startsWith('data:')) {
-        dataLines.push(line.slice('data:'.length).trimStart());
-      }
-    }
-
-    if (dataLines.length > 0) {
-      blocks.push({ event, data: dataLines.join('\n').trim() });
-    }
-  }
-
-  return blocks;
-}
-
-function hasNativeResponsesOutputBeforeFrameBoundary(chunk: Buffer): boolean {
-  for (const block of parseSseBlocks(chunk.toString('utf-8'))) {
-    const payload = parseSseJsonRecord(block.data);
-    const eventType = readString(payload?.type) || block.event || '';
-    if (eventType === 'response.output_text.delta' || eventType === 'response.output_text.done') {
-      if (readString(payload?.delta).trim() || readString(payload?.text).trim()) return true;
-    }
-    if (
-      eventType === 'response.function_call_arguments.delta' ||
-      eventType === 'response.function_call_arguments.done'
-    ) {
-      if (readString(payload?.delta).trim() || readString(payload?.arguments).trim()) return true;
-    }
-  }
-  return false;
-}
-
-function createStreamingSseObservationState(
-  protocol: StreamingTerminalProtocol
-): StreamingSseObservationState {
-  return {
-    buffer: Buffer.alloc(0),
-    errorSeen: false,
-    nextSequenceNumber: 0,
-    terminalSeen: protocol === 'none',
-  };
-}
-
-function observeStreamingSseBlock(
-  state: StreamingSseObservationState,
-  protocol: StreamingTerminalProtocol,
-  block: ParsedSseBlock
-): void {
-  if (block.data === '[DONE]') {
-    state.terminalSeen = true;
-    return;
-  }
-
-  const payload = parseSseJsonRecord(block.data);
-  const eventType = readString(payload?.type) || block.event || '';
-  const sequenceNumber = payload?.sequence_number;
-  if (
-    typeof sequenceNumber === 'number' &&
-    Number.isSafeInteger(sequenceNumber) &&
-    sequenceNumber >= state.nextSequenceNumber
-  ) {
-    state.nextSequenceNumber = sequenceNumber + 1;
-  }
-
-  if (eventType === 'error' || asRecord(payload?.error)) {
-    state.errorSeen = true;
-    const response = asRecord(payload?.response);
-    const error = asRecord(payload?.error) || asRecord(response?.error);
-    state.failureCode =
-      readString(error?.type) || readString(error?.code) || eventType || 'unknown_error';
-    state.terminalSeen = true;
-    return;
-  }
-
-  if (protocol === 'anthropic') {
-    state.terminalSeen = state.terminalSeen || eventType === 'message_stop';
-    return;
-  }
-
-  if (protocol === 'openaiResponses') {
-    if (eventType === 'response.failed') {
-      state.errorSeen = true;
-      const response = asRecord(payload?.response);
-      const error = asRecord(payload?.error) || asRecord(response?.error);
-      state.failureCode =
-        readString(error?.type) || readString(error?.code) || eventType || 'unknown_error';
-    }
-    state.terminalSeen =
-      state.terminalSeen ||
-      eventType === 'response.completed' ||
-      eventType === 'response.failed' ||
-      eventType === 'response.incomplete';
-  }
-}
-
-function observeStreamingSseChunk(
-  state: StreamingSseObservationState,
-  protocol: StreamingTerminalProtocol,
-  chunk: Buffer,
-  flush = false
-): void {
-  if (chunk.length) {
-    state.buffer = state.buffer.length ? Buffer.concat([state.buffer, chunk]) : chunk;
-  }
-
-  for (;;) {
-    const frameEnd = findSseFrameEnd(state.buffer);
-    if (frameEnd < 0) break;
-    const frame = state.buffer.subarray(0, frameEnd);
-    state.buffer = state.buffer.subarray(frameEnd);
-    for (const block of parseSseBlocks(frame.toString('utf-8'))) {
-      observeStreamingSseBlock(state, protocol, block);
-    }
-  }
-
-  if (flush && state.buffer.length) {
-    for (const block of parseSseBlocks(state.buffer.toString('utf-8'))) {
-      observeStreamingSseBlock(state, protocol, block);
-    }
-    state.buffer = Buffer.alloc(0);
-  }
-}
-
-function createAnthropicSseCompatibilityNormalizer(): AnthropicSseCompatibilityNormalizerState {
-  const decoder = new TextDecoder('utf-8', { fatal: true });
-  return {
-    decodeBlock: block => decoder.decode(block),
-    frameBuffer: new IncrementalSseFrameBuffer(STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES),
-    openBlocks: new Map(),
-    completedToolBlocks: 0,
-  };
-}
-
-function serializeSseBlock(event: string | undefined, data: string): string {
-  return `${event ? `event: ${event}\n` : ''}data: ${data}\n\n`;
-}
-
-function normalizeAnthropicSseCompatibilityBlock(
-  state: AnthropicSseCompatibilityNormalizerState,
-  rawBlock: Buffer
-): Buffer {
-  let decodedBlock: string;
-  try {
-    decodedBlock = state.decodeBlock(rawBlock);
-  } catch {
-    return rawBlock;
-  }
-  const blocks = parseSseBlocks(decodedBlock);
-  if (blocks.length !== 1 || !blocks[0].data || blocks[0].data === '[DONE]') {
-    return rawBlock;
-  }
-
-  const block = blocks[0];
-  const payload = parseSseJsonRecord(block.data);
-  if (!payload) {
-    return rawBlock;
-  }
-
-  const payloadType = readString(payload.type);
-  const eventType = payloadType || block.event || '';
-
-  if (eventType === 'content_block_start') {
-    const index = readNumericIndex(payload.index);
-    const contentBlock = asRecord(payload.content_block);
-    const blockType = readString(contentBlock?.type);
-    if (index !== undefined && blockType && !state.openBlocks.has(index)) {
-      state.openBlocks.set(index, { type: blockType });
-    }
-    return rawBlock;
-  }
-
-  if (eventType === 'content_block_stop') {
-    const index = readNumericIndex(payload.index);
-    const blockState = index === undefined ? undefined : state.openBlocks.get(index);
-    if (blockState?.type === 'tool_use') {
-      state.completedToolBlocks += 1;
-    }
-    if (index !== undefined) {
-      state.openBlocks.delete(index);
-    }
-    return rawBlock;
-  }
-
-  if (eventType !== 'message_delta' || state.completedToolBlocks === 0) {
-    return rawBlock;
-  }
-
-  const delta = asRecord(payload.delta);
-  if (readString(delta?.stop_reason) !== 'end_turn') {
-    return rawBlock;
-  }
-
-  return Buffer.from(
-    serializeSseBlock(
-      block.event,
-      JSON.stringify({
-        ...payload,
-        delta: {
-          ...delta,
-          stop_reason: 'tool_use',
-        },
-      })
-    ),
-    'utf-8'
-  );
-}
-
-function normalizeAnthropicSseCompatibilityChunk(
-  state: AnthropicSseCompatibilityNormalizerState,
-  chunk: Buffer
-): Buffer[] {
-  return [...state.frameBuffer.push(chunk)].map(block =>
-    normalizeAnthropicSseCompatibilityBlock(state, block)
-  );
-}
-
-function flushAnthropicSseCompatibilityNormalizer(
-  state: AnthropicSseCompatibilityNormalizerState
-): Buffer {
-  return state.frameBuffer.hasTail ? state.frameBuffer.takeTail() : Buffer.alloc(0);
-}
-
-function parseSseJsonRecord(data: string): Record<string, unknown> | undefined {
-  try {
-    return asRecord(JSON.parse(data));
-  } catch {
-    return undefined;
-  }
-}
-
-function createNativeAnthropicSseGuard(): NativeAnthropicSseGuardState {
-  return {
-    buffer: Buffer.alloc(0),
-    openBlocks: new Set(),
-    pendingFrames: [],
-    pendingBytes: 0,
-    released: false,
-    sawMessageStart: false,
-  };
-}
-
-function findSseFrameEnd(buffer: Buffer): number {
-  let previousWasLineEnding = false;
-
-  for (let index = 0; index < buffer.length; index += 1) {
-    const byte = buffer[index];
-    if (byte !== 0x0a && byte !== 0x0d) {
-      previousWasLineEnding = false;
-      continue;
-    }
-
-    const lineEndingLength = byte === 0x0d && buffer[index + 1] === 0x0a ? 2 : 1;
-    if (previousWasLineEnding) {
-      return index + lineEndingLength;
-    }
-
-    previousWasLineEnding = true;
-    index += lineEndingLength - 1;
-  }
-
-  return -1;
-}
-
-interface SseFrameBoundary {
-  end: number;
-  separatorStart: number;
-}
-
-function findValidatedSseFrameBoundary(buffer: Buffer, startIndex = 0): SseFrameBoundary | null {
-  for (let index = Math.max(0, startIndex); index < buffer.length; index += 1) {
-    const firstEndingBytes =
-      buffer[index] === 0x0a
-        ? 1
-        : buffer[index] === 0x0d && buffer[index + 1] === 0x0a
-          ? 2
-          : buffer[index] === 0x0d
-            ? 1
-            : 0;
-    if (!firstEndingBytes) continue;
-
-    const nextIndex = index + firstEndingBytes;
-    const secondEndingBytes =
-      buffer[nextIndex] === 0x0a
-        ? 1
-        : buffer[nextIndex] === 0x0d && buffer[nextIndex + 1] === 0x0a
-          ? 2
-          : buffer[nextIndex] === 0x0d
-            ? 1
-            : 0;
-    if (secondEndingBytes) {
-      return { end: nextIndex + secondEndingBytes, separatorStart: index };
-    }
-    index += firstEndingBytes - 1;
-  }
-  return null;
-}
-
-class IncrementalSseFrameBuffer {
-  private static readonly MAX_DELIMITER_BYTES = 4;
-  private buffer = Buffer.alloc(0);
-  private length = 0;
-  private scanOffset = 0;
-
-  constructor(private readonly maxFrameBytes: number) {}
-
-  *push(chunk: Buffer): Generator<Buffer> {
-    let chunkOffset = 0;
-
-    while (chunkOffset < chunk.length) {
-      this.ensureWritableCapacity();
-      const copyBytes = Math.min(this.buffer.length - this.length, chunk.length - chunkOffset);
-      chunk.copy(this.buffer, this.length, chunkOffset, chunkOffset + copyBytes);
-      this.length += copyBytes;
-      chunkOffset += copyBytes;
-
-      yield* this.drainFrames();
-
-      if (this.length >= this.maxBufferedBytes) {
-        throw this.buildFrameTooLargeError();
-      }
-    }
-  }
-
-  takeTail(): Buffer {
-    const tail = Buffer.from(this.buffer.subarray(0, this.length));
-    this.length = 0;
-    this.scanOffset = 0;
-    return tail;
-  }
-
-  get hasTail(): boolean {
-    return this.length > 0;
-  }
-
-  private get maxBufferedBytes(): number {
-    return this.maxFrameBytes + IncrementalSseFrameBuffer.MAX_DELIMITER_BYTES;
-  }
-
-  private *drainFrames(): Generator<Buffer> {
-    const frames: Buffer[] = [];
-    let frameStart = 0;
-    let searchOffset = this.scanOffset;
-
-    for (;;) {
-      const boundary = findValidatedSseFrameBoundary(
-        this.buffer.subarray(0, this.length),
-        searchOffset
-      );
-      if (!boundary) break;
-      if (boundary.separatorStart - frameStart > this.maxFrameBytes) {
-        throw this.buildFrameTooLargeError();
-      }
-      frames.push(Buffer.from(this.buffer.subarray(frameStart, boundary.end)));
-      frameStart = boundary.end;
-      searchOffset = boundary.end;
-    }
-
-    if (frameStart > 0) {
-      this.buffer.copyWithin(0, frameStart, this.length);
-      this.length -= frameStart;
-    }
-    this.scanOffset = Math.max(0, this.length - 3);
-    yield* frames;
-  }
-
-  private ensureWritableCapacity(): void {
-    if (this.length < this.buffer.length) return;
-    if (this.length >= this.maxBufferedBytes) throw this.buildFrameTooLargeError();
-
-    const nextCapacity = Math.min(
-      this.maxBufferedBytes,
-      Math.max(4096, this.buffer.length * 2, this.length + 1)
-    );
-    const nextBuffer = Buffer.allocUnsafe(nextCapacity);
-    this.buffer.copy(nextBuffer, 0, 0, this.length);
-    this.buffer = nextBuffer;
-  }
-
-  private buildFrameTooLargeError(): StreamingProtocolValidationError {
-    return new StreamingProtocolValidationError(
-      'sse_frame_too_large',
-      'upstream emitted an SSE frame above the safety limit'
-    );
-  }
-}
-
-function buildNativeAnthropicSseGuardFailure(
-  reason: string,
-  message: string
-): CompletedStreamValidation {
-  return { ok: false, reason, message };
-}
-
-function validateNativeAnthropicSseFrame(
-  state: NativeAnthropicSseGuardState,
-  frame: Buffer
-): CompletedStreamValidation & { releasesPending?: boolean } {
-  const blocks = parseSseBlocks(frame.toString('utf-8'));
-  if (blocks.length === 0 || !blocks[0].data || blocks[0].data === '[DONE]') {
-    return { ok: true };
-  }
-
-  const block = blocks[0];
-  const payload = parseSseJsonRecord(block.data);
-  const eventType = readString(payload?.type) || block.event || '';
-  if (!payload) {
-    if (
-      block.event &&
-      !block.event.startsWith('content_block_') &&
-      !block.event.startsWith('message_') &&
-      block.event !== 'error'
-    ) {
-      return { ok: true };
-    }
-    return buildNativeAnthropicSseGuardFailure(
-      'malformed_sse_json',
-      'upstream emitted malformed Anthropic SSE JSON'
-    );
-  }
-
-  if (eventType === 'message_start') {
-    state.sawMessageStart = true;
-    return { ok: true };
-  }
-
-  if (eventType === 'content_block_start') {
-    const index = readNumericIndex(payload.index);
-    const contentBlock = asRecord(payload.content_block);
-    if (
-      !state.sawMessageStart ||
-      index === undefined ||
-      !readString(contentBlock?.type) ||
-      state.openBlocks.has(index)
-    ) {
-      return buildNativeAnthropicSseGuardFailure(
-        'invalid_content_block_start',
-        'upstream emitted invalid Anthropic content block start'
-      );
-    }
-
-    state.openBlocks.add(index);
-    return { ok: true, releasesPending: true };
-  }
-
-  if (eventType === 'content_block_delta') {
-    const index = readNumericIndex(payload.index);
-    if (index === undefined || !state.openBlocks.has(index) || !asRecord(payload.delta)) {
-      return buildNativeAnthropicSseGuardFailure(
-        'unexpected_content_block_delta',
-        'upstream emitted Anthropic content delta without an open block'
-      );
-    }
-    return { ok: true };
-  }
-
-  if (eventType === 'content_block_stop') {
-    const index = readNumericIndex(payload.index);
-    if (index === undefined || !state.openBlocks.delete(index)) {
-      return buildNativeAnthropicSseGuardFailure(
-        'unexpected_content_block_stop',
-        'upstream emitted Anthropic content block stop without an open block'
-      );
-    }
-    return { ok: true };
-  }
-
-  if (eventType === 'message_stop') {
-    if (state.openBlocks.size > 0) {
-      return buildNativeAnthropicSseGuardFailure(
-        'unclosed_content_block',
-        'upstream ended Claude Code stream with an unclosed content block'
-      );
-    }
-    return { ok: true, releasesPending: true };
-  }
-
-  if (eventType === 'error') {
-    return { ok: true, releasesPending: true };
-  }
-
-  return { ok: true };
-}
-
-function* processNativeAnthropicSseFrames(
-  state: NativeAnthropicSseGuardState,
-  frames: Buffer[]
-): Generator<Buffer> {
-  for (const frame of frames) {
-    if (frame.length > NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES) {
-      throw new NativeAnthropicSseGuardError(
-        'sse_frame_too_large',
-        'upstream emitted an Anthropic SSE frame above the safety limit'
-      );
-    }
-
-    const validation = validateNativeAnthropicSseFrame(state, frame);
-    if (!validation.ok) {
-      throw new NativeAnthropicSseGuardError(validation.reason, validation.message);
-    }
-
-    if (state.released) {
-      yield frame;
-      continue;
-    }
-
-    state.pendingFrames.push(frame);
-    state.pendingBytes += frame.length;
-    if (state.pendingBytes > NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES) {
-      throw new NativeAnthropicSseGuardError(
-        'precommit_buffer_too_large',
-        'upstream did not emit a valid Anthropic content block before the safety limit'
-      );
-    }
-
-    if (validation.releasesPending) {
-      state.released = true;
-      const pendingFrames = state.pendingFrames;
-      state.pendingFrames = [];
-      state.pendingBytes = 0;
-      yield* pendingFrames;
-    }
-  }
-}
-
-function* processNativeAnthropicSseGuardChunk(
-  state: NativeAnthropicSseGuardState,
-  chunk: Buffer
-): Generator<Buffer> {
-  state.buffer = state.buffer.length ? Buffer.concat([state.buffer, chunk]) : chunk;
-  const frames: Buffer[] = [];
-
-  for (;;) {
-    const frameEnd = findSseFrameEnd(state.buffer);
-    if (frameEnd < 0) break;
-    frames.push(state.buffer.subarray(0, frameEnd));
-    state.buffer = state.buffer.subarray(frameEnd);
-  }
-
-  if (state.buffer.length > NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES) {
-    throw new NativeAnthropicSseGuardError(
-      'sse_frame_too_large',
-      'upstream emitted an Anthropic SSE frame above the safety limit'
-    );
-  }
-
-  yield* processNativeAnthropicSseFrames(state, frames);
-}
-
-function* flushNativeAnthropicSseGuard(state: NativeAnthropicSseGuardState): Generator<Buffer> {
-  const frames = state.buffer.length ? [state.buffer] : [];
-  state.buffer = Buffer.alloc(0);
-  yield* processNativeAnthropicSseFrames(state, frames);
-
-  if (state.openBlocks.size > 0) {
-    throw new NativeAnthropicSseGuardError(
-      'unclosed_content_block',
-      'upstream ended Claude Code stream with an unclosed content block'
-    );
-  }
-
-  if (!state.released) {
-    state.released = true;
-    const pendingFrames = state.pendingFrames;
-    state.pendingFrames = [];
-    state.pendingBytes = 0;
-    yield* pendingFrames;
-  }
-}
-
-function readStreamingValidationMessage(error: unknown): string {
-  return error instanceof NativeAnthropicSseGuardError ||
-    error instanceof StreamingProtocolValidationError
-    ? error.protocolMessage
-    : 'upstream emitted an invalid streaming response';
-}
-
-function readString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function readNumericIndex(value: unknown): number | undefined {
-  const index = Number(value);
-  return Number.isInteger(index) && index >= 0 ? index : undefined;
-}
-
-function isRetryableEmptyStreamingResponse(error: unknown): boolean {
-  return error instanceof Error && error.message === EMPTY_STREAMING_RESPONSE_ERROR;
-}
-
-function writeResponseChunk(res: http.ServerResponse, chunk: Buffer): Promise<void> {
-  if (res.destroyed || res.writableEnded) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      res.off('drain', onDrain);
-      res.off('error', onError);
-    };
-    const onDrain = () => {
-      cleanup();
-      resolve();
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-
-    res.once('error', onError);
-
-    try {
-      if (res.write(chunk)) {
-        cleanup();
-        resolve();
-        return;
-      }
-      res.once('drain', onDrain);
-    } catch (error: unknown) {
-      cleanup();
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
-}
-
 function summarizeTargetLockUpstreamBody(body: Buffer): string | undefined {
   return summarizeUpstreamFailureBodyRaw(body, 2000) || undefined;
 }
@@ -2149,7 +1366,9 @@ function writeTargetLockTerminalFailureResponse(
     body.startsWith('{') || body.startsWith('[')
       ? 'application/json; charset=utf-8'
       : 'text/plain; charset=utf-8';
-  res.writeHead(failure.statusCode ?? 502, { 'Content-Type': contentType });
+  writeRouteProxyErrorHead(res, failure.statusCode ?? 502, 'target_lock_terminal_failure', {
+    'Content-Type': contentType,
+  });
   res.end(body);
 }
 
@@ -2158,436 +1377,6 @@ function buildTargetLockUpstreamAttemptExhaustedErrorText(): string {
     TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
     'Endpoint-test target lock upstream attempt budget exhausted'
   );
-}
-
-type UpstreamAuthScheme = 'native' | 'bearer' | 'x-api-key';
-
-export function buildUpstreamHeaders(
-  incomingHeaders: http.IncomingHttpHeaders,
-  targetHost: string,
-  bodyLength: number,
-  apiKey: string,
-  cliType: RouteCliType,
-  authScheme: UpstreamAuthScheme = 'native'
-): Record<string, string | string[] | undefined> {
-  void cliType;
-  const forwardHeaders: Record<string, string | string[] | undefined> = {
-    ...incomingHeaders,
-    host: targetHost,
-    'content-length': String(bodyLength),
-  };
-
-  deleteAuthHeaders(forwardHeaders);
-  for (const headerName of Object.keys(forwardHeaders)) {
-    const normalizedHeaderName = headerName.toLowerCase();
-    if (
-      normalizedHeaderName === ROUTE_CLI_MARKER_HEADER ||
-      normalizedHeaderName.startsWith('x-api-detect-') ||
-      normalizedHeaderName.startsWith('x-grok-') ||
-      (cliType !== 'claudeCode' &&
-        (normalizedHeaderName === 'anthropic-version' || normalizedHeaderName === 'anthropic-beta'))
-    ) {
-      delete forwardHeaders[headerName];
-    }
-  }
-
-  if (authScheme === 'bearer') {
-    forwardHeaders.authorization = `Bearer ${apiKey}`;
-  } else if (authScheme === 'x-api-key' || (authScheme === 'native' && cliType === 'claudeCode')) {
-    forwardHeaders['x-api-key'] = apiKey;
-  } else {
-    forwardHeaders.authorization = `Bearer ${apiKey}`;
-  }
-
-  if (cliType === 'claudeCode' && !forwardHeaders['anthropic-version']) {
-    forwardHeaders['anthropic-version'] = '2023-06-01';
-  }
-
-  return forwardHeaders;
-}
-
-export function buildUpstreamRequestUrl(
-  targetBaseUrl: string,
-  requestUrl: string | undefined,
-  cliType: RouteCliType,
-  upstreamModel: string | undefined,
-  apiKey: string
-): { url: string; host: string } {
-  const target = new URL(targetBaseUrl);
-  void cliType;
-  void upstreamModel;
-  void apiKey;
-  const requestTarget = new URL(requestUrl || '/', 'http://127.0.0.1');
-  const baseSegments = target.pathname.split('/').filter(Boolean);
-  const requestSegments = requestTarget.pathname.split('/').filter(Boolean);
-  let overlap = Math.min(baseSegments.length, requestSegments.length);
-  while (
-    overlap > 0 &&
-    !baseSegments
-      .slice(baseSegments.length - overlap)
-      .every((segment, index) => segment === requestSegments[index])
-  ) {
-    overlap -= 1;
-  }
-  target.pathname = `/${[...baseSegments, ...requestSegments.slice(overlap)].join('/')}`;
-  for (const [name, value] of requestTarget.searchParams) target.searchParams.set(name, value);
-  target.hash = '';
-
-  return {
-    url: target.toString(),
-    host: target.host,
-  };
-}
-
-export interface RouteUsageStats {
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-  cachedTokens?: number;
-}
-
-const USAGE_SOURCE_KEYS = [
-  'prompt_tokens',
-  'promptTokens',
-  'input_tokens',
-  'inputTokens',
-  'promptTokenCount',
-  'inputTokenCount',
-  'completion_tokens',
-  'completionTokens',
-  'output_tokens',
-  'outputTokens',
-  'candidatesTokenCount',
-  'responseTokenCount',
-  'total_tokens',
-  'totalTokens',
-  'totalTokenCount',
-  'cache_creation_input_tokens',
-  'cacheCreationInputTokens',
-  'cache_creation',
-  'cacheCreation',
-  'claude_cache_creation_5_m_tokens',
-  'claude_cache_creation_1_h_tokens',
-  'cache_read_input_tokens',
-  'cacheReadInputTokens',
-  'cached_tokens',
-  'cachedTokens',
-  'cachedContentTokenCount',
-] as const;
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-
-  return undefined;
-}
-
-export function extractRouteReasoningEffort(bodyJson: unknown): string | undefined {
-  const body = asRecord(bodyJson);
-  if (!body) return undefined;
-
-  const outputConfig = asRecord(body.output_config);
-  const reasoning = asRecord(body.reasoning);
-  const explicitEffortCandidates = [
-    outputConfig?.effort,
-    reasoning?.effort,
-    body.reasoning_effort,
-    body.reasoningEffort,
-  ];
-
-  for (const candidate of explicitEffortCandidates) {
-    const effort = readString(candidate).trim();
-    if (effort) return effort;
-  }
-
-  const thinking = asRecord(body.thinking);
-  const thinkingType = readString(thinking?.type).trim().toLowerCase();
-  const thinkingEnabled = thinkingType === 'enabled' || thinkingType === 'adaptive';
-  if (!thinkingEnabled) return undefined;
-
-  const budgetTokens = toFiniteTokenNumber(thinking?.budget_tokens ?? thinking?.budgetTokens);
-  return budgetTokens !== undefined && budgetTokens > 0 ? `${budgetTokens} tokens` : '开启';
-}
-
-function toFiniteTokenNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-
-  return undefined;
-}
-
-function firstTokenNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    const parsed = toFiniteTokenNumber(value);
-    if (parsed !== undefined) {
-      return parsed;
-    }
-  }
-
-  return undefined;
-}
-
-function sumTokenNumbers(...values: unknown[]): number | undefined {
-  let total = 0;
-  let found = false;
-  for (const value of values) {
-    const parsed = toFiniteTokenNumber(value);
-    if (parsed !== undefined) {
-      total += parsed;
-      found = true;
-    }
-  }
-
-  return found ? total : undefined;
-}
-
-function hasUsageSourceKeys(record: Record<string, unknown>): boolean {
-  return USAGE_SOURCE_KEYS.some(key => key in record);
-}
-
-function sumTokenObjectValues(value: unknown): number | undefined {
-  const record = asRecord(value);
-  if (!record) {
-    return undefined;
-  }
-
-  let total = 0;
-  let found = false;
-  for (const [key, rawValue] of Object.entries(record)) {
-    if (!key.endsWith('_input_tokens') && !key.endsWith('InputTokens')) {
-      continue;
-    }
-
-    const numeric = toFiniteTokenNumber(rawValue);
-    if (numeric !== undefined) {
-      total += numeric;
-      found = true;
-    }
-  }
-
-  return found ? total : undefined;
-}
-
-function hasRouteUsageValues(usage: RouteUsageStats | undefined): usage is RouteUsageStats {
-  if (!usage) {
-    return false;
-  }
-
-  return (
-    usage.promptTokens !== undefined ||
-    usage.completionTokens !== undefined ||
-    usage.totalTokens !== undefined ||
-    usage.cacheCreationTokens !== undefined ||
-    usage.cacheReadTokens !== undefined ||
-    usage.cachedTokens !== undefined
-  );
-}
-
-function isAllZeroRouteUsage(usage: RouteUsageStats | undefined): usage is RouteUsageStats {
-  if (!hasRouteUsageValues(usage)) {
-    return false;
-  }
-
-  return [
-    usage.promptTokens,
-    usage.completionTokens,
-    usage.totalTokens,
-    usage.cacheCreationTokens,
-    usage.cacheReadTokens,
-    usage.cachedTokens,
-  ].every(value => value === undefined || value === 0);
-}
-
-function mergeRouteUsage(
-  current: RouteUsageStats | undefined,
-  next: RouteUsageStats | undefined
-): RouteUsageStats | undefined {
-  if (!hasRouteUsageValues(next)) {
-    return current;
-  }
-
-  const merged: RouteUsageStats = { ...(current || {}) };
-  for (const key of [
-    'promptTokens',
-    'completionTokens',
-    'totalTokens',
-    'cacheCreationTokens',
-    'cacheReadTokens',
-    'cachedTokens',
-  ] as const) {
-    if (next[key] !== undefined) {
-      merged[key] = next[key];
-    }
-  }
-
-  return merged;
-}
-
-function finalizeRouteUsage(usage: RouteUsageStats | undefined): RouteUsageStats | undefined {
-  if (!hasRouteUsageValues(usage)) {
-    return undefined;
-  }
-
-  if (usage.totalTokens !== undefined) {
-    return usage;
-  }
-
-  const hasAnyTokenValue =
-    usage.promptTokens !== undefined ||
-    usage.completionTokens !== undefined ||
-    usage.cacheCreationTokens !== undefined ||
-    usage.cacheReadTokens !== undefined;
-  if (!hasAnyTokenValue) {
-    return usage;
-  }
-
-  const cacheReadAddsToAnthropicInput =
-    usage.cacheReadTokens !== undefined && usage.cachedTokens === undefined;
-  return {
-    ...usage,
-    totalTokens:
-      (usage.promptTokens || 0) +
-      (usage.completionTokens || 0) +
-      (usage.cacheCreationTokens || 0) +
-      (cacheReadAddsToAnthropicInput ? usage.cacheReadTokens || 0 : 0),
-  };
-}
-
-function normalizeUsageSource(source: Record<string, unknown>): RouteUsageStats | undefined {
-  if (!hasUsageSourceKeys(source)) {
-    return undefined;
-  }
-
-  const promptDetails =
-    asRecord(source.prompt_tokens_details) ||
-    asRecord(source.promptTokensDetails) ||
-    asRecord(source.input_tokens_details) ||
-    asRecord(source.inputTokensDetails) ||
-    asRecord(source.input_token_details) ||
-    asRecord(source.inputTokenDetails);
-  const declaredCacheCreationTokens = firstTokenNumber(
-    source.cache_creation_input_tokens,
-    source.cacheCreationInputTokens
-  );
-  const cacheCreationBreakdownTokens = firstTokenNumber(
-    sumTokenNumbers(
-      source.claude_cache_creation_5_m_tokens,
-      source.claude_cache_creation_1_h_tokens
-    ),
-    sumTokenObjectValues(source.cache_creation),
-    sumTokenObjectValues(source.cacheCreation)
-  );
-  const cacheCreationTokens =
-    declaredCacheCreationTokens !== undefined && declaredCacheCreationTokens > 0
-      ? declaredCacheCreationTokens
-      : firstTokenNumber(cacheCreationBreakdownTokens, declaredCacheCreationTokens);
-  const cachedTokens = firstTokenNumber(
-    source.cached_tokens,
-    source.cachedTokens,
-    source.cachedContentTokenCount,
-    source.cached_content_token_count,
-    promptDetails?.cached_tokens,
-    promptDetails?.cachedTokens
-  );
-  const anthropicCacheReadTokens = firstTokenNumber(
-    source.cache_read_input_tokens,
-    source.cacheReadInputTokens
-  );
-
-  return {
-    promptTokens: firstTokenNumber(
-      source.prompt_tokens,
-      source.promptTokens,
-      source.input_tokens,
-      source.inputTokens,
-      source.promptTokenCount,
-      source.inputTokenCount
-    ),
-    completionTokens: firstTokenNumber(
-      source.completion_tokens,
-      source.completionTokens,
-      source.output_tokens,
-      source.outputTokens,
-      source.candidatesTokenCount,
-      source.responseTokenCount
-    ),
-    totalTokens: firstTokenNumber(source.total_tokens, source.totalTokens, source.totalTokenCount),
-    cacheCreationTokens,
-    cacheReadTokens: firstTokenNumber(anthropicCacheReadTokens, cachedTokens),
-    cachedTokens,
-  };
-}
-
-function extractUsageFromParsed(value: unknown, depth = 0): RouteUsageStats | undefined {
-  if (depth > 3) {
-    return undefined;
-  }
-
-  if (Array.isArray(value)) {
-    return value.reduce<RouteUsageStats | undefined>(
-      (current, item) => mergeRouteUsage(current, extractUsageFromParsed(item, depth + 1)),
-      undefined
-    );
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return undefined;
-  }
-
-  let usage = mergeRouteUsage(
-    undefined,
-    normalizeUsageSource(asRecord(record.usage) || asRecord(record.usageMetadata) || record)
-  );
-
-  for (const key of ['message', 'response', 'delta', 'data', 'event'] as const) {
-    usage = mergeRouteUsage(usage, extractUsageFromParsed(record[key], depth + 1));
-  }
-
-  return usage;
-}
-
-function extractUsageFromSseBody(bodyStr: string): RouteUsageStats | undefined {
-  let usage: RouteUsageStats | undefined;
-
-  for (const line of bodyStr.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) {
-      continue;
-    }
-
-    const payload = trimmed.slice('data:'.length).trim();
-    if (!payload || payload === '[DONE]') {
-      continue;
-    }
-
-    try {
-      usage = mergeRouteUsage(usage, extractUsageFromParsed(JSON.parse(payload)));
-    } catch {
-      /* ignore malformed stream chunk */
-    }
-  }
-
-  return finalizeRouteUsage(usage);
-}
-
-export function extractUsageFromBody(body: Buffer): RouteUsageStats | undefined {
-  const bodyStr = body.toString('utf-8');
-
-  try {
-    return finalizeRouteUsage(extractUsageFromParsed(JSON.parse(bodyStr)));
-  } catch {
-    return extractUsageFromSseBody(bodyStr);
-  }
 }
 
 function isUnsupportedTokenCountResponse(result: { statusCode: number; body: Buffer }): boolean {
@@ -2612,10 +1401,7 @@ function isUnsupportedTokenCountResponse(result: { statusCode: number; body: Buf
 }
 
 function writeTokenCountUnsupported(res: http.ServerResponse, reason: string): void {
-  res.writeHead(501, {
-    'Content-Type': 'application/json',
-    'X-Route-Proxy-Error': 'token_count_unsupported',
-  });
+  writeRouteProxyErrorHead(res, 501, 'token_count_unsupported');
   res.end(
     JSON.stringify({
       type: 'error',
@@ -2628,666 +1414,14 @@ function writeTokenCountUnsupported(res: http.ServerResponse, reason: string): v
   );
 }
 
-interface ForwardToUpstreamOptions {
-  upstreamProxyUrl?: string;
-  additionalHeaders?: Record<string, string>;
-  methodOverride?: string;
-  requestUrlOverride?: string;
-  upstreamCliType?: RouteCliType;
-  upstreamAuthScheme?: 'bearer' | 'x-api-key';
-  signal?: AbortSignal;
-  streamResponse?: http.ServerResponse;
-  streamResponseBody?: boolean;
-  streamResponseAdapter?: SourceProtocolResponseAdapter;
-  nativeResponsePassthrough?: boolean;
-  streamIdleTimeoutMs?: number;
-  beforeStreamCommit?: (bufferedBody: Buffer) => Promise<void>;
-  onUpstreamAttempt?: () => void;
-  onStreamCompletionDelivered?: () => void;
-}
-
-/** 转发请求到上游（不直接写 res，返回结果由调用者决定是否透传） */
-async function forwardToUpstream(
-  req: http.IncomingMessage,
-  targetBaseUrl: string,
-  apiKey: string,
-  bodyBuffer: Buffer,
-  cliType: RouteCliType,
-  timeoutMs: number,
-  upstreamModel?: string,
-  options: ForwardToUpstreamOptions = {}
-): Promise<{
-  statusCode: number;
-  headers: http.IncomingHttpHeaders;
-  body: Buffer;
-  latencyMs: number;
-  firstByteLatencyMs?: number;
-  usage?: RouteUsageStats;
-  streamed?: boolean;
-  semanticError?: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
-  /** 原生 Anthropic 流已提交但上游未发终止事件；仅影响记账，不改变下游字节 */
-  missingTerminalEvent?: boolean;
-}> {
-  const startTime = Date.now();
-  const upstreamCliType = options.upstreamCliType ?? cliType;
-  const requestUrl = options.requestUrlOverride ?? req.url;
-  const target = buildUpstreamRequestUrl(
-    targetBaseUrl,
-    requestUrl,
-    upstreamCliType,
-    upstreamModel,
-    apiKey
-  );
-  const forwardHeaders = buildUpstreamHeaders(
-    req.headers,
-    target.host,
-    bodyBuffer.length,
-    apiKey,
-    upstreamCliType,
-    options.upstreamAuthScheme === 'x-api-key'
-      ? 'x-api-key'
-      : options.upstreamAuthScheme === 'bearer'
-        ? 'bearer'
-        : upstreamCliType === 'claudeCode'
-          ? 'x-api-key'
-          : 'bearer'
-  );
-
-  // 合并额外的请求头（如 AnyRouter 改写添加的 anthropic-beta）
-  if (options.additionalHeaders) {
-    Object.assign(forwardHeaders, options.additionalHeaders);
-  }
-
-  const requestConfig = {
-    method: options.methodOverride ?? req.method ?? 'GET',
-    headers: compactHeaders(forwardHeaders),
-    body: bodyBuffer,
-    timeout: timeoutMs,
-    proxyUrl: options.upstreamProxyUrl,
-    preferElectronNet: true,
-    signal: options.signal,
-  };
-
-  let streamed = false;
-  let streamingStatusCode: number | undefined;
-  let streamingHeaders: http.OutgoingHttpHeaders | undefined;
-  let streamingRejectedBeforeBody: string | undefined;
-  let receivedUpstreamStreamingChunk = false;
-  const initialStreamingBuffer = Buffer.alloc(INITIAL_STREAM_VALIDATION_MAX_BYTES + 1);
-  let initialStreamingBytes = 0;
-  let pendingStreamingChunks: Buffer[] = [];
-  let pendingStreamingBytes = 0;
-  const streamingResponsePreview = Buffer.alloc(INITIAL_STREAM_VALIDATION_MAX_BYTES);
-  let streamingResponsePreviewBytes = 0;
-  const incrementalValidationBuffer = new IncrementalSseFrameBuffer(
-    STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES
-  );
-  let initialStreamAccepted = false;
-  const incrementalProtocolTransformer = options.streamResponseAdapter?.sourceProtocol
-    ? new IncrementalProtocolSseTransformer({
-        sourceProtocol: options.streamResponseAdapter.sourceProtocol,
-        targetProtocol: options.streamResponseAdapter.targetProtocol,
-        model: options.streamResponseAdapter.model,
-      })
-    : null;
-  const streamingTerminalProtocol = incrementalProtocolTransformer
-    ? getStreamingTerminalProtocolForWireProtocol(options.streamResponseAdapter!.sourceProtocol!)
-    : getStreamingTerminalProtocol(requestUrl);
-  const anthropicStreamNormalizer =
-    !options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
-      ? createAnthropicSseCompatibilityNormalizer()
-      : null;
-  const nativeAnthropicStreamGuard =
-    options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
-      ? createNativeAnthropicSseGuard()
-      : null;
-  const incrementalStreamingValidator =
-    streamingTerminalProtocol !== 'none' &&
-    (!options.nativeResponsePassthrough || streamingTerminalProtocol === 'openaiResponses')
-      ? createIncrementalStreamingValidator(streamingTerminalProtocol, {
-          strict: !options.nativeResponsePassthrough,
-          extractUsage: extractUsageFromParsed,
-        })
-      : null;
-  const strictIncrementalValidation = Boolean(
-    incrementalStreamingValidator && !options.nativeResponsePassthrough
-  );
-  const streamingObservation = createStreamingSseObservationState(streamingTerminalProtocol);
-  let streamingErrorWritten = false;
-  let streamingCompletionNotified = false;
-  let streamingSemanticError: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE | undefined;
-  const inspectNativeOpenAiResponsesBeforeCommit =
-    options.nativeResponsePassthrough && streamingTerminalProtocol === 'openaiResponses';
-  // 原生 Anthropic 是唯一没有增量校验器的透传组合，提交时机改由窗口控制。
-  const nativeAnthropicDeferredCommit = Boolean(
-    options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
-  );
-  let nativeAnthropicCommitTimer: NodeJS.Timeout | null = null;
-  let nativeAnthropicCommitDeadlineReached = false;
-  let nativeAnthropicMissingTerminal = false;
-  // 定时器与 onChunk 是两条独立调用链，共用一条写入队列避免字节交错。
-  let streamWriteChain: Promise<void> = Promise.resolve();
-  const serializeStreamWrite = <T>(operation: () => Promise<T>): Promise<T> => {
-    const next = streamWriteChain.then(operation);
-    streamWriteChain = next.then(
-      () => undefined,
-      () => undefined
-    );
-    return next;
-  };
-  const clearNativeAnthropicCommitTimer = (): void => {
-    if (!nativeAnthropicCommitTimer) return;
-    clearTimeout(nativeAnthropicCommitTimer);
-    nativeAnthropicCommitTimer = null;
-  };
-  const isStreamingErrorSeen = (): boolean =>
-    streamingErrorWritten ||
-    (incrementalStreamingValidator
-      ? incrementalStreamingValidator.getState().errorSeen
-      : streamingObservation.errorSeen);
-  const isStreamingTerminalSeen = (): boolean =>
-    incrementalStreamingValidator
-      ? incrementalStreamingValidator.getState().terminalSeen
-      : streamingObservation.terminalSeen;
-  const getStreamingFailureCode = (): string | undefined =>
-    incrementalStreamingValidator
-      ? incrementalStreamingValidator.getState().failureCode
-      : streamingObservation.failureCode;
-  const getStreamingNextSequenceNumber = (): number =>
-    incrementalStreamingValidator
-      ? incrementalStreamingValidator.getState().nextSequenceNumber
-      : streamingObservation.nextSequenceNumber;
-  const isStreamingCompletionValidated = (): boolean => {
-    const state = incrementalStreamingValidator?.getState();
-    return Boolean(
-      state?.terminalSeen && !state.errorSeen && state.completedValidation?.ok === true
-    );
-  };
-
-  const writeStreamingError = async (
-    message: string,
-    anthropicErrorType: 'api_error' | 'overloaded_error' = 'api_error'
-  ): Promise<void> => {
-    if (
-      !streamed ||
-      isStreamingErrorSeen() ||
-      options.streamResponse?.writableEnded ||
-      options.streamResponse?.destroyed
-    ) {
-      return;
-    }
-
-    streamingErrorWritten = true;
-    await writeResponseChunk(
-      options.streamResponse!,
-      buildStreamingErrorChunk(
-        streamingTerminalProtocol,
-        message,
-        getStreamingNextSequenceNumber(),
-        anthropicErrorType
-      )
-    );
-  };
-
-  const notifyStreamCompletionIfDelivered = (): void => {
-    if (streamingCompletionNotified || streamingSemanticError) return;
-    const state = incrementalStreamingValidator?.getState();
-    const completionDelivered = options.nativeResponsePassthrough
-      ? (state?.terminalSeen ?? streamingObservation.terminalSeen) &&
-        !(state?.errorSeen ?? streamingObservation.errorSeen)
-      : isStreamingCompletionValidated();
-    if (!completionDelivered) return;
-    streamingCompletionNotified = true;
-    options.onStreamCompletionDelivered?.();
-  };
-
-  const appendStreamingPreview = (chunk: Buffer): void => {
-    const previewBytesRemaining =
-      INITIAL_STREAM_VALIDATION_MAX_BYTES - streamingResponsePreviewBytes;
-    if (previewBytesRemaining > 0) {
-      const previewBytes = Math.min(previewBytesRemaining, chunk.length);
-      chunk.copy(streamingResponsePreview, streamingResponsePreviewBytes, 0, previewBytes);
-      streamingResponsePreviewBytes += previewBytes;
-    }
-  };
-
-  const commitPendingStreamingChunks = async (): Promise<void> => {
-    if (
-      streamed ||
-      streamingSemanticError ||
-      !initialStreamAccepted ||
-      !streamingStatusCode ||
-      !streamingHeaders ||
-      pendingStreamingChunks.length === 0
-    ) {
-      return;
-    }
-
-    if (options.beforeStreamCommit) {
-      const bufferedBody =
-        pendingStreamingChunks.length === 1
-          ? pendingStreamingChunks[0]
-          : Buffer.concat(pendingStreamingChunks, pendingStreamingBytes);
-      await options.beforeStreamCommit(bufferedBody);
-    }
-    streamed = true;
-    options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
-    const chunksToWrite = pendingStreamingChunks;
-    pendingStreamingChunks = [];
-    pendingStreamingBytes = 0;
-    for (const pendingChunk of chunksToWrite) {
-      await writeResponseChunk(options.streamResponse!, pendingChunk);
-    }
-    notifyStreamCompletionIfDelivered();
-  };
-
-  const shouldCommitNativeAnthropicWindow = (): boolean =>
-    nativeAnthropicCommitDeadlineReached ||
-    pendingStreamingBytes >= NATIVE_ANTHROPIC_SSE_COMMIT_BYTES ||
-    pendingStreamingBytes >= NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES ||
-    streamingObservation.terminalSeen ||
-    streamingObservation.errorSeen;
-
-  const ensureNativeAnthropicCommitTimer = (): void => {
-    if (nativeAnthropicCommitTimer || nativeAnthropicCommitDeadlineReached || streamed) return;
-    nativeAnthropicCommitTimer = setTimeout(() => {
-      nativeAnthropicCommitTimer = null;
-      nativeAnthropicCommitDeadlineReached = true;
-      void serializeStreamWrite(() => commitPendingStreamingChunks()).catch(() => undefined);
-    }, NATIVE_ANTHROPIC_SSE_COMMIT_DELAY_MS);
-    nativeAnthropicCommitTimer.unref?.();
-  };
-
-  const queueOrWriteStreamingChunk = async (
-    outgoingChunk: Buffer,
-    deferCommit: boolean
-  ): Promise<void> => {
-    if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
-    if (streamingSemanticError) return;
-    appendStreamingPreview(outgoingChunk);
-
-    if (streamed) {
-      await writeResponseChunk(options.streamResponse!, outgoingChunk);
-      notifyStreamCompletionIfDelivered();
-      return;
-    }
-
-    pendingStreamingChunks.push(outgoingChunk);
-    pendingStreamingBytes += outgoingChunk.length;
-    const initialBytesRemaining = initialStreamingBuffer.length - initialStreamingBytes;
-    if (initialBytesRemaining > 0) {
-      const initialBytes = Math.min(initialBytesRemaining, outgoingChunk.length);
-      outgoingChunk.copy(initialStreamingBuffer, initialStreamingBytes, 0, initialBytes);
-      initialStreamingBytes += initialBytes;
-    }
-    const initialStreamingView = initialStreamingBuffer.subarray(0, initialStreamingBytes);
-    const initialValidation = validateInitialEventStreamChunk(initialStreamingView);
-    if (initialValidation.status === 'rejected') {
-      throw new Error(`invalid_streaming_response:${initialValidation.reason}`);
-    }
-    if (initialValidation.status === 'pending') return;
-    initialStreamAccepted = true;
-
-    if (inspectNativeOpenAiResponsesBeforeCommit) {
-      const state = incrementalStreamingValidator!.getState();
-      const outputSeen =
-        state.outputSeen || hasNativeResponsesOutputBeforeFrameBoundary(initialStreamingView);
-      if (state.terminalSeen && !state.errorSeen && state.explicitZeroUsage && !outputSeen) {
-        streamingSemanticError = EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
-        pendingStreamingChunks = [];
-        pendingStreamingBytes = 0;
-        return;
-      }
-      if (
-        !outputSeen &&
-        !state.terminalSeen &&
-        pendingStreamingBytes < NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES
-      ) {
-        return;
-      }
-    }
-
-    if (nativeAnthropicDeferredCommit && !shouldCommitNativeAnthropicWindow()) {
-      ensureNativeAnthropicCommitTimer();
-      return;
-    }
-
-    if (deferCommit && pendingStreamingBytes < NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES) {
-      return;
-    }
-    await commitPendingStreamingChunks();
-  };
-
-  const validateOutgoingFrame = async (frame: Buffer): Promise<void> => {
-    try {
-      incrementalStreamingValidator!.push(frame);
-      const completedValidation = incrementalStreamingValidator!.getState().completedValidation;
-      if (completedValidation && !completedValidation.ok) {
-        throw new StreamingProtocolValidationError(
-          completedValidation.reason,
-          completedValidation.message
-        );
-      }
-    } catch (error: unknown) {
-      if (streamed && error instanceof StreamingProtocolValidationError) {
-        await writeStreamingError(readStreamingValidationMessage(error));
-      }
-      throw error;
-    }
-  };
-
-  const processStreamingOutgoingChunks = async (
-    outgoingChunks: Iterable<Buffer>
-  ): Promise<void> => {
-    for (const outgoingChunk of outgoingChunks) {
-      if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) continue;
-
-      if (strictIncrementalValidation) {
-        try {
-          for (const frame of incrementalValidationBuffer.push(outgoingChunk)) {
-            await validateOutgoingFrame(frame);
-            await queueOrWriteStreamingChunk(frame, true);
-          }
-        } catch (error: unknown) {
-          if (streamed && error instanceof StreamingProtocolValidationError) {
-            await writeStreamingError(readStreamingValidationMessage(error));
-          }
-          throw error;
-        }
-        if (
-          !streamed &&
-          initialStreamAccepted &&
-          pendingStreamingBytes >= NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES
-        ) {
-          await commitPendingStreamingChunks();
-        }
-        continue;
-      }
-
-      if (incrementalStreamingValidator) {
-        incrementalStreamingValidator.push(outgoingChunk);
-      } else {
-        observeStreamingSseChunk(streamingObservation, streamingTerminalProtocol, outgoingChunk);
-      }
-      await queueOrWriteStreamingChunk(outgoingChunk, false);
-    }
-
-    if (strictIncrementalValidation) {
-      await commitPendingStreamingChunks();
-    }
-  };
-
-  let response: Awaited<ReturnType<typeof httpRawRequest>>;
-  try {
-    options.onUpstreamAttempt?.();
-    response =
-      options.streamResponse && options.streamResponseBody
-        ? await httpRawStreamRequest(target.url, {
-            ...requestConfig,
-            ...(!options.nativeResponsePassthrough ? { retainStreamedBody: false } : {}),
-            onResponse: upstreamResponse => {
-              const statusCode = upstreamResponse.status || 500;
-              if (classifyRouteStatusCode(statusCode) !== 'success') return false;
-              if (!isEventStreamResponse(upstreamResponse.headers)) {
-                streamingRejectedBeforeBody = 'unexpected_content_type';
-                return false;
-              }
-
-              streamingStatusCode = statusCode;
-              streamingHeaders = buildStreamingResponseHeaders(upstreamResponse.headers);
-              return true;
-            },
-            onChunk: async chunk => {
-              if (!streamingStatusCode || !streamingHeaders || !chunk.length) return;
-              receivedUpstreamStreamingChunk = true;
-              try {
-                const outgoingChunks = incrementalProtocolTransformer
-                  ? incrementalProtocolTransformer.transform(chunk)
-                  : nativeAnthropicStreamGuard
-                    ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
-                    : anthropicStreamNormalizer
-                      ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
-                      : [chunk];
-                await serializeStreamWrite(() => processStreamingOutgoingChunks(outgoingChunks));
-              } catch (error: unknown) {
-                if (streamed && error instanceof NativeAnthropicSseGuardError) {
-                  await writeStreamingError(readStreamingValidationMessage(error));
-                }
-                throw error;
-              }
-            },
-            streamIdleTimeout: options.streamIdleTimeoutMs,
-            shouldResolveOnAbort: () =>
-              !options.nativeResponsePassthrough && streamed && isStreamingCompletionValidated(),
-          })
-        : await httpRawRequest(target.url, requestConfig);
-  } catch (error: unknown) {
-    clearNativeAnthropicCommitTimer();
-    if (!incrementalStreamingValidator) {
-      observeStreamingSseChunk(
-        streamingObservation,
-        streamingTerminalProtocol,
-        Buffer.alloc(0),
-        true
-      );
-    }
-    const upstreamFailureCode = getStreamingFailureCode();
-    if (upstreamFailureCode) {
-      throw new Error(`upstream_streaming_error:${upstreamFailureCode}`);
-    }
-    if (
-      streamed &&
-      !options.signal?.aborted &&
-      !isStreamingErrorSeen() &&
-      !isStreamingTerminalSeen()
-    ) {
-      await writeStreamingError('upstream stream terminated unexpectedly');
-    }
-    throw error;
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamingStatusCode !== undefined &&
-    !receivedUpstreamStreamingChunk
-  ) {
-    throw new Error(EMPTY_STREAMING_RESPONSE_ERROR);
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamingStatusCode !== undefined &&
-    anthropicStreamNormalizer
-  ) {
-    await processStreamingOutgoingChunks([
-      flushAnthropicSseCompatibilityNormalizer(anthropicStreamNormalizer),
-    ]);
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamingStatusCode !== undefined &&
-    nativeAnthropicStreamGuard
-  ) {
-    try {
-      await processStreamingOutgoingChunks(
-        flushNativeAnthropicSseGuard(nativeAnthropicStreamGuard)
-      );
-    } catch (error: unknown) {
-      if (streamed && error instanceof NativeAnthropicSseGuardError) {
-        await writeStreamingError(readStreamingValidationMessage(error));
-      }
-      throw error;
-    }
-  }
-
-  // 原生 Anthropic 收尾：窗口内截断丢弃缓冲交给下一个通道，窗口外截断只能补一个可重试错误。
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamingStatusCode !== undefined &&
-    nativeAnthropicDeferredCommit
-  ) {
-    clearNativeAnthropicCommitTimer();
-    observeStreamingSseChunk(
-      streamingObservation,
-      streamingTerminalProtocol,
-      Buffer.alloc(0),
-      true
-    );
-
-    if (streamingObservation.terminalSeen || streamingObservation.errorSeen) {
-      // 流已完整或上游已明确报错：不再等窗口到期。
-      await serializeStreamWrite(() => commitPendingStreamingChunks());
-    } else if (!streamed) {
-      pendingStreamingChunks = [];
-      pendingStreamingBytes = 0;
-      throw new Error(NATIVE_STREAM_MISSING_TERMINAL_ERROR);
-    } else {
-      // 字节已发出无法撤回：补一个官方定义的可重试错误，让客户端换通道重来。
-      nativeAnthropicMissingTerminal = true;
-      await serializeStreamWrite(() =>
-        writeStreamingError('upstream stream ended before terminal SSE event', 'overloaded_error')
-      );
-    }
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamingStatusCode !== undefined &&
-    incrementalProtocolTransformer
-  ) {
-    try {
-      await processStreamingOutgoingChunks(incrementalProtocolTransformer.finish());
-    } catch (error: unknown) {
-      const upstreamFailureCode = getStreamingFailureCode();
-      if (upstreamFailureCode) {
-        throw new Error(`upstream_streaming_error:${upstreamFailureCode}`);
-      }
-      if (
-        streamed &&
-        !options.signal?.aborted &&
-        !isStreamingErrorSeen() &&
-        !isStreamingTerminalSeen()
-      ) {
-        await writeStreamingError(readStreamingValidationMessage(error));
-      }
-      throw error;
-    }
-  }
-
-  if (strictIncrementalValidation && incrementalValidationBuffer.hasTail) {
-    const tail = incrementalValidationBuffer.takeTail();
-    try {
-      incrementalStreamingValidator!.push(tail);
-    } catch (error: unknown) {
-      if (streamed && error instanceof StreamingProtocolValidationError) {
-        await writeStreamingError(readStreamingValidationMessage(error));
-      }
-      throw error;
-    }
-  }
-
-  const completedStreamingValidation =
-    streamingStatusCode !== undefined ? incrementalStreamingValidator?.finish() : undefined;
-  if (streamingStatusCode !== undefined && !incrementalStreamingValidator) {
-    observeStreamingSseChunk(
-      streamingObservation,
-      streamingTerminalProtocol,
-      Buffer.alloc(0),
-      true
-    );
-  }
-
-  const upstreamStreamingFailureCode = getStreamingFailureCode();
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamed &&
-    upstreamStreamingFailureCode
-  ) {
-    throw new Error(`upstream_streaming_error:${upstreamStreamingFailureCode}`);
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamingStatusCode !== undefined &&
-    completedStreamingValidation &&
-    !completedStreamingValidation.ok &&
-    !(options.nativeResponsePassthrough && streamingSemanticError && !streamed)
-  ) {
-    const missingTerminal = [
-      'missing_message_stop',
-      'missing_response_terminal',
-      'missing_chat_done',
-    ].includes(completedStreamingValidation.reason);
-    const preservesNativeZeroUsageReason =
-      options.nativeResponsePassthrough &&
-      streamingTerminalProtocol === 'openaiResponses' &&
-      completedStreamingValidation.reason === 'empty_response_zero_usage';
-    const error = missingTerminal
-      ? 'incomplete_streaming_response:missing_terminal_event'
-      : preservesNativeZeroUsageReason
-        ? 'empty_response_zero_usage'
-        : `malformed_streaming_response:${completedStreamingValidation.reason}`;
-    await writeStreamingError(
-      missingTerminal
-        ? 'upstream stream ended before terminal SSE event'
-        : completedStreamingValidation.message
-    );
-    throw new Error(error);
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    classifyRouteStatusCode(response.status || 500) === 'success' &&
-    !streamed
-  ) {
-    if (streamingRejectedBeforeBody) {
-      throw new Error(`invalid_streaming_response:${streamingRejectedBeforeBody}`);
-    }
-
-    const validation = validateInitialEventStreamChunk(response.body);
-    if (validation.status !== 'accepted') {
-      const reason =
-        validation.status === 'rejected'
-          ? validation.reason
-          : response.body.length
-            ? 'malformed_sse_response'
-            : 'empty_streaming_response';
-      throw new Error(`invalid_streaming_response:${reason}`);
-    }
-  }
-
-  const streamedUsage =
-    streamed && incrementalStreamingValidator && !options.nativeResponsePassthrough
-      ? finalizeRouteUsage(incrementalStreamingValidator.getUsage())
-      : undefined;
-  const responseBody =
-    streamed && incrementalStreamingValidator && !options.nativeResponsePassthrough
-      ? streamingResponsePreview.subarray(0, streamingResponsePreviewBytes)
-      : response.body;
-
-  clearNativeAnthropicCommitTimer();
-
-  return {
-    statusCode: response.status || 500,
-    headers: response.headers,
-    body: responseBody,
-    latencyMs: Date.now() - startTime,
-    firstByteLatencyMs: response.firstByteLatencyMs,
-    usage: streamedUsage ?? extractUsageFromBody(response.body),
-    streamed,
-    semanticError: streamingSemanticError,
-    missingTerminalEvent: nativeAnthropicMissingTerminal,
-  };
+function writeRouteProxyJsonError(
+  res: http.ServerResponse,
+  statusCode: number,
+  error: string,
+  message: string
+): void {
+  writeRouteProxyErrorHead(res, statusCode, error);
+  res.end(JSON.stringify({ error, message }));
 }
 
 function areAllRoutePathsDisabled(channels: ResolvedChannel[]): boolean {
@@ -3299,7 +1433,7 @@ function buildAllRoutePathsDisabledErrorBody(cliType: RouteCliType): unknown {
     return {
       type: 'error',
       error: {
-        type: 'invalid_request_error',
+        type: 'overloaded_error',
         message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
       },
     };
@@ -3308,18 +1442,44 @@ function buildAllRoutePathsDisabledErrorBody(cliType: RouteCliType): unknown {
   return {
     error: {
       message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
-      type: 'invalid_request_error',
+      type: 'server_error',
       param: null,
       code: ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
     },
   };
 }
 
-function writeAllRoutePathsDisabledResponse(res: http.ServerResponse, cliType: RouteCliType): void {
-  res.writeHead(ALL_ROUTE_PATHS_DISABLED_STATUS_CODE, {
-    'Content-Type': 'application/json',
-    'X-Route-Proxy-Error': ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
-  });
+function resolveRoutePathsRetryAfterSeconds(channels: ResolvedChannel[]): number | undefined {
+  const now = Date.now();
+  const earliest = channels
+    .map(channel => getRoutePathDisabledUntil(channel, now))
+    .filter((until): until is number => until !== undefined)
+    .reduce<number | undefined>(
+      (min, until) => (min === undefined ? until : Math.min(min, until)),
+      undefined
+    );
+  if (earliest === undefined) return undefined;
+  return Math.min(
+    Math.max(1, Math.ceil((earliest - now) / 1000)),
+    ALL_ROUTE_PATHS_DISABLED_RETRY_AFTER_MAX_SECONDS
+  );
+}
+
+function writeAllRoutePathsDisabledResponse(
+  res: http.ServerResponse,
+  cliType: RouteCliType,
+  channels: ResolvedChannel[]
+): void {
+  const retryAfterSeconds = resolveRoutePathsRetryAfterSeconds(channels);
+  writeRouteProxyErrorHead(
+    res,
+    ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
+    ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
+    {
+      ...JSON_RESPONSE_HEADERS,
+      ...(retryAfterSeconds !== undefined ? { 'Retry-After': String(retryAfterSeconds) } : {}),
+    }
+  );
   res.end(JSON.stringify(buildAllRoutePathsDisabledErrorBody(cliType)));
 }
 
@@ -3351,10 +1511,11 @@ function writeUpstreamTemporarilyUnavailableResponse(
   res: http.ServerResponse,
   cliType: RouteCliType
 ): void {
-  res.writeHead(UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE, {
-    'Content-Type': 'application/json',
-    'X-Route-Proxy-Error': UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
-  });
+  writeRouteProxyErrorHead(
+    res,
+    UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE,
+    UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE
+  );
   res.end(JSON.stringify(buildUpstreamTemporarilyUnavailableErrorBody(cliType)));
 }
 
@@ -3379,9 +1540,9 @@ function writeRequestFatalPassthroughResponse(
   const body =
     upstreamBody ?? Buffer.from(JSON.stringify(buildRetainedFailureErrorBody(failure.summary)));
 
-  res.writeHead(failure.statusCode ?? 400, {
+  writeRouteProxyErrorHead(res, failure.statusCode ?? 400, 'request_fatal_passthrough', {
     ...buildBufferedResponseHeaders(upstreamBody ? (failure.headers ?? {}) : {}, body),
-    ...(upstreamBody ? {} : { 'Content-Type': 'application/json' }),
+    ...(upstreamBody ? {} : JSON_RESPONSE_HEADERS),
     'X-Route-Proxy-Attempts': String(attempts),
     'X-Route-Proxy-Failure-Class': failure.failureClass,
   });
@@ -3391,7 +1552,7 @@ function writeRequestFatalPassthroughResponse(
 /**
  * 其余所有上游失败都被路由吸收为可重试的 503：单个上游错误不得终止客户端对话。
  * 真实成因保留在 message、路由日志与诊断响应头中，不透传上游状态码与响应体。
- * 通道健康度会随失败累积，最终由 all_route_paths_disabled(400) 终止对话。
+ * 通道健康度会随失败累积，最终由 all_route_paths_disabled(503 + Retry-After) 让客户端退避。
  */
 function writeAbsorbedUpstreamFailureResponse(
   res: http.ServerResponse,
@@ -3403,151 +1564,311 @@ function writeAbsorbedUpstreamFailureResponse(
     ? `${UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE} (${failure.summary})`
     : UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE;
 
-  res.writeHead(UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE, {
-    'Content-Type': 'application/json',
-    'X-Route-Proxy-Error': UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
-    'X-Route-Proxy-Attempts': String(attempts),
-    'X-Route-Proxy-Failure-Class': failure.failureClass,
-    ...(failure.statusCode !== undefined
-      ? { 'X-Route-Proxy-Upstream-Status': String(failure.statusCode) }
-      : {}),
-  });
+  writeRouteProxyErrorHead(
+    res,
+    UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE,
+    UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
+    {
+      ...JSON_RESPONSE_HEADERS,
+      'X-Route-Proxy-Attempts': String(attempts),
+      'X-Route-Proxy-Failure-Class': failure.failureClass,
+      ...(failure.statusCode !== undefined
+        ? { 'X-Route-Proxy-Upstream-Status': String(failure.statusCode) }
+        : {}),
+    }
+  );
   res.end(JSON.stringify(buildUpstreamTemporarilyUnavailableErrorBody(cliType, message)));
+}
+
+interface PreparedUpstreamRequest {
+  finalBody: Buffer;
+  additionalHeaders: Record<string, string>;
+  methodOverride?: string;
+  requestUrlOverride?: string;
+  upstreamCliType: RouteCliType;
+  responseAdapter: AnyRouterResponseAdapter;
+  protocolResponseAdapters: CliProtocolResponseAdapter[];
+  /** 覆写后请求体里实际生效的思考强度 */
+  reasoningEffort?: string;
+}
+
+interface UpstreamRequestAdaptFailure {
+  stage: string;
+  reason: string;
+}
+
+/**
+ * 单次尝试的请求改写：model 重写 → AnyRouter 站点改写或跨协议适配 → 思考强度覆写。
+ * 适配失败返回 { stage, reason }，由调用方决定记账与是否换通道。
+ */
+function prepareUpstreamRequest(input: {
+  req: http.IncomingMessage;
+  bodyBuffer: Buffer;
+  channel: ResolvedChannel;
+  site: ReturnType<typeof unifiedConfigManager.getSiteById>;
+  account: ReturnType<typeof unifiedConfigManager.getAccountById>;
+  sourceProtocol: ConcreteCliTargetProtocol;
+  upstreamProtocol: ConcreteCliTargetProtocol;
+  sourceAdapterCliType: RouteCliType;
+  requestIsTokenCount: boolean;
+  selectedThinkingEffort: RouteThinkingEffort;
+}): PreparedUpstreamRequest | UpstreamRequestAdaptFailure {
+  const { req, channel, site, account, sourceProtocol, upstreamProtocol, sourceAdapterCliType } =
+    input;
+  const prepared: PreparedUpstreamRequest = {
+    finalBody: channel.resolvedModel
+      ? rewriteRequestModel(input.bodyBuffer, channel.resolvedModel)
+      : input.bodyBuffer,
+    additionalHeaders: {},
+    upstreamCliType: getAdapterCliTypeForProtocol(upstreamProtocol),
+    responseAdapter: { type: 'transparent' },
+    protocolResponseAdapters: [],
+  };
+
+  // 站点级特殊处理：AnyRouter 仅在同协议透传时保留，其余显式 targetProtocol 走通用适配
+  if (
+    !input.requestIsTokenCount &&
+    site &&
+    account &&
+    isAnyRouterSite(site.name) &&
+    sourceProtocol === upstreamProtocol
+  ) {
+    const userHash = account.anyRouterConfig?.userHash;
+    if (!userHash && sourceAdapterCliType === 'claudeCode') {
+      log.warn(`[AnyRouter] Account ${account.account_name} missing userHash configuration`);
+    }
+    const rewritten = rewriteForAnyRouter(
+      prepared.finalBody,
+      userHash,
+      req.headers,
+      sourceAdapterCliType,
+      req.url,
+      channel.resolvedModel
+    );
+    prepared.finalBody = rewritten.body;
+    prepared.additionalHeaders = rewritten.headers;
+    prepared.requestUrlOverride = rewritten.upstreamPath;
+    prepared.upstreamCliType = rewritten.upstreamCliType;
+    prepared.responseAdapter = rewritten.responseAdapter;
+  } else if (!input.requestIsTokenCount && sourceProtocol !== upstreamProtocol) {
+    try {
+      const rewritten = adaptRequestToTargetProtocol(
+        prepared.finalBody,
+        sourceAdapterCliType,
+        upstreamProtocol,
+        req.url,
+        channel.resolvedModel,
+        sourceProtocol
+      );
+      prepared.finalBody = rewritten.body;
+      prepared.additionalHeaders = { ...rewritten.headers };
+      prepared.methodOverride = rewritten.upstreamMethod;
+      prepared.requestUrlOverride = rewritten.upstreamPath;
+      prepared.upstreamCliType = rewritten.upstreamCliType;
+      prepared.protocolResponseAdapters.push(rewritten.responseAdapter);
+    } catch (err: unknown) {
+      const isAdapterError = err instanceof CliProtocolAdapterError;
+      return {
+        stage: isAdapterError ? err.stage : 'request-adapt',
+        reason: isAdapterError ? err.reason : err instanceof Error ? err.message : 'unknown_error',
+      };
+    }
+  }
+
+  prepared.finalBody = applyRouteThinkingEffortOverride(
+    prepared.finalBody,
+    input.selectedThinkingEffort,
+    upstreamProtocol
+  );
+  try {
+    prepared.reasoningEffort = extractRouteReasoningEffort(
+      JSON.parse(prepared.finalBody.toString('utf-8'))
+    );
+  } catch {
+    /* 非 JSON 请求体：保留调用方原有的 reasoningEffort */
+  }
+  return prepared;
+}
+
+interface RuleRoutePlanInput {
+  ctx: RouteRequestContext;
+  res: http.ServerResponse;
+  routing: RoutingConfig;
+  cliType: RouteCliType;
+  sourceProtocol: ConcreteCliTargetProtocol;
+  canonicalModel: string | null;
+  rawModel: string | null;
+  reasoningEffort: RouteThinkingEffort;
+  routeInstance: RouteInstance | null;
+  hasRouteProfile: boolean;
+  sessionRouting: RouteSessionRoutingConfig;
+  nativePassthroughChannels: WeakSet<ResolvedChannel>;
+}
+
+interface RuleRoutePlan {
+  routeRuleId: string;
+  routeRuntimeConfig: RouteRuntimeConfig;
+  channels: ResolvedChannel[];
+}
+
+/**
+ * 规则选路：匹配规则 → 解析候选 → 优先级/亲和排序。
+ * 没有可用候选时直接写终结响应并返回 null，调用方应立即 return。
+ */
+async function planRuleRouteCandidates(input: RuleRoutePlanInput): Promise<RuleRoutePlan | null> {
+  const {
+    ctx,
+    res,
+    routing,
+    cliType,
+    sourceProtocol,
+    canonicalModel,
+    rawModel,
+    reasoningEffort,
+    routeInstance,
+    sessionRouting,
+    nativePassthroughChannels,
+  } = input;
+  const { requestId } = ctx;
+  const recordPlanningFailure = (statusCode: number, error: string, routeRuleId?: string): void => {
+    ctx.recordRequest({
+      requestId,
+      attempt: 0,
+      cliType,
+      requestedModel: rawModel,
+      reasoningEffort,
+      canonicalModel,
+      ...(routeRuleId ? { routeRuleId } : {}),
+      outcome: 'failure',
+      statusCode,
+      error,
+    });
+  };
+
+  // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
+  // RouteInstance model is authoritative; otherwise the wire model seeds the route.
+  let sortedRules = sortRules(routing.rules);
+  const matchModel = canonicalModel || rawModel;
+  let rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
+
+  if (!rule && (routeInstance || input.hasRouteProfile) && matchModel) {
+    await unifiedConfigManager.ensureRouteRuleForProtocolModelSelection(sourceProtocol, matchModel);
+    if (ctx.stopIfClientCancelled()) {
+      return null;
+    }
+    sortedRules = sortRules(routing.rules);
+    rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
+  }
+
+  if (!rule) {
+    recordPlanningFailure(502, 'no_matching_rule');
+    writeRouteProxyJsonError(
+      res,
+      502,
+      'no_matching_rule',
+      `No routing rule matched for ${sourceProtocol} / ${matchModel || '(empty model)'}`
+    );
+    return null;
+  }
+
+  Object.assign(ctx.logContext, { routeRuleId: rule.id });
+
+  // 解析候选通道（带 canonical model 过滤）
+  const channels = resolveChannels(rule, canonicalModel);
+  if (channels.length === 0) {
+    recordPlanningFailure(503, 'no_channels', rule.id);
+    writeRouteProxyJsonError(res, 503, 'no_channels', 'No available channels for this rule');
+    return null;
+  }
+  const routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
+  const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
+  const resolvedChannels = await resolveChannelTargets(enabledChannels);
+  if (resolvedChannels.length === 0) {
+    recordPlanningFailure(503, 'no_compatible_upstream_protocol', rule.id);
+    writeRouteProxyJsonError(
+      res,
+      503,
+      'no_compatible_upstream_protocol',
+      `No upstream supports ${sourceProtocol} or provides an unambiguous conversion target`
+    );
+    return null;
+  }
+  if (ctx.stopIfClientCancelled()) {
+    return null;
+  }
+  const attemptPlan = buildChannelAttemptPlan(
+    sortChannelsByScore(resolvedChannels),
+    routeRuntimeConfig.maxAttemptsPerRoutePath
+  ).map(channel =>
+    resolveEffectiveRouteChannel(channel, sourceProtocol, nativePassthroughChannels)
+  );
+  const affinityInvalidatedAt = getEffectiveRouteDisplayItem(routing.modelRegistry, canonicalModel)
+    ?.priorityConfig?.affinityInvalidatedAt;
+  let sortedChannels = applySuccessfulRoutePathAffinity(
+    attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
+    routing.routePathStates,
+    Date.now(),
+    affinityInvalidatedAt
+  );
+  // 会话绑定排在全局 affinity 之后应用，因而位次更靠前；未绑定的新会话则在
+  // 用户配置顺序内部避开其他活跃会话已占用的通道。
+  if (routeInstance) {
+    const existingBinding = routeSessionBindingService.get(routeInstance.id);
+    if (existingBinding) {
+      sortedChannels = applySessionChannelAffinity(
+        sortedChannels,
+        existingBinding,
+        routing.routePathStates,
+        Date.now(),
+        affinityInvalidatedAt
+      );
+    } else {
+      // 占用只统计仍然活跃的会话：已关闭/陈旧的绑定不得把新会话推离其首选通道。
+      const liveInstanceIds = new Set(
+        Object.values(sessionRouting.instances || {})
+          .filter(instance => instance.routingState === 'active')
+          .map(instance => instance.id)
+      );
+      const occupied = new Set(
+        routeSessionBindingService
+          .listActive()
+          .filter(
+            binding =>
+              binding.instanceId !== routeInstance.id && liveInstanceIds.has(binding.instanceId)
+          )
+          .map(binding => `${binding.siteId}|${binding.accountId}|${binding.apiKeyId}`)
+      );
+      const index = pickDistributedChannelIndex(sortedChannels, occupied);
+      if (index > 0) {
+        sortedChannels = [
+          sortedChannels[index],
+          ...sortedChannels.slice(index + 1),
+          ...sortedChannels.slice(0, index),
+        ];
+      }
+    }
+  }
+  if (sortedChannels.length === 0) {
+    recordPlanningFailure(
+      ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
+      ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
+      rule.id
+    );
+    writeAllRoutePathsDisabledResponse(res, cliType, attemptPlan);
+    return null;
+  }
+  return { routeRuleId: rule.id, routeRuntimeConfig, channels: sortedChannels };
 }
 
 export async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse
 ): Promise<void> {
-  const requestSelectionStartedAt = Date.now();
-  let upstreamAttemptCount = 0;
-  let routeAgentId: string | undefined;
-  let routeAgentName: string | undefined;
-  let routeInstanceLogId: string | undefined;
-  type RouteCancellationLogContext = Omit<
-    Parameters<typeof recordRouteRequest>[0],
-    | 'requestSelectionStartedAt'
-    | 'agentId'
-    | 'agentName'
-    | 'routeInstanceId'
-    | 'outcome'
-    | 'statusCode'
-    | 'error'
-    | 'at'
-  >;
-  let routeCancellationLogContext: RouteCancellationLogContext | undefined;
-  let routeClientCancellationLogged = false;
-  const recordedRouteRequestAttempts = new Set<number>();
-  const recordRequestForSelection = (params: Parameters<typeof recordRouteRequest>[0]): void => {
-    if (routeClientCancellationLogged) {
-      return;
-    }
-    recordRouteRequest({
-      ...params,
-      requestSelectionStartedAt,
-      agentId: routeAgentId,
-      agentName: routeAgentName,
-      routeInstanceId: routeInstanceLogId,
-    });
-    recordedRouteRequestAttempts.add(params.attempt);
-  };
-  const recordRouteClientCancellation = (): void => {
-    if (
-      routeClientCancellationLogged ||
-      !routeCancellationLogContext ||
-      recordedRouteRequestAttempts.has(routeCancellationLogContext.attempt)
-    ) {
-      return;
-    }
-
-    routeClientCancellationLogged = true;
-    recordedRouteRequestAttempts.add(routeCancellationLogContext.attempt);
-    recordRouteRequest({
-      ...routeCancellationLogContext,
-      requestSelectionStartedAt,
-      agentId: routeAgentId,
-      agentName: routeAgentName,
-      routeInstanceId: routeInstanceLogId,
-      outcome: 'neutral',
-      statusCode: ROUTE_CLIENT_CANCELLED_STATUS_CODE,
-      error: ROUTE_CLIENT_CANCELLED_ERROR_CODE,
-    });
-  };
-  const recordPathOutcomeForSelection = (
-    key: Parameters<typeof recordRoutePathOutcome>[0],
-    outcome: Parameters<typeof recordRoutePathOutcome>[1],
-    meta: Parameters<typeof recordRoutePathOutcome>[2],
-    nowOrRuntimeConfig?: Parameters<typeof recordRoutePathOutcome>[3],
-    runtimeConfig?: Parameters<typeof recordRoutePathOutcome>[4]
-  ): ReturnType<typeof recordRoutePathOutcome> => {
-    const nextMeta = { ...(meta ?? {}), requestSelectionStartedAt };
-    if (nowOrRuntimeConfig === undefined) {
-      return recordRoutePathOutcome(key, outcome, nextMeta);
-    }
-    return runtimeConfig === undefined
-      ? recordRoutePathOutcome(key, outcome, nextMeta, nowOrRuntimeConfig)
-      : recordRoutePathOutcome(key, outcome, nextMeta, nowOrRuntimeConfig, runtimeConfig);
-  };
-  const routeAbortController = new AbortController();
-  let requestBodyRead = false;
-  let routeHandlingDone = false;
-  let routeClientCancelled = false;
-  let routeStreamCompletionDelivered = false;
-  let cleanupRouteCancellationListeners = () => {};
-  const finishRouteHandling = () => {
-    routeHandlingDone = true;
-    cleanupRouteCancellationListeners();
-  };
-  const cancelRouteRequest = () => {
-    if (routeHandlingDone || routeClientCancelled) {
-      return;
-    }
-    routeClientCancelled = true;
-    recordRouteClientCancellation();
-    if (requestBodyRead && !routeAbortController.signal.aborted) {
-      routeAbortController.abort(createRouteClientCancelledError());
-    }
-  };
-  const stopRouteHandlingIfClientCancelled = (): boolean => {
-    if (!routeClientCancelled && !routeAbortController.signal.aborted) {
-      return false;
-    }
-    routeClientCancelled = true;
-    recordRouteClientCancellation();
-    if (requestBodyRead && !routeAbortController.signal.aborted) {
-      routeAbortController.abort(createRouteClientCancelledError());
-    }
-    finishRouteHandling();
-    return true;
-  };
-  const handleResponseClose = () => {
-    if (res.writableEnded || routeStreamCompletionDelivered) {
-      finishRouteHandling();
-      return;
-    }
-    cancelRouteRequest();
-  };
-  cleanupRouteCancellationListeners = () => {
-    res.off('close', handleResponseClose);
-    res.off('finish', finishRouteHandling);
-    req.off('aborted', cancelRouteRequest);
-  };
-  res.once('close', handleResponseClose);
-  res.once('finish', finishRouteHandling);
-  req.on('aborted', cancelRouteRequest);
-
   const pathname = getRequestPathname(req.url);
   const initialCliType =
     detectMarkedRouteCliType(req.headers) ?? detectCliTypeFromPath(pathname) ?? 'codex';
   const requestId = nextRequestId(initialCliType);
-  routeCancellationLogContext = {
-    requestId,
-    attempt: 0,
-    cliType: initialCliType,
-    canonicalModel: null,
-    requestKind: 'inference',
-  };
-  const requestDiagnostic = {
+  const ctx = new RouteRequestContext(req, res, initialCliType, {
     requestId,
     method: normalizeRouteDiagnosticCategory((req.method || 'GET').toUpperCase(), [
       'GET',
@@ -3562,32 +1883,12 @@ export async function handleRequest(
     ]),
     path: getRouteDiagnosticPath(pathname),
     sourceProtocol: inferSourceProtocol(pathname),
-  };
-  let responseDiagnosticLogged = false;
-  const recordResponseDiagnostic = () => {
-    if (responseDiagnosticLogged) return;
-    responseDiagnosticLogged = true;
-    res.off('finish', recordResponseDiagnostic);
-    res.off('close', recordResponseDiagnostic);
-    req.off('aborted', recordResponseDiagnostic);
-    log.debug('Route request completed', {
-      ...requestDiagnostic,
-      durationMs: Math.max(0, Date.now() - requestSelectionStartedAt),
-      statusCode: res.headersSent ? res.statusCode : null,
-      termination:
-        res.writableEnded || routeStreamCompletionDelivered ? 'completed' : 'client_cancelled',
-      attemptCount: upstreamAttemptCount,
-    });
-  };
-  log.debug('Route request received', requestDiagnostic);
-  res.once('finish', recordResponseDiagnostic);
-  res.once('close', recordResponseDiagnostic);
-  req.once('aborted', recordResponseDiagnostic);
+  });
 
   const routing = unifiedConfigManager.getRoutingConfig();
   if ((req.method || 'GET').toUpperCase() === 'HEAD' && pathname === '/') {
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: 'neutral',
       statusCode: 204,
     });
@@ -3597,16 +1898,13 @@ export async function handleRequest(
   }
   const endpointOperation = classifyRouteEndpointOperation(req.method, req.url);
   if (!endpointOperation) {
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: 'failure',
       statusCode: 404,
       error: 'unsupported_route',
     });
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ error: 'unsupported_route', message: `No route handler for ${pathname}` })
-    );
+    writeRouteProxyJsonError(res, 404, 'unsupported_route', `No route handler for ${pathname}`);
     return;
   }
 
@@ -3621,16 +1919,13 @@ export async function handleRequest(
     cliType = 'openCode';
   }
   if (!cliType) {
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: 'failure',
       statusCode: 404,
       error: 'unsupported_route',
     });
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ error: 'unsupported_route', message: `No route handler for ${pathname}` })
-    );
+    writeRouteProxyJsonError(res, 404, 'unsupported_route', `No route handler for ${pathname}`);
     return;
   }
   // Client markers are compatibility metadata only; pathname still determines the inbound protocol.
@@ -3653,23 +1948,22 @@ export async function handleRequest(
     targetLockCandidates.length > 1 ||
     (credentialResolution.status === 'resolved' && targetLockCandidates.length > 0);
   if (hasCredentialConflict) {
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: 'failure',
       statusCode: 401,
       error: 'ambiguous_credentials',
     });
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'ambiguous_credentials',
-        message: 'Credentials resolve to multiple route identities',
-      })
+    writeRouteProxyJsonError(
+      res,
+      401,
+      'ambiguous_credentials',
+      'Credentials resolve to multiple route identities'
     );
     return;
   }
 
-  Object.assign(routeCancellationLogContext, {
+  Object.assign(ctx.logContext, {
     cliType,
     requestKind:
       endpointOperation.capability === 'stateless-native-only' ? 'token-count' : 'inference',
@@ -3702,14 +1996,13 @@ export async function handleRequest(
       statusCode: 401,
       terminalError: buildRouteProxyErrorText('invalid_api_key', 'Invalid route API key'),
     });
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: 'failure',
       statusCode: 401,
       error: 'invalid_api_key',
     });
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'invalid_api_key', message: 'Invalid route API key' }));
+    writeRouteProxyJsonError(res, 401, 'invalid_api_key', 'Invalid route API key');
     return;
   }
   if (targetLock && !isLoopbackAddress(req.socket.remoteAddress)) {
@@ -3723,12 +2016,11 @@ export async function handleRequest(
       ),
       lock: targetLock,
     });
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'target_lock_forbidden',
-        message: 'Target-lock requests are only allowed from loopback clients',
-      })
+    writeRouteProxyJsonError(
+      res,
+      403,
+      'target_lock_forbidden',
+      'Target-lock requests are only allowed from loopback clients'
     );
     return;
   }
@@ -3740,28 +2032,24 @@ export async function handleRequest(
       endpointOperation.capability === 'stateful-unsupported'
         ? 'stateful_route_operation_unsupported'
         : 'unsupported_route_operation';
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: 'failure',
       statusCode: 501,
       error,
     });
-    res.writeHead(501, {
-      'Content-Type': 'application/json',
-      'X-Route-Proxy-Error': error,
-    });
-    res.end(
-      JSON.stringify({
-        error,
-        message: `${req.method || 'GET'} ${pathname} is not supported by the local route`,
-      })
+    writeRouteProxyJsonError(
+      res,
+      501,
+      error,
+      `${req.method || 'GET'} ${pathname} is not supported by the local route`
     );
     return;
   }
   if (endpointOperation.capability === 'model-discovery') {
     const discovery = buildRouteModelDiscoveryResponse(routing, req);
-    recordRequestForSelection({
-      ...routeCancellationLogContext,
+    ctx.recordRequest({
+      ...ctx.logContext,
       outcome: discovery.statusCode >= 400 ? 'failure' : 'success',
       statusCode: discovery.statusCode,
       ...(discovery.statusCode >= 400 ? { error: 'model_discovery_failed' } : {}),
@@ -3789,7 +2077,7 @@ export async function handleRequest(
     writeTargetLockTerminalFailureResponse(res, previousTerminalFailure);
     return;
   }
-  if (stopRouteHandlingIfClientCancelled()) {
+  if (ctx.stopIfClientCancelled()) {
     return;
   }
 
@@ -3797,16 +2085,16 @@ export async function handleRequest(
   let bodyBuffer: Buffer;
   try {
     bodyBuffer = await readBody(req);
-    requestBodyRead = true;
+    ctx.requestBodyRead = true;
   } catch (err: unknown) {
     if (isRouteClientCancelledError(err)) {
-      cancelRouteRequest();
-      finishRouteHandling();
+      ctx.cancel();
+      ctx.finish();
       return;
     }
     throw err;
   }
-  if (stopRouteHandlingIfClientCancelled()) {
+  if (ctx.stopIfClientCancelled()) {
     return;
   }
   let bodyJson: unknown = null;
@@ -3836,16 +2124,16 @@ export async function handleRequest(
       observedRuntimeSlotLabel: '客户端级路由',
     };
   }
-  routeAgentId = observedRouteInstanceKey?.agentId;
-  routeAgentName =
+  ctx.agentId = observedRouteInstanceKey?.agentId;
+  ctx.agentName =
     observedRouteInstanceKey?.observedAgentName ||
     observedRouteInstanceKey?.agentId ||
     routeProfile?.name;
   const responsesStateRequest = classifyResponsesStateRequest(endpointOperation, bodyJson);
   if (responsesStateRequest && !routeProfile) {
     if (!targetLock) {
-      recordRequestForSelection({
-        ...routeCancellationLogContext,
+      ctx.recordRequest({
+        ...ctx.logContext,
         requestedModel: extractModelFromBody(bodyJson),
         outcome: 'failure',
         statusCode: 400,
@@ -3867,8 +2155,8 @@ export async function handleRequest(
       routeProfile.id
     );
     if (!stateAffinityRecord) {
-      recordRequestForSelection({
-        ...routeCancellationLogContext,
+      ctx.recordRequest({
+        ...ctx.logContext,
         requestedModel: extractModelFromBody(bodyJson),
         outcome: 'failure',
         statusCode: 409,
@@ -3886,7 +2174,7 @@ export async function handleRequest(
   const stateReference = findProviderOwnedStateReference(bodyJson);
   if (stateReference) {
     if (!targetLock) {
-      recordRequestForSelection({
+      ctx.recordRequest({
         requestId,
         attempt: 0,
         cliType,
@@ -3897,15 +2185,11 @@ export async function handleRequest(
         error: `stateful_request_unsupported:${stateReference}`,
       });
     }
-    res.writeHead(501, {
-      'Content-Type': 'application/json',
-      'X-Route-Proxy-Error': 'stateful_request_unsupported',
-    });
-    res.end(
-      JSON.stringify({
-        error: 'stateful_request_unsupported',
-        message: `Provider-owned state reference is not supported: ${stateReference}`,
-      })
+    writeRouteProxyJsonError(
+      res,
+      501,
+      'stateful_request_unsupported',
+      `Provider-owned state reference is not supported: ${stateReference}`
     );
     return;
   }
@@ -3922,7 +2206,7 @@ export async function handleRequest(
   }
   const requestedReasoningEffort = extractRouteReasoningEffort(bodyJson);
   const requestedCanonicalModel = resolveCanonicalModelFromRegistry(routing, rawModel);
-  Object.assign(routeCancellationLogContext, {
+  Object.assign(ctx.logContext, {
     requestedModel: rawModel,
     reasoningEffort: requestedReasoningEffort,
   });
@@ -3936,7 +2220,7 @@ export async function handleRequest(
     requestedReasoningEffort: requestedReasoningEffort || null,
     defaultModel: '',
     defaultReasoningEffort: 'medium',
-    requestAt: requestSelectionStartedAt,
+    requestAt: ctx.startedAt,
   });
   const identitySource = observedRouteInstanceKey?.lineage?.source
     ? observedRouteInstanceKey.lineage.source
@@ -3956,7 +2240,9 @@ export async function handleRequest(
     ['user', 'system', 'subagent', 'guardian_review', 'memory_consolidation']
   );
   log.debug('RouteInstance identity binding', {
-    ...requestDiagnostic,
+    requestId,
+    method: req.method,
+    path: getRouteDiagnosticPath(pathname),
     sourceProtocol,
     identitySource,
     hasCurrentIdentity: Boolean(observedRouteInstanceKey?.sessionId),
@@ -3992,9 +2278,9 @@ export async function handleRequest(
     profileIdHash: fingerprintRouteIdentity(routeProfile?.id),
     instanceIdHash: fingerprintRouteIdentity(routeInstanceResolution.instance?.id),
   });
-  routeInstanceLogId = routeInstanceResolution.instance?.id;
+  ctx.instanceLogId = routeInstanceResolution.instance?.id;
   if (!routeInstanceResolution.instance && !rawModel && !stateAffinityRecord && !targetLock) {
-    recordRequestForSelection({
+    ctx.recordRequest({
       requestId,
       attempt: 0,
       cliType,
@@ -4005,28 +2291,27 @@ export async function handleRequest(
       statusCode: 400,
       error: 'model_required',
     });
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'model_required',
-        message: 'A model is required when no RouteInstance is bound',
-      })
+    writeRouteProxyJsonError(
+      res,
+      400,
+      'model_required',
+      'A model is required when no RouteInstance is bound'
     );
     return;
   }
   if (routeInstanceResolution.changed) {
     await unifiedConfigManager.saveConfig();
-    if (stopRouteHandlingIfClientCancelled()) {
+    if (ctx.stopIfClientCancelled()) {
       return;
     }
   }
   if (routeInstanceResolution.instance) {
     routeSessionActivityService.touch(routeInstanceResolution.instance);
-    routeAgentId = routeInstanceResolution.instance.routeKey?.agentId;
-    routeAgentName =
+    ctx.agentId = routeInstanceResolution.instance.routeKey?.agentId;
+    ctx.agentName =
       routeInstanceResolution.instance.display.customAgentName ||
       routeInstanceResolution.instance.display.observedAgentName ||
-      routeAgentId ||
+      ctx.agentId ||
       routeProfile?.name;
   }
   const selectedThinkingEffort =
@@ -4038,7 +2323,7 @@ export async function handleRequest(
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
   let canonicalModel: string | null =
     routeInstanceResolution.instance?.modelId.trim() || requestedCanonicalModel;
-  Object.assign(routeCancellationLogContext, {
+  Object.assign(ctx.logContext, {
     requestedModel: rawModel,
     reasoningEffort,
     canonicalModel,
@@ -4051,7 +2336,7 @@ export async function handleRequest(
 
   if (targetLock) {
     canonicalModel = targetLock.canonicalModel;
-    Object.assign(routeCancellationLogContext, {
+    Object.assign(ctx.logContext, {
       routeRuleId: '__target_lock__',
       canonicalModel,
     });
@@ -4072,180 +2357,36 @@ export async function handleRequest(
     ).map(channel =>
       resolveEffectiveRouteChannel(channel, sourceProtocol, nativePassthroughChannels)
     );
-    if (stopRouteHandlingIfClientCancelled()) {
+    if (ctx.stopIfClientCancelled()) {
       return;
     }
   } else if (stateAffinityRecord) {
     activeRouteRuleId = stateAffinityRecord.routeRuleId;
-    Object.assign(routeCancellationLogContext, { routeRuleId: activeRouteRuleId });
+    Object.assign(ctx.logContext, { routeRuleId: activeRouteRuleId });
     sortedChannels = [
       buildAffinityChannel(stateAffinityRecord, sourceProtocol, canonicalModel, rawModel),
     ];
   } else {
-    // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
-    // RouteInstance model is authoritative; otherwise the wire model seeds the route.
-    let sortedRules = sortRules(routing.rules);
-    const matchModel = canonicalModel || rawModel;
-    let rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
-
-    if (!rule && (routeInstanceResolution.instance || routeProfile) && matchModel) {
-      await unifiedConfigManager.ensureRouteRuleForProtocolModelSelection(
-        sourceProtocol,
-        matchModel
-      );
-      if (stopRouteHandlingIfClientCancelled()) {
-        return;
-      }
-      sortedRules = sortRules(routing.rules);
-      rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
-    }
-
-    if (!rule) {
-      recordRequestForSelection({
-        requestId,
-        attempt: 0,
-        cliType,
-        requestedModel: rawModel,
-        reasoningEffort,
-        canonicalModel,
-        outcome: 'failure',
-        statusCode: 502,
-        error: 'no_matching_rule',
-      });
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          error: 'no_matching_rule',
-          message: `No routing rule matched for ${sourceProtocol} / ${matchModel || '(empty model)'}`,
-        })
-      );
+    const plan = await planRuleRouteCandidates({
+      ctx,
+      res,
+      routing,
+      cliType,
+      sourceProtocol,
+      canonicalModel,
+      rawModel,
+      reasoningEffort,
+      routeInstance: routeInstanceResolution.instance,
+      hasRouteProfile: Boolean(routeProfile),
+      sessionRouting,
+      nativePassthroughChannels,
+    });
+    if (!plan) {
       return;
     }
-
-    activeRouteRuleId = rule.id;
-    Object.assign(routeCancellationLogContext, { routeRuleId: rule.id });
-
-    // 解析候选通道（带 canonical model 过滤）
-    const channels = resolveChannels(rule, canonicalModel);
-    if (channels.length === 0) {
-      recordRequestForSelection({
-        requestId,
-        attempt: 0,
-        cliType,
-        requestedModel: rawModel,
-        reasoningEffort,
-        canonicalModel,
-        routeRuleId: rule.id,
-        outcome: 'failure',
-        statusCode: 503,
-        error: 'no_channels',
-      });
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({ error: 'no_channels', message: 'No available channels for this rule' })
-      );
-      return;
-    }
-    routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-    const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
-    const resolvedChannels = await resolveChannelTargets(enabledChannels);
-    if (resolvedChannels.length === 0) {
-      recordRequestForSelection({
-        requestId,
-        attempt: 0,
-        cliType,
-        requestedModel: rawModel,
-        reasoningEffort,
-        canonicalModel,
-        routeRuleId: rule.id,
-        outcome: 'failure',
-        statusCode: 503,
-        error: 'no_compatible_upstream_protocol',
-      });
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          error: 'no_compatible_upstream_protocol',
-          message: `No upstream supports ${sourceProtocol} or provides an unambiguous conversion target`,
-        })
-      );
-      return;
-    }
-    if (stopRouteHandlingIfClientCancelled()) {
-      return;
-    }
-    const attemptPlan = buildChannelAttemptPlan(
-      sortChannelsByScore(resolvedChannels),
-      routeRuntimeConfig.maxAttemptsPerRoutePath
-    ).map(channel =>
-      resolveEffectiveRouteChannel(channel, sourceProtocol, nativePassthroughChannels)
-    );
-    sortedChannels = applySuccessfulRoutePathAffinity(
-      attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
-      routing.routePathStates,
-      Date.now(),
-      getEffectiveRouteDisplayItem(routing.modelRegistry, canonicalModel)?.priorityConfig
-        ?.affinityInvalidatedAt
-    );
-    // 会话绑定排在全局 affinity 之后应用，因而位次更靠前；未绑定的新会话则在
-    // 用户配置顺序内部避开其他活跃会话已占用的通道。
-    const boundInstance = routeInstanceResolution.instance;
-    if (boundInstance) {
-      const affinityInvalidatedAt = getEffectiveRouteDisplayItem(
-        routing.modelRegistry,
-        canonicalModel
-      )?.priorityConfig?.affinityInvalidatedAt;
-      const existingBinding = routeSessionBindingService.get(boundInstance.id);
-      if (existingBinding) {
-        sortedChannels = applySessionChannelAffinity(
-          sortedChannels,
-          existingBinding,
-          routing.routePathStates,
-          Date.now(),
-          affinityInvalidatedAt
-        );
-      } else {
-        // 占用只统计仍然活跃的会话：已关闭/陈旧的绑定不得把新会话推离其首选通道。
-        const liveInstanceIds = new Set(
-          Object.values(sessionRouting.instances || {})
-            .filter(instance => instance.routingState === 'active')
-            .map(instance => instance.id)
-        );
-        const occupied = new Set(
-          routeSessionBindingService
-            .listActive()
-            .filter(
-              binding =>
-                binding.instanceId !== boundInstance.id && liveInstanceIds.has(binding.instanceId)
-            )
-            .map(binding => `${binding.siteId}|${binding.accountId}|${binding.apiKeyId}`)
-        );
-        const index = pickDistributedChannelIndex(sortedChannels, occupied);
-        if (index > 0) {
-          sortedChannels = [
-            sortedChannels[index],
-            ...sortedChannels.slice(index + 1),
-            ...sortedChannels.slice(0, index),
-          ];
-        }
-      }
-    }
-    if (sortedChannels.length === 0) {
-      recordRequestForSelection({
-        requestId,
-        attempt: 0,
-        cliType,
-        requestedModel: rawModel,
-        reasoningEffort,
-        canonicalModel,
-        routeRuleId: rule.id,
-        outcome: 'failure',
-        statusCode: ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
-        error: ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
-      });
-      writeAllRoutePathsDisabledResponse(res, cliType);
-      return;
-    }
+    activeRouteRuleId = plan.routeRuleId;
+    routeRuntimeConfig = plan.routeRuntimeConfig;
+    sortedChannels = plan.channels;
   }
   if (responsesStateRequest?.createsResource) {
     sortedChannels = sortedChannels.filter(
@@ -4255,8 +2396,8 @@ export async function handleRequest(
     );
     if (sortedChannels.length === 0) {
       if (!targetLock) {
-        recordRequestForSelection({
-          ...routeCancellationLogContext,
+        ctx.recordRequest({
+          ...ctx.logContext,
           outcome: 'failure',
           statusCode: 501,
           error: 'stateful_cross_protocol_unsupported',
@@ -4286,7 +2427,7 @@ export async function handleRequest(
         resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol) === sourceProtocol
     );
     if (sortedChannels.length === 0) {
-      recordRequestForSelection({
+      ctx.recordRequest({
         requestId,
         attempt: 0,
         routeRuleId: activeRouteRuleId,
@@ -4306,6 +2447,7 @@ export async function handleRequest(
 
   let attempt = 0;
   let attemptedUpstream = false;
+  let rectifierRetried = false;
   let tokenCountFallbackReason: string | undefined;
   const adapterIncompatibilityReasons: string[] = [];
   const attemptsByRoutePath = new Map<string, number>();
@@ -4315,9 +2457,31 @@ export async function handleRequest(
   // 只有当所有实际尝试过的候选都判为 request_fatal 时，才认定请求本身不可重试。
   let sawNonRequestFatalFailure = false;
   let quotaExhaustionEncountered = false;
+  const requestFatalFingerprint = buildRequestFatalFingerprint(bodyJson, bodyBuffer.length);
+  const requestFatalCacheApplies =
+    Boolean(requestFatalFingerprint) && !bypassRoutePathState && !targetLock;
+  // 全部候选都被负缓存命中时忽略缓存照常尝试：保底"所有通道一致 request_fatal"
+  // 时的透传语义（writeRequestFatalPassthroughResponse 需要 seenRequestFatal）。
+  const allPathsRequestFatalCached =
+    requestFatalCacheApplies &&
+    sortedChannels.every(ch =>
+      readRequestFatalNegativeCache(
+        buildChannelAttemptPathKey(ch),
+        requestFatalFingerprint,
+        Date.now()
+      )
+    );
   for (let i = 0; i < sortedChannels.length; i++) {
-    if (stopRouteHandlingIfClientCancelled()) {
+    if (ctx.stopIfClientCancelled()) {
       return;
+    }
+    // 全局尝试预算：跨所有候选通道的尝试总数上限。
+    if (attempt >= ROUTE_GLOBAL_MAX_ATTEMPTS) {
+      break;
+    }
+    // 请求级重试决策预算：已耗时过久就不再开新的故障转移尝试（首次尝试不受限）。
+    if (attempt >= 1 && Date.now() - ctx.startedAt >= ROUTE_RETRY_DECISION_BUDGET_MS) {
+      break;
     }
     const ch = sortedChannels[i];
     if (!bypassRoutePathState && isRoutePathDisabled(ch)) {
@@ -4326,6 +2490,13 @@ export async function handleRequest(
 
     const routePathKey = buildChannelAttemptPathKey(ch);
     if (quotaExhaustedRoutePaths.has(routePathKey)) {
+      continue;
+    }
+    if (
+      requestFatalCacheApplies &&
+      !allPathsRequestFatalCached &&
+      readRequestFatalNegativeCache(routePathKey, requestFatalFingerprint, Date.now())
+    ) {
       continue;
     }
     const routePathAttempts = attemptsByRoutePath.get(routePathKey) ?? 0;
@@ -4339,12 +2510,12 @@ export async function handleRequest(
         continue;
       }
       try {
-        await delayWithAbort(retryAfterRemaining, routeAbortController.signal);
+        await delayWithAbort(retryAfterRemaining, ctx.signal);
       } catch {
-        stopRouteHandlingIfClientCancelled();
+        ctx.stopIfClientCancelled();
         return;
       }
-      if (stopRouteHandlingIfClientCancelled()) {
+      if (ctx.stopIfClientCancelled()) {
         return;
       }
     }
@@ -4354,7 +2525,7 @@ export async function handleRequest(
     const activeChannel: ResolvedChannel = {
       ...ch,
     };
-    Object.assign(routeCancellationLogContext, {
+    Object.assign(ctx.logContext, {
       requestId,
       attempt,
       cliType,
@@ -4398,7 +2569,7 @@ export async function handleRequest(
     const creds =
       targetLockCredentials ||
       (await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId));
-    if (stopRouteHandlingIfClientCancelled()) {
+    if (ctx.stopIfClientCancelled()) {
       return;
     }
     if (!creds) {
@@ -4413,7 +2584,7 @@ export async function handleRequest(
           lock: targetLock,
         });
       }
-      recordRequestForSelection({
+      ctx.recordRequest({
         requestId,
         attempt,
         cliType,
@@ -4431,7 +2602,7 @@ export async function handleRequest(
         error: 'credentials_unavailable',
       });
       if (!bypassRoutePathState) {
-        await recordPathOutcomeForSelection(
+        await ctx.recordPathOutcome(
           activeChannel,
           'failure',
           { error: 'credentials_unavailable' },
@@ -4448,136 +2619,74 @@ export async function handleRequest(
       streamingRequest: requestWantsStreaming,
     });
 
-    // 重写请求体中的 model 字段
-    let finalBody = activeChannel.resolvedModel
-      ? rewriteRequestModel(bodyBuffer, activeChannel.resolvedModel)
-      : bodyBuffer;
-
-    // 站点级特殊处理：AnyRouter 仅在同协议透传时保留，其余显式 targetProtocol 走通用适配
-    let additionalHeaders: Record<string, string> = {};
-    let methodOverride: string | undefined;
-    let requestUrlOverride: string | undefined;
-    let upstreamCliType: RouteCliType = getAdapterCliTypeForProtocol(upstreamProtocol);
-    let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
-    const protocolResponseAdapters: CliProtocolResponseAdapter[] = [];
-    const applyProtocolRewrite = (
-      targetProtocol: ConcreteCliTargetProtocol,
-      sourceProtocol?: ConcreteCliTargetProtocol
-    ) => {
-      const rewritten = adaptRequestToTargetProtocol(
-        finalBody,
-        sourceAdapterCliType,
-        targetProtocol,
-        requestUrlOverride ?? req.url,
-        activeChannel.resolvedModel,
-        sourceProtocol
-      );
-
-      finalBody = rewritten.body;
-      additionalHeaders = { ...additionalHeaders, ...rewritten.headers };
-      methodOverride = rewritten.upstreamMethod;
-      requestUrlOverride = rewritten.upstreamPath;
-      upstreamCliType = rewritten.upstreamCliType;
-      protocolResponseAdapters.push(rewritten.responseAdapter);
-    };
-
-    if (
-      !requestIsTokenCount &&
-      site &&
-      account &&
-      isAnyRouterSite(site.name) &&
-      sourceProtocol === upstreamProtocol
-    ) {
-      const userHash = account.anyRouterConfig?.userHash;
-
-      if (!userHash && sourceAdapterCliType === 'claudeCode') {
-        log.warn(`[AnyRouter] Account ${account.account_name} missing userHash configuration`);
-      }
-
-      const rewritten = rewriteForAnyRouter(
-        finalBody,
-        userHash,
-        req.headers,
-        sourceAdapterCliType,
-        req.url,
-        activeChannel.resolvedModel
-      );
-
-      finalBody = rewritten.body;
-      additionalHeaders = rewritten.headers;
-      requestUrlOverride = rewritten.upstreamPath;
-      upstreamCliType = rewritten.upstreamCliType;
-      responseAdapter = rewritten.responseAdapter;
-    } else {
-      try {
-        if (!requestIsTokenCount && sourceProtocol !== upstreamProtocol) {
-          applyProtocolRewrite(upstreamProtocol, sourceProtocol);
-        }
-      } catch (err: unknown) {
-        const isAdapterError = err instanceof CliProtocolAdapterError;
-        const stage = isAdapterError ? err.stage : 'request-adapt';
-        const reason = isAdapterError
-          ? err.reason
-          : err instanceof Error
-            ? err.message
-            : 'unknown_error';
-        if (targetLock) {
-          notifyTargetLockTerminalFailure({
-            routeApiKey: token,
-            cliType,
-            statusCode: 502,
-            terminalError: buildRouteProxyErrorText(`adapter_${stage}`, reason),
-            lock: targetLock,
-          });
-        }
-        log.warn('Protocol adapter request-adapt failed', {
-          stage,
-          cliType,
-          sourceEndpoint: pathname,
-          targetProtocol: activeChannel.targetProtocol,
-          targetEndpoint: activeChannel.targetEndpoint,
-          siteId: activeChannel.siteId,
-          accountId: activeChannel.accountId,
-          apiKeyId: activeChannel.apiKeyId,
-          resolvedModel: activeChannel.resolvedModel,
-          reason,
-        });
-        recordRequestForSelection({
-          requestId,
-          attempt,
-          routeRuleId: activeRouteRuleId,
-          cliType,
-          targetProtocol: activeChannel.targetProtocol,
-          targetEndpoint: activeChannel.targetEndpoint,
-          requestedModel: rawModel,
-          reasoningEffort,
-          canonicalModel,
-          requestKind: 'inference',
-          siteId: activeChannel.siteId,
-          accountId: activeChannel.accountId,
-          apiKeyId: activeChannel.apiKeyId,
-          resolvedModel: activeChannel.resolvedModel,
-          outcome: 'neutral',
-          error: `adapter_${stage}:${reason}`,
-        });
-        adapterIncompatibilityReasons.push(reason);
-
-        continue;
-      }
-    }
-
-    finalBody = applyRouteThinkingEffortOverride(
-      finalBody,
+    const prepared = prepareUpstreamRequest({
+      req,
+      bodyBuffer,
+      channel: activeChannel,
+      site,
+      account,
+      sourceProtocol,
+      upstreamProtocol,
+      sourceAdapterCliType,
+      requestIsTokenCount,
       selectedThinkingEffort,
-      upstreamProtocol
-    );
-    try {
-      reasoningEffort =
-        extractRouteReasoningEffort(JSON.parse(finalBody.toString('utf-8'))) ?? reasoningEffort;
-    } catch {
-      /* keep previous reasoningEffort */
+    });
+    if ('stage' in prepared) {
+      const { stage, reason } = prepared;
+      if (targetLock) {
+        notifyTargetLockTerminalFailure({
+          routeApiKey: token,
+          cliType,
+          statusCode: 502,
+          terminalError: buildRouteProxyErrorText(`adapter_${stage}`, reason),
+          lock: targetLock,
+        });
+      }
+      log.warn('Protocol adapter request-adapt failed', {
+        stage,
+        cliType,
+        sourceEndpoint: pathname,
+        targetProtocol: activeChannel.targetProtocol,
+        targetEndpoint: activeChannel.targetEndpoint,
+        siteId: activeChannel.siteId,
+        accountId: activeChannel.accountId,
+        apiKeyId: activeChannel.apiKeyId,
+        resolvedModel: activeChannel.resolvedModel,
+        reason,
+      });
+      ctx.recordRequest({
+        requestId,
+        attempt,
+        routeRuleId: activeRouteRuleId,
+        cliType,
+        targetProtocol: activeChannel.targetProtocol,
+        targetEndpoint: activeChannel.targetEndpoint,
+        requestedModel: rawModel,
+        reasoningEffort,
+        canonicalModel,
+        requestKind: 'inference',
+        siteId: activeChannel.siteId,
+        accountId: activeChannel.accountId,
+        apiKeyId: activeChannel.apiKeyId,
+        resolvedModel: activeChannel.resolvedModel,
+        outcome: 'neutral',
+        error: `adapter_${stage}:${reason}`,
+      });
+      adapterIncompatibilityReasons.push(reason);
+
+      continue;
     }
-    Object.assign(routeCancellationLogContext, { reasoningEffort });
+    const {
+      finalBody,
+      additionalHeaders,
+      methodOverride,
+      requestUrlOverride,
+      upstreamCliType,
+      responseAdapter,
+      protocolResponseAdapters,
+    } = prepared;
+    reasoningEffort = prepared.reasoningEffort ?? reasoningEffort;
+    Object.assign(ctx.logContext, { reasoningEffort });
 
     const attemptStartedAt = Date.now();
     const streamResponseBody =
@@ -4602,6 +2711,10 @@ export async function handleRequest(
       });
       streamedResourceAffinityBound = true;
     };
+    // 半开路径只放行一个探测；名额在规划到此处之间可能已被并发请求占走。
+    if (!bypassRoutePathState && !beginRoutePathAttempt(activeChannel)) {
+      continue;
+    }
     attemptedUpstream = true;
 
     // target-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
@@ -4616,30 +2729,32 @@ export async function handleRequest(
             'Target-lock upstream request blocked after per-model attempt budget exhausted',
             {
               cliType,
-              agentId: routeAgentId,
-              agentName: routeAgentName,
+              agentId: ctx.agentId,
+              agentName: ctx.agentName,
               siteId: targetLock.siteId,
               accountId: targetLock.accountId,
               apiKeyId: targetLock.apiKeyId,
               rawModel: targetLock.rawModel,
             }
           );
-          res.writeHead(TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE, {
-            'Content-Type': 'application/json',
-            'X-Route-Proxy-Error': TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
-          });
+          writeRouteProxyErrorHead(
+            res,
+            TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE,
+            TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE
+          );
           res.end(terminalError);
           return;
         }
         targetLockIsFinalAttempt = attempt.isFinalAttempt;
       }
 
+      let activeBody = finalBody;
       const forwardActiveChannel = () =>
         forwardToUpstream(
           req,
           creds.baseUrl,
           creds.apiKey,
-          finalBody,
+          activeBody,
           sourceAdapterCliType,
           upstreamTimeouts.timeoutMs,
           activeChannel.resolvedModel,
@@ -4653,7 +2768,7 @@ export async function handleRequest(
             methodOverride,
             requestUrlOverride,
             upstreamCliType,
-            signal: routeAbortController.signal,
+            signal: ctx.signal,
             streamResponse: res,
             streamResponseBody,
             streamResponseAdapter: streamResponseAdapter ?? undefined,
@@ -4670,10 +2785,10 @@ export async function handleRequest(
                   }
                 : undefined,
             onUpstreamAttempt: () => {
-              upstreamAttemptCount += 1;
+              ctx.upstreamAttemptCount += 1;
             },
             onStreamCompletionDelivered: () => {
-              routeStreamCompletionDelivered = true;
+              ctx.streamCompletionDelivered = true;
             },
           }
         );
@@ -4688,7 +2803,7 @@ export async function handleRequest(
               Boolean(responsesStateRequest) ||
               retry >= EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS ||
               res.headersSent ||
-              routeAbortController.signal.aborted ||
+              ctx.signal.aborted ||
               !isRetryableEmptyStreamingResponse(error)
             ) {
               throw error;
@@ -4702,24 +2817,48 @@ export async function handleRequest(
               apiKeyId: activeChannel.apiKeyId,
               resolvedModel: activeChannel.resolvedModel,
             });
-            await delayWithAbort(ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS, routeAbortController.signal);
+            await delayWithAbort(ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS, ctx.signal);
           }
         }
       };
 
       let result = await forwardActiveChannelWithEmptyStreamRetry();
-      if (routeAbortController.signal.aborted || routeClientCancelled) {
-        routeClientCancelled = true;
-        recordRouteClientCancellation();
+      if (
+        !rectifierRetried &&
+        !res.headersSent &&
+        !ctx.signal.aborted &&
+        !targetLock &&
+        !responsesStateRequest &&
+        attempt < ROUTE_GLOBAL_MAX_ATTEMPTS
+      ) {
+        const repair = rectifyRejectedRequest(activeBody, result.statusCode, result.body);
+        if (repair) {
+          rectifierRetried = true;
+          ctx.recordRequest({
+            ...ctx.logContext,
+            outcome: 'neutral',
+            statusCode: result.statusCode,
+            error: `request_rectified:${repair.kind}`,
+          });
+          attempt += 1;
+          Object.assign(ctx.logContext, { attempt });
+          log.info('Retrying repaired upstream request', { requestId, attempt, kind: repair.kind });
+          activeBody = repair.body;
+          result = await forwardActiveChannel();
+        }
+      }
+      if (ctx.signal.aborted || ctx.clientCancelled) {
+        ctx.clientCancelled = true;
+        ctx.recordClientCancellation();
         if (!bypassRoutePathState && shouldRecordCancelledUpstreamPathSuccess(result)) {
           await recordCancelledUpstreamPathSuccess({
-            requestSelectionStartedAt,
+            requestSelectionStartedAt: ctx.startedAt,
             activeChannel,
             result,
             routeRuntimeConfig,
           });
         }
-        finishRouteHandling();
+        ctx.finish();
         return;
       }
       let outcome = classifyRouteStatusCode(result.statusCode);
@@ -4742,20 +2881,20 @@ export async function handleRequest(
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
         });
-        await delayWithAbort(ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS, routeAbortController.signal);
+        await delayWithAbort(ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS, ctx.signal);
         result = await forwardActiveChannel();
-        if (routeAbortController.signal.aborted || routeClientCancelled) {
-          routeClientCancelled = true;
-          recordRouteClientCancellation();
+        if (ctx.signal.aborted || ctx.clientCancelled) {
+          ctx.clientCancelled = true;
+          ctx.recordClientCancellation();
           if (!bypassRoutePathState && shouldRecordCancelledUpstreamPathSuccess(result)) {
             await recordCancelledUpstreamPathSuccess({
-              requestSelectionStartedAt,
+              requestSelectionStartedAt: ctx.startedAt,
               activeChannel,
               result,
               routeRuntimeConfig,
             });
           }
-          finishRouteHandling();
+          ctx.finish();
           return;
         }
         outcome = classifyRouteStatusCode(result.statusCode);
@@ -4793,11 +2932,21 @@ export async function handleRequest(
         : undefined;
       if (upstreamFailure) {
         retainedFailure = retainUpstreamFailure(retainedFailure, upstreamFailure);
+        if (upstreamFailure.failureClass === 'overflow' && !targetLock && !responsesStateRequest) {
+          const capacity = (channel: ResolvedChannel) =>
+            getModelMetadata(channel.resolvedModel)?.context ?? 0;
+          const remaining = sortedChannels.slice(i + 1);
+          remaining.sort((left, right) => capacity(right) - capacity(left));
+          sortedChannels.splice(i + 1, remaining.length, ...remaining);
+        }
         if (upstreamFailure.failureClass !== 'request_fatal') {
           sawNonRequestFatalFailure = true;
         }
         if (upstreamFailure.retryAfterMs !== undefined) {
           routePathRetryAfterUntil.set(routePathKey, Date.now() + upstreamFailure.retryAfterMs);
+        }
+        if (upstreamFailure.failureClass === 'request_fatal') {
+          writeRequestFatalNegativeCache(routePathKey, requestFatalFingerprint, Date.now());
         }
       }
 
@@ -4812,10 +2961,10 @@ export async function handleRequest(
             reason: 'upstream_unsupported',
           }
         );
-        if (stopRouteHandlingIfClientCancelled()) {
+        if (ctx.stopIfClientCancelled()) {
           return;
         }
-        recordRequestForSelection({
+        ctx.recordRequest({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -4877,7 +3026,7 @@ export async function handleRequest(
             statusCode: result.statusCode,
             latencyMs: result.latencyMs,
           });
-          await recordPathOutcomeForSelection(
+          await ctx.recordPathOutcome(
             activeChannel,
             'failure',
             {
@@ -4887,10 +3036,10 @@ export async function handleRequest(
             },
             routeRuntimeConfig
           );
-          if (stopRouteHandlingIfClientCancelled()) {
+          if (ctx.stopIfClientCancelled()) {
             return;
           }
-          recordRequestForSelection({
+          ctx.recordRequest({
             requestId,
             attempt,
             routeRuleId: activeRouteRuleId,
@@ -4936,7 +3085,7 @@ export async function handleRequest(
           statusCode: result.statusCode,
           latencyMs: result.latencyMs,
         });
-        await recordPathOutcomeForSelection(
+        await ctx.recordPathOutcome(
           activeChannel,
           accountingOutcome,
           {
@@ -4963,16 +3112,16 @@ export async function handleRequest(
               ? { targetProtocol: activeChannel.targetProtocol }
               : {}),
             canonicalModel: canonicalModel || '',
-            boundAt: requestSelectionStartedAt,
+            boundAt: ctx.startedAt,
             lastUsedAt: Date.now(),
           });
         }
-        if (stopRouteHandlingIfClientCancelled()) {
+        if (ctx.stopIfClientCancelled()) {
           return;
         }
 
         // 记录分析统计
-        recordRequestForSelection({
+        ctx.recordRequest({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -5189,17 +3338,17 @@ export async function handleRequest(
           reason,
         });
         if (!bypassRoutePathState) {
-          await recordPathOutcomeForSelection(
+          await ctx.recordPathOutcome(
             activeChannel,
             'failure',
             { error: `adapter_response-adapt:${reason}` },
             routeRuntimeConfig
           );
-          if (stopRouteHandlingIfClientCancelled()) {
+          if (ctx.stopIfClientCancelled()) {
             return;
           }
         }
-        recordRequestForSelection({
+        ctx.recordRequest({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -5254,14 +3403,10 @@ export async function handleRequest(
       res.end(transformed.body);
       return;
     } catch (err: unknown) {
-      if (
-        isRouteClientCancelledError(err) ||
-        routeAbortController.signal.aborted ||
-        routeClientCancelled
-      ) {
-        routeClientCancelled = true;
-        recordRouteClientCancellation();
-        finishRouteHandling();
+      if (isRouteClientCancelledError(err) || ctx.signal.aborted || ctx.clientCancelled) {
+        ctx.clientCancelled = true;
+        ctx.recordClientCancellation();
+        ctx.finish();
         return;
       }
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
@@ -5318,7 +3463,7 @@ export async function handleRequest(
       }
       if (!bypassRoutePathState) {
         recordOutcome(activeChannel, 'failure', {});
-        await recordPathOutcomeForSelection(
+        await ctx.recordPathOutcome(
           activeChannel,
           'failure',
           {
@@ -5327,10 +3472,10 @@ export async function handleRequest(
           },
           routeRuntimeConfig
         );
-        if (stopRouteHandlingIfClientCancelled()) {
+        if (ctx.stopIfClientCancelled()) {
           return;
         }
-        recordRequestForSelection({
+        ctx.recordRequest({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -5372,7 +3517,7 @@ export async function handleRequest(
         err instanceof NativeAnthropicSseGuardError &&
         nativeResponsePassthrough &&
         !targetLock &&
-        !routeAbortController.signal.aborted &&
+        !ctx.signal.aborted &&
         !isRoutePathDisabled(activeChannel) &&
         (attemptsByRoutePath.get(routePathKey) ?? 0) < routeRuntimeConfig.maxAttemptsPerRoutePath
       ) {
@@ -5392,7 +3537,7 @@ export async function handleRequest(
 
   if (!res.headersSent) {
     if (requestIsTokenCount) {
-      recordRequestForSelection({
+      ctx.recordRequest({
         requestId,
         attempt: attempt + 1,
         routeRuleId: activeRouteRuleId,
@@ -5407,10 +3552,7 @@ export async function handleRequest(
       });
       writeTokenCountUnsupported(res, tokenCountFallbackReason || 'native_channels_unavailable');
     } else if (!attemptedUpstream && adapterIncompatibilityReasons.length > 0) {
-      res.writeHead(400, {
-        'Content-Type': 'application/json',
-        'X-Route-Proxy-Error': 'no_compatible_route_channel',
-      });
+      writeRouteProxyErrorHead(res, 400, 'no_compatible_route_channel');
       res.end(
         JSON.stringify({
           error: 'no_compatible_route_channel',
@@ -5418,30 +3560,67 @@ export async function handleRequest(
           reasons: Array.from(new Set(adapterIncompatibilityReasons)),
         })
       );
+    } else if (retainedFailure?.failureClass === 'overflow') {
+      writeRouteProxyErrorHead(res, 413, 'context_length_exceeded', {
+        ...JSON_RESPONSE_HEADERS,
+        'X-Route-Proxy-Failure-Class': 'overflow',
+        'X-Route-Proxy-Attempts': String(attempt),
+      });
+      res.end(
+        JSON.stringify(
+          sourceProtocol === 'anthropic-messages'
+            ? {
+                type: 'error',
+                error: {
+                  type: 'request_too_large',
+                  message:
+                    'Conversation exceeds the context window; compact the conversation and retry.',
+                },
+              }
+            : {
+                error: {
+                  type: 'invalid_request_error',
+                  code: 'context_length_exceeded',
+                  param: 'input',
+                  message:
+                    'Conversation exceeds the context window; compact the conversation and retry.',
+                },
+              }
+        )
+      );
     } else if (quotaExhaustionEncountered) {
       writeUpstreamTemporarilyUnavailableResponse(res, cliType);
     } else if (retainedFailure?.failureClass === 'request_fatal' && !sawNonRequestFatalFailure) {
       // 所有尝试过的候选一致判定请求本身不可用：重试无意义，透传让客户端停止。
       writeRequestFatalPassthroughResponse(res, retainedFailure, attempt);
     } else if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
-      writeAllRoutePathsDisabledResponse(res, cliType);
+      writeAllRoutePathsDisabledResponse(res, cliType, sortedChannels);
     } else if (retainedFailure) {
       // 其余上游失败被吸收为可重试 503，不终止客户端对话。
       writeAbsorbedUpstreamFailureResponse(res, cliType, retainedFailure, attempt);
     } else {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          error: ALL_CHANNELS_FAILED_ERROR_CODE,
-          message: ALL_CHANNELS_FAILED_MESSAGE,
-        })
+      writeRouteProxyJsonError(
+        res,
+        502,
+        ALL_CHANNELS_FAILED_ERROR_CODE,
+        ALL_CHANNELS_FAILED_MESSAGE
       );
     }
   }
-  finishRouteHandling();
+  ctx.finish();
 }
 
-export async function startProxyServer(): Promise<void> {
+function enqueueProxyLifecycle(operation: () => Promise<void>): Promise<void> {
+  const result = proxyLifecycle.then(operation);
+  proxyLifecycle = result.catch(() => {});
+  return result;
+}
+
+export function startProxyServer(): Promise<void> {
+  return enqueueProxyLifecycle(startProxyListener);
+}
+
+async function startProxyListener(): Promise<void> {
   if (isRunning) {
     log.warn('Proxy server already running');
     return;
@@ -5450,9 +3629,13 @@ export async function startProxyServer(): Promise<void> {
   const routing = unifiedConfigManager.getRoutingConfig();
   const { port, host } = routing.server;
 
-  proxyServer = http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     // 运行态闸门：停止后若仍有请求抵达（例如残留连接），一律拒绝而非继续转发上游
-    if (!isRunning) {
+    if (
+      !isRunning ||
+      proxyServer !== server ||
+      !unifiedConfigManager.getRoutingConfig().server.enabled
+    ) {
       res.writeHead(ROUTE_PROXY_STOPPED_STATUS_CODE, {
         'Content-Type': 'application/json',
         Connection: 'close',
@@ -5469,28 +3652,37 @@ export async function startProxyServer(): Promise<void> {
     handleRequest(req, res).catch(err => {
       log.error('Unhandled proxy error:', err);
       if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'internal_error', message: err.message }));
+        writeRouteProxyJsonError(res, 500, 'internal_error', err.message);
       }
     });
   });
 
-  await new Promise<void>((resolve, reject) => {
-    proxyServer!.listen(port, host, () => {
-      isRunning = true;
-      log.info(`Route proxy server started on ${host}:${port}`);
-      resolve();
+  server.on('error', error => log.error('Proxy server error:', error));
+  proxyServer = server;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(formatRouteProxyStartError(error, host, port));
+      server.once('error', onError);
+      server.listen(port, host, () => {
+        server.off('error', onError);
+        isRunning = true;
+        log.info(`Route proxy server started on ${host}:${port}`);
+        resolve();
+      });
     });
-    proxyServer!.on('error', err => {
-      reject(formatRouteProxyStartError(err, host, port));
-    });
-  });
-
-  startHealthCheckTimer();
+  } catch (error) {
+    proxyServer = null;
+    isRunning = false;
+    server.close();
+    throw error;
+  }
 }
 
-export async function stopProxyServer(): Promise<void> {
-  stopHealthCheckTimer();
+export function stopProxyServer(): Promise<void> {
+  return enqueueProxyLifecycle(stopProxyListener);
+}
+
+async function stopProxyListener(): Promise<void> {
   if (!proxyServer) return;
 
   const server = proxyServer;
@@ -5535,7 +3727,8 @@ function formatRouteProxyStartError(error: unknown, host: string, port: number):
 export async function ensureRouteProxyReady(options?: {
   autoEnable?: boolean;
 }): Promise<{ baseUrl: string; unifiedApiKey: string }> {
-  const autoEnable = options?.autoEnable !== false;
+  // 关闭状态必须是稳定的：只有明确传入 true 的交互流程才能启用代理。
+  const autoEnable = options?.autoEnable === true;
   let routing = unifiedConfigManager.getRoutingConfig();
 
   if (!routing.server.enabled && autoEnable) {

@@ -1,6 +1,6 @@
 import * as http from 'http';
 const TEST_PORT = 39217;
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../main/utils/logger', () => {
   const stub = {
@@ -12,10 +12,6 @@ vi.mock('../main/utils/logger', () => {
   };
   return { default: stub, Logger: stub };
 });
-vi.mock('../main/route-health-service', () => ({
-  startHealthCheckTimer: vi.fn(),
-  stopHealthCheckTimer: vi.fn(),
-}));
 vi.mock('../main/unified-config-manager', () => ({
   unifiedConfigManager: {
     getRoutingConfig: vi.fn(() => ({
@@ -24,7 +20,12 @@ vi.mock('../main/unified-config-manager', () => ({
   },
 }));
 
-import { getProxyStatus, startProxyServer, stopProxyServer } from '../main/route-proxy-service';
+import {
+  getProxyStatus,
+  initializeRouteProxy,
+  startProxyServer,
+  stopProxyServer,
+} from '../main/route-proxy-service';
 import { DEFAULT_ROUTE_PROXY_SERVER_CONFIG } from '../shared/types/route-proxy';
 import { unifiedConfigManager } from '../main/unified-config-manager';
 
@@ -48,24 +49,111 @@ function requestOver(agent: http.Agent, port: number): Promise<{ status: number;
   });
 }
 
+beforeEach(() => {
+  vi.spyOn(http.Server.prototype, 'listen');
+  vi.mocked(unifiedConfigManager.getRoutingConfig).mockReturnValue({
+    server: { enabled: true, host: '127.0.0.1', port: TEST_PORT, unifiedApiKey: 'sk-route' },
+  } as never);
+});
+
 afterEach(async () => {
   await stopProxyServer();
+  for (const server of vi.mocked(http.Server.prototype.listen).mock.contexts) {
+    if (server.listening) {
+      await new Promise<void>(resolve => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
+    }
+  }
+  vi.mocked(http.Server.prototype.listen).mockRestore();
 });
 
 describe('route proxy default enablement', () => {
-  it('defaults to enabled so a restart keeps forwarding through the local route', () => {
-    // 默认关闭会让 CLI 的请求绕过本地路由直连上游，规则、故障转移、统计全部失效
-    expect(DEFAULT_ROUTE_PROXY_SERVER_CONFIG.enabled).toBe(true);
+  it('defaults to disabled until the user explicitly starts the local route', () => {
+    expect(DEFAULT_ROUTE_PROXY_SERVER_CONFIG.enabled).toBe(false);
+  });
+
+  it('does not create a listener during initialization when disabled', async () => {
+    vi.mocked(unifiedConfigManager.getRoutingConfig).mockReturnValue({
+      server: { enabled: false, host: '127.0.0.1', port: TEST_PORT, unifiedApiKey: 'sk-route' },
+    } as never);
+
+    await initializeRouteProxy();
+
+    expect(http.Server.prototype.listen).not.toHaveBeenCalled();
+    expect(getProxyStatus().running).toBe(false);
   });
 });
 
 describe('route proxy stop actually stops serving', () => {
+  it('finishes stopping when stop is requested while the listener is starting', async () => {
+    const starting = startProxyServer();
+    const stopping = stopProxyServer();
+    await Promise.all([starting, stopping]);
+
+    expect(getProxyStatus().running).toBe(false);
+    await expect(requestOver(new http.Agent({ keepAlive: false }), TEST_PORT)).rejects.toThrow();
+  });
+
+  it('shares one listener when concurrent callers request startup', async () => {
+    await expect(Promise.all([startProxyServer(), startProxyServer()])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(http.Server.prototype.listen).toHaveBeenCalledTimes(1);
+    expect(getProxyStatus().running).toBe(true);
+  });
+
+  it('keeps the final requested state when start, stop and restart overlap', async () => {
+    await Promise.all([startProxyServer(), stopProxyServer(), startProxyServer()]);
+    expect(getProxyStatus().running).toBe(true);
+    const agent = new http.Agent({ keepAlive: false });
+    try {
+      const response = await requestOver(agent, TEST_PORT);
+      expect(response.status).not.toBe(503);
+      expect(response.body).not.toContain('route_proxy_stopped');
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  it('can start again after a port conflict without leaving a failed listener behind', async () => {
+    const blocker = http.createServer();
+    await new Promise<void>(resolve => blocker.listen(TEST_PORT, '127.0.0.1', resolve));
+    try {
+      await expect(startProxyServer()).rejects.toThrow('port conflict');
+      expect(getProxyStatus().running).toBe(false);
+    } finally {
+      await new Promise<void>(resolve => blocker.close(() => resolve()));
+    }
+
+    await startProxyServer();
+    expect(getProxyStatus().running).toBe(true);
+  });
+
   it('reports the running state through getProxyStatus', async () => {
     expect(getProxyStatus().running).toBe(false);
     await startProxyServer();
     expect(getProxyStatus().running).toBe(true);
     await stopProxyServer();
     expect(getProxyStatus().running).toBe(false);
+  });
+
+  it('refuses requests as soon as the persisted server switch is disabled', async () => {
+    await startProxyServer();
+    vi.mocked(unifiedConfigManager.getRoutingConfig).mockReturnValue({
+      server: { enabled: false, host: '127.0.0.1', port: TEST_PORT, unifiedApiKey: 'sk-route' },
+    } as never);
+
+    const agent = new http.Agent({ keepAlive: false });
+    try {
+      const response = await requestOver(agent, TEST_PORT);
+      expect(response.status).toBe(503);
+      expect(response.body).toContain('route_proxy_stopped');
+    } finally {
+      agent.destroy();
+    }
   });
 
   it('refuses requests arriving on a kept-alive connection after stop', async () => {

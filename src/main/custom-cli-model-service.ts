@@ -9,9 +9,14 @@ import Logger from './utils/logger';
 import { httpGet } from './utils/http-client';
 import {
   loadCustomCliConfigStorage,
-  saveCustomCliConfigStorage,
+  updateCustomCliConfigStorage,
 } from './custom-cli-config-service';
 import { normalizeCustomCliApiKeys } from '../shared/types/custom-cli-config';
+import {
+  buildApiKeyHeaders,
+  buildVersionedApiUrl,
+  resolveApiKeyForUse,
+} from '../shared/utils/apiConfig';
 
 const log = Logger.scope('CustomCliModelService');
 
@@ -22,10 +27,7 @@ function buildModelsUrl(value: string): string {
   if (/\/v1\/models(?:[/?#]|$)/i.test(normalized)) {
     return normalized;
   }
-  if (/\/v1$/i.test(normalized)) {
-    return `${normalized}/models`;
-  }
-  return `${normalized}/v1/models`;
+  return buildVersionedApiUrl(normalized, 'models');
 }
 
 export interface FetchModelsResult {
@@ -122,10 +124,16 @@ export async function fetchModels(configId: string): Promise<FetchModelsResult> 
     const perKey: NonNullable<FetchModelsResult['perKey']> = [];
     const updatedKeys = apiKeys.map(key => ({ ...key }));
     for (const key of updatedKeys) {
+      const requestStartedAt = Date.now();
       try {
+        const apiKey = resolveApiKeyForUse(key.key);
+        if (!apiKey) throw new Error('API Key 为空或被掩码隐藏');
         const response = await httpGet(url, {
           timeout: FETCH_TIMEOUT_MS,
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key.key}` },
+          headers: {
+            'Content-Type': 'application/json',
+            ...buildApiKeyHeaders(apiKey, customCliConfig.routeAuthScheme),
+          },
         });
         if (response.status < 200 || response.status >= 300) {
           perKey.push({
@@ -147,7 +155,7 @@ export async function fetchModels(configId: string): Promise<FetchModelsResult> 
           continue;
         }
         key.models = models;
-        key.lastModelFetch = Date.now();
+        key.lastModelFetch = requestStartedAt;
         perKey.push({ keyId: key.id, success: true, models });
       } catch (error: any) {
         perKey.push({
@@ -158,28 +166,49 @@ export async function fetchModels(configId: string): Promise<FetchModelsResult> 
         });
       }
     }
-    const models = Array.from(new Set(updatedKeys.flatMap(key => key.models)));
+    let models = Array.from(new Set(updatedKeys.flatMap(key => key.models)));
     const success = perKey.some(item => item.success);
     const errors = perKey
       .filter(item => !item.success)
       .map(item => `${item.keyId}: ${item.error}`)
       .join('; ');
-    const updatedConfigs = storage.configs.map(config =>
-      config.id === configId
-        ? {
-            ...config,
-            models,
-            apiKeys: updatedKeys,
-            apiKey: updatedKeys[0]?.key || config.apiKey,
-            lastModelFetch: success ? Date.now() : config.lastModelFetch,
-          }
-        : config
-    );
-
-    await saveCustomCliConfigStorage({
-      ...storage,
-      configs: updatedConfigs,
+    let applied = false;
+    await updateCustomCliConfigStorage(current => {
+      const latest = current.configs.find(config => config.id === configId);
+      if (
+        !latest ||
+        latest.baseUrl !== customCliConfig.baseUrl ||
+        latest.modelUrl !== customCliConfig.modelUrl ||
+        latest.routeAuthScheme !== customCliConfig.routeAuthScheme
+      )
+        return null;
+      const latestKeys = normalizeCustomCliApiKeys(latest.apiKeys, { legacyApiKey: latest.apiKey });
+      const mergedKeys = latestKeys.map(key => {
+        const fetched = updatedKeys.find(item => item.id === key.id && item.key === key.key);
+        if (!fetched || !perKey.some(item => item.keyId === key.id && item.success)) return key;
+        if ((key.lastModelFetch || 0) > (fetched.lastModelFetch || 0)) return key;
+        applied = true;
+        return { ...key, models: fetched.models, lastModelFetch: fetched.lastModelFetch };
+      });
+      if (!applied) return null;
+      models = Array.from(new Set(mergedKeys.flatMap(key => key.models)));
+      return {
+        ...current,
+        configs: current.configs.map(config =>
+          config.id === configId
+            ? {
+                ...config,
+                models,
+                apiKeys: mergedKeys,
+                lastModelFetch: Date.now(),
+              }
+            : config
+        ),
+      };
     });
+    if (success && !applied) {
+      return { success: false, models: [], error: '配置已变更，请重新拉取模型', perKey };
+    }
 
     return {
       success,

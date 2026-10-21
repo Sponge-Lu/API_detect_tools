@@ -2,6 +2,12 @@ import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// request_fatal 负缓存是模块级状态，必须每个用例前清空，否则
+// 前面用例的 400 会把后面用例的候选通道整批跳过。
+beforeEach(() => {
+  clearRequestFatalNegativeCache();
+});
+
 const { routeDiagnosticLog } = vi.hoisted(() => ({ routeDiagnosticLog: vi.fn() }));
 
 vi.mock('../main/utils/logger', () => ({
@@ -11,10 +17,11 @@ vi.mock('../main/utils/logger', () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    // 失败终结的 'Route request completed' 走 warn，与 debug 一同捕获才能断言诊断。
     scope: (name: string) => ({
       debug: name === 'RouteProxyService' ? routeDiagnosticLog : vi.fn(),
       info: vi.fn(),
-      warn: vi.fn(),
+      warn: name === 'RouteProxyService' ? routeDiagnosticLog : vi.fn(),
       error: vi.fn(),
     }),
   },
@@ -76,19 +83,19 @@ vi.mock('../main/route-channel-resolver', () => ({
   ),
 }));
 
-vi.mock('../main/route-stats-service', () => ({
-  sortChannelsByScore: vi.fn((channels: unknown[]) => channels),
-  recordOutcome: vi.fn(),
-  isRoutePathDisabled: vi.fn(() => false),
-  recordRoutePathOutcome: vi.fn(),
-  isRouteEndpointUnsupported: vi.fn(() => false),
-  recordRouteEndpointUnsupported: vi.fn(),
-}));
-
-vi.mock('../main/route-health-service', () => ({
-  startHealthCheckTimer: vi.fn(),
-  stopHealthCheckTimer: vi.fn(),
-}));
+vi.mock('../main/route-stats-service', () => {
+  const isRoutePathDisabled = vi.fn(() => false);
+  return {
+    sortChannelsByScore: vi.fn((channels: unknown[]) => channels),
+    recordOutcome: vi.fn(),
+    isRoutePathDisabled,
+    beginRoutePathAttempt: vi.fn((key: unknown) => !isRoutePathDisabled(key as never)),
+    getRoutePathDisabledUntil: vi.fn(() => undefined),
+    recordRoutePathOutcome: vi.fn(),
+    isRouteEndpointUnsupported: vi.fn(() => false),
+    recordRouteEndpointUnsupported: vi.fn(),
+  };
+});
 
 vi.mock('../main/route-analytics-service', () => ({
   recordRouteRequest: vi.fn(),
@@ -102,6 +109,8 @@ vi.mock('../main/utils/http-client', () => ({
 import {
   applySessionChannelAffinity,
   applySuccessfulRoutePathAffinity,
+  buildRequestFatalFingerprint,
+  clearRequestFatalNegativeCache,
   pickDistributedChannelIndex,
   buildChannelAttemptPlan,
   buildUpstreamRequestUrl,
@@ -148,12 +157,14 @@ import {
 } from '../main/route-target-lock';
 import { httpRawRequest, httpRawStreamRequest } from '../main/utils/http-client';
 import {
+  getRoutePathDisabledUntil,
   isRouteEndpointUnsupported,
   isRoutePathDisabled,
   recordRouteEndpointUnsupported,
   recordRoutePathOutcome,
 } from '../main/route-stats-service';
 import { recordRouteRequest } from '../main/route-analytics-service';
+import * as modelMetadataService from '../main/model-metadata-service';
 import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
@@ -4347,7 +4358,7 @@ describe('route-proxy-service Codex utility request diagnostics', () => {
     }
   });
 
-  it('logs a bound root-alias reuse diagnostic when a user thread changes inside one conversation', async () => {
+  it('logs a bound exact-session reuse diagnostic when a user thread changes inside one conversation', async () => {
     const routing = setupCodexUtilityRoute();
     await handleRequest(
       codexRequest('private-root-session', { threadSource: 'user', model: 'root-model' }),
@@ -4380,7 +4391,7 @@ describe('route-proxy-service Codex utility request diagnostics', () => {
     expect(bindings[1]).toMatchObject({
       requestId: incoming[1].requestId,
       identitySource: 'codex',
-      resolutionPath: 'root-alias',
+      resolutionPath: 'exact',
       bindingState: 'bound',
       memberAppended: true,
       instanceIdHash: expect.stringMatching(/^[a-f0-9]{8}$/),
@@ -5335,6 +5346,131 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     }
   );
 
+  it('prefers a larger remaining context window after overflow without changing the first candidate', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['openai-responses'];
+    const { channel } = setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'openai-responses',
+    });
+    vi.mocked(resolveChannels).mockReturnValue([
+      { ...channel, apiKeyId: 'small-key', resolvedModel: 'small' },
+      { ...channel, apiKeyId: 'medium-key', resolvedModel: 'medium' },
+      { ...channel, apiKeyId: 'large-key', resolvedModel: 'large' },
+    ]);
+    const capacities: Record<string, number> = { small: 100, medium: 300, large: 900 };
+    const metadata = vi
+      .spyOn(modelMetadataService, 'getModelMetadata')
+      .mockImplementation(model => ({
+        context: capacities[model || ''],
+      }));
+    try {
+      vi.mocked(httpRawRequest)
+        .mockResolvedValueOnce({
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from('{"error":{"message":"context length exceeded"}}'),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(JSON.stringify(source.responseBody)),
+        });
+      const response = createMockResponse();
+      await handleRequest(
+        createJsonRequest(
+          source.path,
+          {
+            ...source.routeHeaders,
+            'content-type': 'application/json',
+            'x-api-detect-cli': 'openCode',
+          },
+          source.requestBody
+        ),
+        response
+      );
+      expect(response.statusCode).toBe(200);
+      expect(httpRawRequest).toHaveBeenCalledTimes(2);
+      const models = vi
+        .mocked(httpRawRequest)
+        .mock.calls.map(
+          ([, config]) => JSON.parse(Buffer.from(config?.body as Buffer).toString('utf8')).model
+        );
+      expect(models).toEqual(['small', 'large']);
+    } finally {
+      metadata.mockRestore();
+    }
+  });
+
+  it.each(protocolMatrix.flatMap(pair => [false, true].map(stream => ({ ...pair, stream }))))(
+    'normalizes overflow for $sourceProtocol <- $targetProtocol (stream=$stream) without poisoning routes',
+    async ({ sourceProtocol, targetProtocol, stream }) => {
+      vi.clearAllMocks();
+      const source = protocolCases[sourceProtocol];
+      setupOpenCodeRoute({
+        detectedCliType: source.detectedCliType,
+        channelTargetProtocol: targetProtocol,
+      });
+      const body = Buffer.from(
+        JSON.stringify({
+          error: {
+            type: 'invalid_request_error',
+            code: 'context_length_exceeded',
+            message: 'context length exceeded',
+          },
+        })
+      );
+      const headers = { 'content-type': 'application/json' };
+      vi.mocked(httpRawRequest).mockResolvedValue({ status: 400, headers, body });
+      vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+        expect(config.onResponse?.({ status: 400, statusText: 'Bad Request', headers })).toBe(
+          false
+        );
+        return { status: 400, headers, body };
+      });
+      const request = () =>
+        createJsonRequest(
+          source.path,
+          {
+            ...source.routeHeaders,
+            'content-type': 'application/json',
+            'x-api-detect-cli': 'openCode',
+          },
+          { ...source.requestBody, stream }
+        );
+      for (let index = 0; index < 2; index++) {
+        const response = createMockResponse();
+        await handleRequest(request(), response);
+        expect(response.statusCode).toBe(413);
+        const payload = JSON.parse(response.body);
+        if (sourceProtocol === 'anthropic-messages') {
+          expect(payload).toMatchObject({ type: 'error', error: { type: 'request_too_large' } });
+        } else {
+          expect(payload).toMatchObject({
+            error: {
+              type: 'invalid_request_error',
+              code: 'context_length_exceeded',
+              param: 'input',
+            },
+          });
+        }
+        expect(response.headers['X-Route-Proxy-Failure-Class']).toBe('overflow');
+        expect(response.headers['X-Route-Proxy-Attempts']).toBe('1');
+      }
+      expect(stream ? httpRawStreamRequest : httpRawRequest).toHaveBeenCalledTimes(2);
+      expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKeyId: 'key-opencode' }),
+        'neutral',
+        expect.objectContaining({ statusCode: 400 }),
+        expect.any(Object)
+      );
+      const forwarded = (stream ? vi.mocked(httpRawStreamRequest) : vi.mocked(httpRawRequest)).mock
+        .calls[0][1];
+      const forwardedBody = JSON.parse(Buffer.from(forwarded?.body as Buffer).toString('utf8'));
+      expect(JSON.stringify(forwardedBody)).toContain('hello');
+    }
+  );
+
   it('absorbs a rejected cross-protocol streaming HTTP failure into a retryable response', async () => {
     vi.clearAllMocks();
     const source = protocolCases['anthropic-messages'];
@@ -5848,7 +5984,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
       {
         model: 'wire-opencode',
         input: 'hello',
-        metadata: { trace: 'must-not-be-dropped' },
+        include: ['reasoning.encrypted_content'],
       }
     );
     const response = createMockResponse();
@@ -5865,7 +6001,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: 'neutral',
-        error: 'adapter_request-adapt:unsupported_field:request.metadata',
+        error: 'adapter_request-adapt:unsupported_field:request.include',
       })
     );
   });
@@ -5886,7 +6022,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
       {
         model: 'wire-opencode',
         input: 'hello',
-        metadata: { trace: 'must-not-be-dropped' },
+        include: ['reasoning.encrypted_content'],
       }
     );
     const response = createMockResponse();
@@ -5897,7 +6033,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body)).toMatchObject({
       error: 'no_compatible_route_channel',
-      reasons: ['unsupported_field:request.metadata'],
+      reasons: ['unsupported_field:request.include'],
     });
   });
 });
@@ -6472,12 +6608,20 @@ describe('route-proxy-service upstream failure classification', () => {
     vi.mocked(isRoutePathDisabled).mockImplementation(
       channel => disabled.has((channel as { apiKeyId: string }).apiKeyId) && disabled.size >= 2
     );
+    vi.mocked(getRoutePathDisabledUntil).mockImplementation(() => Date.now() + 12_000);
     const response = createMockResponse();
 
     await handleRequest(createRequest(), response);
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(503);
     expect(response.headers['X-Route-Proxy-Error']).toBe('all_route_paths_disabled');
+    expect(Number(response.headers['Retry-After'])).toBeGreaterThanOrEqual(11);
+    expect(Number(response.headers['Retry-After'])).toBeLessThanOrEqual(12);
+    // 终结原因进入主日志诊断行，attemptCount 保留真实上游尝试数
+    expect(getRouteDiagnostics('Route request completed').at(-1)).toMatchObject({
+      statusCode: 503,
+      error: 'all_route_paths_disabled',
+    });
   });
 
   it('honors a short Retry-After before replanning the same route path', async () => {
@@ -7514,7 +7658,7 @@ describe('route-proxy-service disabled path short-circuit', () => {
       expectedBody: {
         type: 'error',
         error: {
-          type: 'invalid_request_error',
+          type: 'overloaded_error',
           message: expect.stringContaining('temporarily disabled'),
         },
       },
@@ -7527,7 +7671,7 @@ describe('route-proxy-service disabled path short-circuit', () => {
       expectedBody: {
         error: {
           code: 'all_route_paths_disabled',
-          type: 'invalid_request_error',
+          type: 'server_error',
           message: expect.stringContaining('temporarily disabled'),
         },
       },
@@ -7535,7 +7679,7 @@ describe('route-proxy-service disabled path short-circuit', () => {
   ];
 
   disabledResponseCases.forEach(testCase => {
-    it(`returns a non-retryable ${testCase.cliType} error when all planned paths are disabled`, async () => {
+    it(`returns a retryable ${testCase.cliType} error when all planned paths are disabled`, async () => {
       vi.clearAllMocks();
 
       const rule = {
@@ -7602,7 +7746,7 @@ describe('route-proxy-service disabled path short-circuit', () => {
 
       expect(httpRawRequest).not.toHaveBeenCalled();
       expect(resolveChannelCredentials).not.toHaveBeenCalled();
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(503);
       expect(JSON.parse(response.body)).toMatchObject(testCase.expectedBody);
     });
   });
@@ -11281,5 +11425,79 @@ describe('route-proxy-service upstream request target', () => {
     expect(
       buildUpstreamRequestUrl(baseUrl, requestUrl, 'openCode', undefined, 'sk-upstream-key').url
     ).toBe(expected);
+  });
+});
+
+describe('route-proxy-service request-fatal fingerprint', () => {
+  it('keeps the same fingerprint when only message text grows across turns', () => {
+    const tools = [
+      { type: 'function', name: 'Read' },
+      { type: 'function', name: 'Edit' },
+    ];
+    const base = {
+      model: 'claude-opus-4-6',
+      stream: true,
+      max_tokens: 1024,
+      tools,
+      system: [{ type: 'text', text: 'You are a helpful assistant.' }],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'turn 1' }] },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read' }] },
+      ],
+    };
+    const nextTurn = {
+      ...base,
+      max_tokens: 2048,
+      messages: [
+        ...base.messages,
+        { role: 'user', content: [{ type: 'text', text: 'turn 2 with much longer body' }] },
+      ],
+    };
+    // 体积桶按 2 的幂取整：同桶内的自然增长不应改变指纹
+    const baseLength = JSON.stringify(base).length;
+    const nextLength = JSON.stringify(nextTurn).length;
+    expect(Math.floor(Math.log2(nextLength))).toBe(Math.floor(Math.log2(baseLength)));
+
+    expect(buildRequestFatalFingerprint(nextTurn, nextLength)).toBe(
+      buildRequestFatalFingerprint(base, baseLength)
+    );
+  });
+
+  it('changes the fingerprint when the size bucket crosses a power of two', () => {
+    const base = { model: 'claude-opus-4-6', messages: [{ role: 'user', content: 'hi' }] };
+
+    expect(buildRequestFatalFingerprint(base, 100_000)).toBe(
+      buildRequestFatalFingerprint(base, 131_000)
+    );
+    expect(buildRequestFatalFingerprint(base, 100_000)).not.toBe(
+      buildRequestFatalFingerprint(base, 150_000)
+    );
+  });
+
+  it('changes the fingerprint when structural features change', () => {
+    const base = {
+      model: 'claude-opus-4-6',
+      tools: [{ type: 'function', name: 'Read' }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    };
+
+    expect(buildRequestFatalFingerprint({ ...base, thinking: { type: 'enabled' } })).not.toBe(
+      buildRequestFatalFingerprint(base)
+    );
+    expect(
+      buildRequestFatalFingerprint({
+        ...base,
+        messages: [{ role: 'user', content: [{ type: 'image', source: {} }] }],
+      })
+    ).not.toBe(buildRequestFatalFingerprint(base));
+    expect(
+      buildRequestFatalFingerprint({ ...base, tools: [{ type: 'function', name: 'Bash' }] })
+    ).not.toBe(buildRequestFatalFingerprint(base));
+  });
+
+  it('returns an empty fingerprint for non-JSON-object bodies', () => {
+    expect(buildRequestFatalFingerprint(null)).toBe('');
+    expect(buildRequestFatalFingerprint('raw text')).toBe('');
+    expect(buildRequestFatalFingerprint(undefined)).toBe('');
   });
 });

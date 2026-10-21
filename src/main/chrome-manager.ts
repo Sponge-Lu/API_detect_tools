@@ -22,7 +22,8 @@
  * - Veloera: check_in_enabled, can_check_in
  * - New API: checkin_enabled, checkin.stats.checked_in_today (取反)
  *
- * cleanupSessionFiles 清理的目录包括 Cookies，用于解决旧 Cookie 导致的 401 问题
+ * cleanupSessionFiles 仅清理会话恢复相关文件（Preferences/Session/Sessions 等），不删除 Cookies；
+ * 自动化 Profile 的登录态因此可以在多次启动之间保留
  *
  * 并发安全: cleanupOldPages 在 browserRefCount > 1 时跳过清理，
  * 避免关闭其他并发检测任务正在使用的页面
@@ -35,7 +36,6 @@
 
 import puppeteer, { Browser, Page } from 'puppeteer-core';
 import * as path from 'path';
-import * as os from 'os';
 import * as fs from 'fs';
 import {
   app,
@@ -47,6 +47,8 @@ import {
 import Logger from './utils/logger';
 import type { SiteType } from '../shared/types/site';
 import { getSiteTypeProfile } from './site-type-registry';
+import { resolveBundledBrowserPath } from './browser-runtime/bundled-resolver';
+import { browserProfileManager } from './browser-profile-manager';
 
 /**
  * localStorage数据结构
@@ -120,8 +122,8 @@ function createEmptySlot(): BrowserSlot {
 export class ChromeManager {
   /**
    * 多槽位浏览器池
-   * slot 0 = 主浏览器（所有站点的第一个账号）
-   * slot N = 隔离浏览器 N（所有站点的第 N+1 个账号）
+   * slot 0 = 应用内部主浏览器，slot 1 = 显式绑定的系统 Profile
+   * slot >= 2 = 账户保存的隔离浏览器槽位
    */
   private slots = new Map<number, BrowserSlot>();
 
@@ -132,6 +134,9 @@ export class ChromeManager {
     debugPort: number;
     isClosed: boolean;
     abortController: AbortController | null;
+    /** 登录/签到流程进行中：cleanup() 不得连带终止（用户可能正在窗口里登录或完成签到） */
+    busy: boolean;
+    userDataDir?: string;
   } | null = null;
 
   /** 按 origin 串行化登录验证请求，避免同一请求会话的 Cookie 同步互相覆盖 */
@@ -222,6 +227,12 @@ export class ChromeManager {
         try {
           // 使用一个虚拟URL启动浏览器，实际URL会在createPage中设置
           await this.launchBrowser('about:blank');
+        } catch (launchError) {
+          // 启动失败（端口未就绪/路径无效等）时回退引用计数，否则计数永不归零，自动清理失效
+          if (this.browserRefCount > 0) {
+            this.browserRefCount--;
+          }
+          throw launchError;
         } finally {
           this.browserLock = null;
           resolveLock!();
@@ -276,7 +287,25 @@ export class ChromeManager {
 
     // 非零槽位走独立的浏览器管理路径
     if (slotIndex > 0) {
-      return this.createPageForSlot(url, slotIndex);
+      try {
+        return await this.createPageForSlot(url, slotIndex);
+      } catch (error: any) {
+        // 冷启动（杀软扫描/首次建 Profile）下首启超时较常见，端口/启动类失败清理后重试一次
+        const message = String(error?.message || '');
+        const retryable =
+          message.includes('未就绪') ||
+          message.includes('浏览器启动失败') ||
+          message.includes('Session closed') ||
+          message.includes('Connection closed') ||
+          message.includes('Protocol error');
+        if (!retryable) throw error;
+        Logger.warn(
+          `⚠️ [ChromeManager] slot-${slotIndex} 启动/连接异常，清理后重试一次: ${message}`
+        );
+        this.cleanupSlot(slotIndex);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return await this.createPageForSlot(url, slotIndex);
+      }
     }
 
     // slot 0: 走原有逻辑（向后兼容）
@@ -308,10 +337,13 @@ export class ChromeManager {
       this.abortController = new AbortController();
     }
 
-    // 获取浏览器引用（增加引用计数）
-    const release = await this.acquireBrowser();
+    // 获取浏览器引用并创建页面；启动阶段失败（端口未就绪/路径无效等）同样纳入下方重试
+    let release: (() => void) | null = null;
 
     try {
+      // 获取浏览器引用（增加引用计数）
+      release = await this.acquireBrowser();
+
       // 检查浏览器连接状态
       if (this.browser) {
         try {
@@ -322,15 +354,20 @@ export class ChromeManager {
           this.browser = null;
           // 连接失效时，需要重新获取引用
           const newRelease = await this.acquireBrowser();
-          // 替换释放函数
-          const oldRelease = release;
-          return {
-            page: await this.createPageInternal(url),
-            release: () => {
-              newRelease();
-              oldRelease();
-            },
-          };
+          try {
+            const page = await this.createPageInternal(url);
+            return {
+              page,
+              release: () => {
+                newRelease();
+                release?.();
+              },
+            };
+          } catch (pageError) {
+            // 页面创建失败时归还新引用；旧引用交给外层 catch 统一释放
+            newRelease();
+            throw pageError;
+          }
         }
       }
 
@@ -340,20 +377,24 @@ export class ChromeManager {
 
       const page = await this.createPageInternal(url);
 
-      return { page, release };
+      return { page, release: release! };
     } catch (error: any) {
       // 如果创建失败，释放引用
-      release();
+      release?.();
       Logger.error('❌ [ChromeManager] createPage失败:', error.message);
 
-      // 如果创建页面失败，清理并重试一次
-      if (
-        error.message.includes('Target.createTarget timed out') ||
-        error.message.includes('Session closed') ||
-        error.message.includes('Connection closed') ||
-        error.message.includes('Protocol error')
-      ) {
-        Logger.info('⚠️ [ChromeManager] 浏览器连接异常，清理并重试...');
+      // 启动失败（端口未就绪等）与连接异常都清理后重试一次
+      const message = String(error?.message || '');
+      const retryable =
+        message.includes('Target.createTarget timed out') ||
+        message.includes('Session closed') ||
+        message.includes('Connection closed') ||
+        message.includes('Protocol error') ||
+        message.includes('未就绪') ||
+        message.includes('浏览器启动失败');
+
+      if (retryable) {
+        Logger.info('⚠️ [ChromeManager] 浏览器启动/连接异常，清理并重试...');
 
         // 只有在引用计数为0时才清理
         if (this.browserRefCount === 0) {
@@ -362,19 +403,14 @@ export class ChromeManager {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // 只重试一次，避免无限循环
-        if (!error.retried) {
-          Logger.info('🔄 [ChromeManager] 重试创建页面...');
-          const retryError = new Error(error.message) as any;
-          retryError.retried = true;
-          // 重新获取引用并重试
-          const retryRelease = await this.acquireBrowser();
-          try {
-            const page = await this.createPageInternal(url);
-            return { page, release: retryRelease };
-          } catch (retryError) {
-            retryRelease();
-            throw retryError;
-          }
+        Logger.info('🔄 [ChromeManager] 重试创建页面...');
+        const retryRelease = await this.acquireBrowser();
+        try {
+          const page = await this.createPageInternal(url);
+          return { page, release: retryRelease };
+        } catch (retryError) {
+          retryRelease();
+          throw retryError;
         }
       }
       throw error;
@@ -394,6 +430,7 @@ export class ChromeManager {
 
     // 多 Tab 模式：每次检测创建独立的 Page，避免并发检测时多个站点抢同一个页面
     const page = await this.browser.newPage();
+    (page as any).__slotIndex = 0;
     Logger.info('📄 [ChromeManager] 创建新页面');
 
     Logger.info(`🌐 [ChromeManager] 导航到: ${url}`);
@@ -536,7 +573,16 @@ export class ChromeManager {
 
     // 2. 准备启动参数
     const chromePath = this.getChromePath();
-    const userDataDir = options?.userDataDir || path.join(os.tmpdir(), 'api-detector-chrome');
+    if (!chromePath || !fs.existsSync(chromePath)) {
+      throw new Error('未找到可用的浏览器。请在设置中指定浏览器路径，或安装 Chrome/Edge 后重试。');
+    }
+    const userDataDir = options?.userDataDir || this.getSlotUserDataDir(0);
+    if (this.loginBrowserState?.userDataDir === userDataDir) {
+      if (this.loginBrowserState.busy) throw new Error('该浏览器正在登录，请等待登录完成');
+      const loginPort = this.loginBrowserState.debugPort;
+      this.cleanupLoginBrowser();
+      await this.waitForPortFree(loginPort);
+    }
 
     // 2.5 清理会话恢复相关文件，防止打开历史页面
     this.cleanupSessionFiles(userDataDir);
@@ -633,7 +679,7 @@ export class ChromeManager {
   /**
    * 等待端口就绪
    */
-  private async waitForPortReady(port: number, maxWait: number = 5000): Promise<void> {
+  private async waitForPortReady(port: number, maxWait: number = 30000): Promise<void> {
     const startTime = Date.now();
 
     while (Date.now() - startTime < maxWait) {
@@ -769,8 +815,18 @@ export class ChromeManager {
       await this.waitForPortFree(debugPort);
 
       const chromePath = this.getChromePath();
-      const userDataDir =
-        options?.userDataDir || path.join(os.tmpdir(), 'api-detector-chrome-login');
+      if (!chromePath || !fs.existsSync(chromePath)) {
+        throw new Error('未找到可用的浏览器，无法打开登录窗口。请在设置中指定浏览器路径。');
+      }
+      const userDataDir = options?.userDataDir || this.getDefaultLoginProfilePath();
+      if (userDataDir === this.getDefaultLoginProfilePath() && this.browser) {
+        if (this.browserRefCount > 0) throw new Error('浏览器正在执行检测，请等待完成后再登录');
+        this.browser.removeAllListeners('disconnected');
+        await this.browser.close();
+        this.browser = null;
+        this.cleanupChromeProcess();
+        await this.waitForPortFree(this.debugPort);
+      }
       if (!behavior?.preserveSession) {
         this.cleanupSessionFiles(userDataDir);
       }
@@ -823,12 +879,15 @@ export class ChromeManager {
         debugPort,
         isClosed: false,
         abortController: new AbortController(),
+        busy: true,
+        userDataDir,
       };
 
       browser.on('disconnected', () => {
         Logger.info('⚠️ [ChromeManager] 登录浏览器已关闭');
         if (this.loginBrowserState) {
           this.loginBrowserState.isClosed = true;
+          this.loginBrowserState.busy = false;
           this.loginBrowserState.browser = null;
           if (this.loginBrowserState.abortController) {
             this.loginBrowserState.abortController.abort();
@@ -915,20 +974,7 @@ export class ChromeManager {
       }
     }
     if (state.chromeProcess) {
-      const pid = state.chromeProcess.pid;
-      try {
-        state.chromeProcess.kill();
-      } catch (_e) {
-        /* ignore */
-      }
-      // Windows 下 SIGTERM/SIGKILL 不可靠，用 taskkill 强制终止进程树
-      if (pid && process.platform === 'win32') {
-        try {
-          require('child_process').exec(`taskkill /F /T /PID ${pid}`, () => {});
-        } catch (_e) {
-          /* ignore */
-        }
-      }
+      this.killProcessTree(state.chromeProcess);
     }
   }
 
@@ -1080,7 +1126,7 @@ export class ChromeManager {
     baseUrl: string,
     loginMode?: boolean
   ): Promise<void> {
-    this.checkBrowserClosed(loginMode);
+    this.checkBrowserClosed(loginMode, page);
     if (page.isClosed()) {
       throw new Error('浏览器已关闭，操作已取消');
     }
@@ -1199,7 +1245,7 @@ export class ChromeManager {
   }
 
   private async resolveCurrentPageUrl(page: Page, loginMode?: boolean): Promise<string | null> {
-    this.checkBrowserClosed(loginMode);
+    this.checkBrowserClosed(loginMode, page);
     if (page.isClosed()) {
       throw new Error('浏览器已关闭，操作已取消');
     }
@@ -1469,14 +1515,26 @@ export class ChromeManager {
 
   /**
    * 检查浏览器是否已关闭
+   * 非 loginMode 时优先按页面所属槽位检查（slot-N 页面不应被 slot-0 的关闭状态误杀）
    * @throws 如果浏览器已关闭，抛出错误
    */
-  private checkBrowserClosed(loginMode?: boolean): void {
+  private checkBrowserClosed(loginMode?: boolean, page?: Page | { __slotIndex?: number }): void {
     if (loginMode) {
       if (!this.loginBrowserState || this.loginBrowserState.isClosed) {
         throw new Error('浏览器已关闭，操作已取消');
       }
       if (this.loginBrowserState.abortController?.signal.aborted) {
+        throw new Error('操作已被取消（浏览器已关闭）');
+      }
+      return;
+    }
+    const slotIndex = (page as { __slotIndex?: number } | undefined)?.__slotIndex;
+    if (typeof slotIndex === 'number' && slotIndex > 0) {
+      const slot = this.slots.get(slotIndex);
+      if (!slot || slot.isClosed) {
+        throw new Error('浏览器已关闭，操作已取消');
+      }
+      if (slot.abortController?.signal.aborted) {
         throw new Error('操作已被取消（浏览器已关闭）');
       }
       return;
@@ -1523,10 +1581,7 @@ export class ChromeManager {
     requestUrl: string,
     loginMode?: boolean
   ): Promise<BrowserCookie[]> {
-    try {
-      if (loginMode) {
-        this.checkBrowserClosed(true);
-      }
+    const readOnce = async (): Promise<BrowserCookie[]> => {
       const target = new URL(requestUrl);
       const client = await page.createCDPSession();
       try {
@@ -1537,12 +1592,29 @@ export class ChromeManager {
       } finally {
         await client.detach().catch(() => undefined);
       }
+    };
+
+    try {
+      if (loginMode) {
+        this.checkBrowserClosed(true);
+      }
+      return await readOnce();
     } catch (error: any) {
       if (this.isBrowserClosureError(error)) {
         throw error;
       }
-      Logger.warn(`⚠️ [ChromeManager] 读取浏览器 Cookie 失败: ${error.message}`);
-      return [];
+      // CDP 瞬时失败（页面导航中/高负载）重试一次，避免请求退化为无 Cookie 裸发导致 401 误判
+      try {
+        return await readOnce();
+      } catch (retryError: any) {
+        if (this.isBrowserClosureError(retryError)) {
+          throw retryError;
+        }
+        Logger.warn(
+          `⚠️ [ChromeManager] 读取浏览器 Cookie 两次失败，本次请求将不带 Cookie: ${retryError.message}`
+        );
+        return [];
+      }
     }
   }
 
@@ -1950,7 +2022,7 @@ export class ChromeManager {
     const retryDelay = 2000;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      this.checkBrowserClosed(loginMode);
+      this.checkBrowserClosed(loginMode, page);
 
       try {
         // 检查页面 URL，确保在目标域名上
@@ -1967,7 +2039,7 @@ export class ChromeManager {
         if (isCloudflare) {
           Logger.info('🛡️ [ChromeManager] 检测到 Cloudflare 验证页面，等待验证通过...');
           onStatus?.('正在等待 Cloudflare 验证...');
-          await this.sleepWithAbort(retryDelay, loginMode);
+          await this.sleepWithAbort(retryDelay, loginMode, page);
           continue;
         }
 
@@ -1975,7 +2047,7 @@ export class ChromeManager {
         await page.waitForNetworkIdle({ timeout: 3000 }).catch(() => {});
 
         // 短暂等待让页面稳定
-        await this.sleepWithAbort(500, loginMode);
+        await this.sleepWithAbort(500, loginMode, page);
 
         // 尝试读取 localStorage
         Logger.info('🔍 [ChromeManager] 尝试读取 localStorage...');
@@ -2018,7 +2090,7 @@ export class ChromeManager {
           error.message
         );
         if (attempt < maxRetries) {
-          await this.sleepWithAbort(retryDelay, loginMode);
+          await this.sleepWithAbort(retryDelay, loginMode, page);
           continue;
         }
         throw error;
@@ -2031,10 +2103,16 @@ export class ChromeManager {
 
   /**
    * 可中断的睡眠函数
+   * 非 loginMode 时优先使用页面所属槽位的 AbortController
    * @param ms 等待时间（毫秒）
    */
-  private async sleepWithAbort(ms: number, loginMode?: boolean): Promise<void> {
-    const ac = loginMode ? this.loginBrowserState?.abortController : this.abortController;
+  private async sleepWithAbort(ms: number, loginMode?: boolean, page?: Page): Promise<void> {
+    const slotIndex = (page as { __slotIndex?: number } | undefined)?.__slotIndex;
+    const ac = loginMode
+      ? this.loginBrowserState?.abortController
+      : typeof slotIndex === 'number' && slotIndex > 0
+        ? this.slots.get(slotIndex)?.abortController
+        : this.abortController;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         resolve();
@@ -2402,8 +2480,8 @@ export class ChromeManager {
     siteType?: SiteType,
     loginMode?: boolean
   ): Promise<LocalStorageData> {
-    // 检查浏览器是否已关闭
-    this.checkBrowserClosed(loginMode);
+    // 检查浏览器是否已关闭（按页面所属槽位检查）
+    this.checkBrowserClosed(loginMode, page);
 
     // 检查页面是否已关闭
     if (page.isClosed()) {
@@ -2697,7 +2775,7 @@ export class ChromeManager {
     userId: number | string | null,
     loginMode?: boolean
   ): Promise<any> {
-    this.checkBrowserClosed(loginMode);
+    this.checkBrowserClosed(loginMode, page);
     if (page.isClosed()) {
       throw new Error('浏览器已关闭，操作已取消');
     }
@@ -2820,52 +2898,58 @@ export class ChromeManager {
    * 清理Chrome进程（内部方法）
    */
   private cleanupChromeProcess(): void {
-    if (this.chromeProcess) {
-      const chromeProc = this.chromeProcess;
-      try {
-        const pid = chromeProc.pid;
-        Logger.info(
-          `?? [ChromeManager] Preparing to stop Chrome process${pid ? ' (PID: ' + pid + ')' : ''}`
-        );
-        try {
-          chromeProc.kill('SIGTERM');
-        } catch (e) {
-          Logger.warn('?? [ChromeManager] Failed to send SIGTERM, will try SIGKILL');
-        }
-        setTimeout(() => {
-          try {
-            if (!chromeProc.killed) {
-              chromeProc.kill('SIGKILL');
-              Logger.info('? [ChromeManager] Sent SIGKILL to Chrome process');
-            }
-          } catch (err) {
-            Logger.warn('?? [ChromeManager] Force kill Chrome failed:', err);
-          }
-        }, 500);
-      } catch (e) {
-        Logger.warn('?? [ChromeManager] Stop Chrome process failed:', e);
-      }
+    const chromeProc = this.chromeProcess;
+    if (chromeProc) {
+      const pid = chromeProc.pid;
+      Logger.info(
+        `?? [ChromeManager] Preparing to stop Chrome process${pid ? ' (PID: ' + pid + ')' : ''}`
+      );
+      this.killProcessTree(chromeProc);
       this.chromeProcess = null;
     }
   }
+
   /**
-   * ???????????????????????????????????
-   * ???????????????????????????????????????
+   * 终止浏览器进程树：Windows 下 kill() 不保证 GPU/网络服务等子进程退出，
+   * 孤儿进程会继续持有 userDataDir 与单例锁，需 taskkill /F /T 兜底
    */
-  private killBrowserByPort(): void {
-    Logger.info(
-      '?? [ChromeManager] Skip killing processes by port to avoid terminating external browsers'
+  private killProcessTree(proc: any): void {
+    if (!proc) return;
+    const pid = proc.pid;
+    try {
+      proc.kill('SIGTERM');
+    } catch (_e) {
+      /* ignore */
+    }
+    if (pid && process.platform === 'win32') {
+      try {
+        require('child_process').exec(`taskkill /F /T /PID ${pid}`, () => {});
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+  }
+  // ============= 多槽位浏览器管理 =============
+
+  /** 获取隔离槽位的 userDataDir（持久化到 userData，不再依赖可被系统清理的 %TEMP%） */
+  private getSlotUserDataDir(slotIndex: number): string {
+    return path.join(
+      this.getBrowserProfilesRoot(),
+      slotIndex === 0 ? 'login' : `slot-${slotIndex}`
     );
   }
 
-  // ============= 多槽位浏览器管理 =============
+  getDefaultLoginProfilePath(): string {
+    return this.getSlotUserDataDir(0);
+  }
 
-  /** 获取隔离槽位的 userDataDir */
-  private getSlotUserDataDir(slotIndex: number): string {
-    if (slotIndex === 0) {
-      return path.join(os.tmpdir(), 'api-detector-chrome');
-    }
-    return path.join(os.tmpdir(), `api-detector-chrome-isolated-${slotIndex}`);
+  completeLogin(): void {
+    if (this.loginBrowserState) this.loginBrowserState.busy = false;
+  }
+
+  /** 自动化 Profile 根目录（槽位与登录浏览器统一存放，跨平台语义一致） */
+  private getBrowserProfilesRoot(): string {
+    return browserProfileManager.getIsolatedRootDir();
   }
 
   /** 为指定槽位创建页面（独立浏览器实例） */
@@ -2915,6 +2999,10 @@ export class ChromeManager {
         });
         try {
           await this.launchBrowserForSlot(slotIndex, 'about:blank');
+        } catch (launchError) {
+          // 启动失败时回退引用计数，否则槽位计数永不归零，自动清理失效
+          slot.refCount = Math.max(0, slot.refCount - 1);
+          throw launchError;
         } finally {
           slot.lock = null;
           resolveLock!();
@@ -2929,6 +3017,7 @@ export class ChromeManager {
 
     try {
       const page = await slot.browser.newPage();
+      (page as any).__slotIndex = slotIndex;
       Logger.info(`📄 ${tag} 创建新页面`);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
@@ -2966,7 +3055,18 @@ export class ChromeManager {
   private async launchBrowserForSlot(slotIndex: number, url: string): Promise<void> {
     const slot = this.getSlot(slotIndex);
     const tag = `[slot-${slotIndex}]`;
-    const userDataDir = this.getSlotUserDataDir(slotIndex);
+    const mainOptions =
+      slotIndex === 1 ? await browserProfileManager.getMainProfileLaunchOptions() : null;
+    if (mainOptions && (!mainOptions.success || !mainOptions.options)) {
+      throw new Error(mainOptions.error || '主浏览器 Profile 不可用');
+    }
+    const userDataDir = mainOptions?.options?.userDataDir || this.getSlotUserDataDir(slotIndex);
+    if (this.loginBrowserState?.userDataDir === userDataDir) {
+      if (this.loginBrowserState.busy) throw new Error('该浏览器正在登录，请等待登录完成');
+      const loginPort = this.loginBrowserState.debugPort;
+      this.cleanupLoginBrowser();
+      await this.waitForPortFree(loginPort);
+    }
 
     // 清理旧实例
     if (slot.browser) {
@@ -2979,11 +3079,7 @@ export class ChromeManager {
       slot.browser = null;
     }
     if (slot.chromeProcess) {
-      try {
-        slot.chromeProcess.kill();
-      } catch (_e) {
-        /* ignore */
-      }
+      this.killProcessTree(slot.chromeProcess);
       slot.chromeProcess = null;
     }
 
@@ -2992,12 +3088,18 @@ export class ChromeManager {
     await this.waitForPortFree(debugPort);
 
     const chromePath = this.getChromePath();
-    this.cleanupSessionFiles(userDataDir);
+    if (!chromePath || !fs.existsSync(chromePath)) {
+      throw new Error(`${tag} 未找到可用的浏览器，无法启动隔离浏览器实例`);
+    }
+    if (!mainOptions) this.cleanupSessionFiles(userDataDir);
 
     const { spawn } = require('child_process');
     const args = [
       `--remote-debugging-port=${debugPort}`,
       `--user-data-dir=${userDataDir}`,
+      ...(mainOptions?.options?.profileDirectory
+        ? [`--profile-directory=${mainOptions.options.profileDirectory}`]
+        : []),
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-session-crashed-bubble',
@@ -3071,17 +3173,18 @@ export class ChromeManager {
       slot.browser = null;
     }
     if (slot.chromeProcess) {
-      try {
-        slot.chromeProcess.kill();
-      } catch (_e) {
-        /* ignore */
-      }
+      this.killProcessTree(slot.chromeProcess);
       slot.chromeProcess = null;
     }
   }
   cleanup() {
     Logger.info('🧹 [ChromeManager] 开始清理所有浏览器槽位...');
-    this.cleanupLoginBrowser();
+    // 登录/签到浏览器使用中（用户正在窗口里登录或完成签到）时不得连带终止
+    if (this.loginBrowserState?.busy) {
+      Logger.info('⏭️ [ChromeManager] 登录/签到浏览器使用中，跳过清理');
+    } else {
+      this.cleanupLoginBrowser();
+    }
     for (const [index] of this.slots) {
       this.cleanupSlot(index);
     }
@@ -3177,9 +3280,18 @@ export class ChromeManager {
   }
 
   /**
-   * 获取Chrome可执行文件路径
+   * 解析当前生效的浏览器路径（供运行检查等外部流程使用）
    */
-  private getChromePath(): string {
+  getResolvedBrowserPath(): string | null {
+    return this.getChromePath();
+  }
+
+  /**
+   * 获取Chrome可执行文件路径
+   * 解析顺序：环境变量显式覆盖 → settings.browser_path → 打包内置 Chromium → 本机已装 Chromium 系浏览器
+   * 全部缺失时返回 null（由调用方给出可读错误，不再返回可能不存在的硬编码路径）
+   */
+  private getChromePath(): string | null {
     const platform = process.platform;
 
     /**
@@ -3219,14 +3331,19 @@ export class ChromeManager {
     }
 
     /**
-     * 3. 根据平台自动检测常见的 Chromium 内核浏览器
-     *    - 优先尝试“系统默认浏览器”（仅在其为 Chromium 内核时）
-     *    - Windows: Chrome / Edge / 便携版 Chrome
-     *    - macOS: Chrome / Edge
-     *    - Linux: 常见的 google-chrome / chromium 安装路径
+     * 3. 打包内置的 Chromium（三端开箱即用的主路径）
+     */
+    const bundledPath = resolveBundledBrowserPath();
+    if (bundledPath && fs.existsSync(bundledPath)) {
+      Logger.info(`🔍 [ChromeManager] 使用内置浏览器: ${bundledPath}`);
+      return bundledPath;
+    }
+
+    /**
+     * 4. 根据平台自动检测本机已安装的 Chromium 内核浏览器（兜底）
      */
     if (platform === 'win32') {
-      // 3.1 Windows: 优先尝试系统默认浏览器（如果是 Chromium 内核）
+      // 4.1 Windows: 优先尝试系统默认浏览器（如果是 Chromium 内核）
       const defaultBrowserPath = this.getSystemDefaultBrowserPathWin();
       if (defaultBrowserPath && fs.existsSync(defaultBrowserPath)) {
         const exeName = path.basename(defaultBrowserPath).toLowerCase();
@@ -3250,7 +3367,7 @@ export class ChromeManager {
         }
       }
 
-      // 3.2 回退到内置候选列表
+      // 4.2 回退到内置候选列表
       const candidates = new Set<string>();
       const username =
         process.env.USERNAME ||
@@ -3293,10 +3410,10 @@ export class ChromeManager {
         }
       }
 
-      // 如果都不存在，返回最常见的 Chrome 路径以保持兼容（后续启动失败会有更详细错误）
-      const fallback = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-      Logger.warn('⚠️ [ChromeManager] 未能自动检测到浏览器，使用默认路径:', fallback);
-      return fallback;
+      Logger.warn(
+        '⚠️ [ChromeManager] 未检测到内置浏览器，也未找到本机 Chrome/Edge。请在设置中手动指定浏览器路径。'
+      );
+      return null;
     } else if (platform === 'darwin') {
       // macOS: 优先 Chrome，其次 Edge
       const macCandidates = [
@@ -3311,8 +3428,10 @@ export class ChromeManager {
         }
       }
 
-      Logger.warn('⚠️ [ChromeManager] 未找到 Chrome/Edge，使用默认 Chrome 路径');
-      return macCandidates[0];
+      Logger.warn(
+        '⚠️ [ChromeManager] 未找到内置浏览器与本机 Chrome/Edge。请在设置中手动指定浏览器路径。'
+      );
+      return null;
     } else {
       // Linux: 常见的 chrome / chromium 安装路径
       const linuxCandidates = [
@@ -3331,9 +3450,9 @@ export class ChromeManager {
       }
 
       Logger.warn(
-        '⚠️ [ChromeManager] 未找到常见的 Chromium 浏览器，使用默认路径 /usr/bin/google-chrome'
+        '⚠️ [ChromeManager] 未找到内置浏览器与常见 Chromium 浏览器。请安装 chromium 或在设置中手动指定路径。'
       );
-      return '/usr/bin/google-chrome';
+      return null;
     }
   }
 

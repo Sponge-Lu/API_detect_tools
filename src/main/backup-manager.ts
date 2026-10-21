@@ -204,7 +204,7 @@ export class BackupManager {
    */
   async backupManifestBundle(options: BackupFileOptions = {}): Promise<boolean> {
     try {
-      const content = await createPortableAppStorageBundleContent();
+      const content = await createPortableAppStorageBundleContent(undefined, true);
       extractStableConfigFromBackupContent(content);
       const sourceBuffer = Buffer.from(content, 'utf-8');
       const latestBackup = this.findLatestBackup('config.json');

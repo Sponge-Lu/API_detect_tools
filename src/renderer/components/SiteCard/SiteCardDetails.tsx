@@ -358,7 +358,7 @@ export function SiteCardDetails({
                       <button
                         onClick={() => onRefreshToken(site, token, idx)}
                         disabled={refreshingTokenKey === refreshingKeyId}
-                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:opacity-60"
+                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:opacity-50"
                         title="刷新该 API Key 状态"
                         aria-label={`刷新 API Key: ${token.name || `Key #${idx + 1}`}`}
                       >
@@ -371,7 +371,7 @@ export function SiteCardDetails({
                       <button
                         onClick={() => onDeleteToken(site, token, idx)}
                         disabled={deletingTokenKey === deletingKeyId}
-                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-60"
+                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-50"
                         title="删除该 API Key"
                       >
                         {deletingTokenKey === deletingKeyId ? (
@@ -450,7 +450,11 @@ export function SiteCardDetails({
                 if (quotaType === undefined || quotaType === null) quotaType = 0;
 
                 const quotaInfo = pricingData ? getQuotaTypeInfo(quotaType) : null;
-                const enableGroups = pricingData?.enable_groups || [];
+                // 只展示当前账号实际拥有的分组，enable_groups 里可能包含站点侧其他分组
+                const ownedGroups = new Set(Object.keys(userGroups));
+                const enableGroups = (pricingData?.enable_groups || []).filter((group: string) =>
+                  ownedGroups.has(group)
+                );
                 const completionRatio = pricingData?.completion_ratio || 1;
 
                 // 计算价格

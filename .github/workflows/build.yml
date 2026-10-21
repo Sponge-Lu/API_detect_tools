@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   build:
     strategy:
@@ -21,10 +25,16 @@ jobs:
         include:
           - os: windows-latest
             platform: win
+            arch: x64
           - os: macos-latest
             platform: mac
+            arch: x64
+          - os: macos-latest
+            platform: mac
+            arch: arm64
           - os: ubuntu-latest
             platform: linux
+            arch: x64
 
     runs-on: ${{ matrix.os }}
 
@@ -41,31 +51,70 @@ jobs:
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'linux'
         run: |
+          $ErrorActionPreference = 'Stop'
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libdrm2 libgbm1 libxcb-dri3-0
+          if ($LASTEXITCODE -ne 0) { throw 'apt-get update failed' }
+          sudo apt-get install -y unzip libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libdrm2 libgbm1 libxcb-dri3-0
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+
+      - name: Verify runtime behavior
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run lint
+          if ($LASTEXITCODE -ne 0) { throw 'Lint failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime regression tests failed' }
 
       - name: Build application
-        run: npm run build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
       - name: Build for ${{ matrix.platform }}
-        run: npx electron-builder --${{ matrix.platform }} --publish never
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify packaged application and browser
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $platform = '${{ matrix.platform }}'
+          $targetArch = '${{ matrix.arch }}'
+          if ($platform -eq 'mac') {
+            $resourceRoot = (Get-ChildItem release -Directory -Filter 'mac*' | Get-ChildItem -Directory -Filter '*.app' | Select-Object -First 1).FullName + '/Contents/Resources'
+            $targetPlatform = 'darwin'
+          } elseif ($platform -eq 'win') {
+            $resourceRoot = 'release/win-unpacked/resources'
+            $targetPlatform = 'win32'
+          } else {
+            $resourceRoot = 'release/linux-unpacked/resources'
+            $targetPlatform = 'linux'
+          }
+          npm run verify:packaged -- $resourceRoot $targetPlatform $targetArch
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime verification failed' }
+
       - name: Upload artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
+          name: release-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             release/*.exe
             release/*.dmg
             release/*.zip
             release/*.AppImage
             release/*.deb
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   release:
     needs: build

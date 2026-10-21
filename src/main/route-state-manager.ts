@@ -147,6 +147,15 @@ export class RouteStateManager {
     this.stateDir = path.join(app.getPath('userData'), 'state');
   }
 
+  /** 状态文件是机器态且体积大（分析桶可达数 MB），紧凑序列化以缩短每次全量重写。 */
+  private writeStateFile<T>(targetPath: string, value: T): Promise<void> {
+    return writeJsonFileAtomically(targetPath, value, { space: 0 });
+  }
+
+  getStateDir(): string {
+    return this.stateDir;
+  }
+
   getRouteRuntimePath(): string {
     return path.join(this.stateDir, 'route-runtime.json');
   }
@@ -212,7 +221,7 @@ export class RouteStateManager {
 
   async saveRuntimeState(routing: RoutingConfig): Promise<void> {
     const now = Date.now();
-    await writeJsonFileAtomically(this.getRouteRuntimePath(), {
+    await this.writeStateFile(this.getRouteRuntimePath(), {
       version: ROUTE_RUNTIME_STATE_VERSION,
       stats: keepNewestRecordEntries(
         routing.stats,
@@ -244,7 +253,7 @@ export class RouteStateManager {
 
   async saveAnalyticsState(routing: RoutingConfig): Promise<void> {
     const now = Date.now();
-    await writeJsonFileAtomically(this.getRouteAnalyticsPath(), {
+    await this.writeStateFile(this.getRouteAnalyticsPath(), {
       version: ROUTE_ANALYTICS_STATE_VERSION,
       buckets: keepNewestRecordEntries(
         routing.analytics.buckets,
@@ -258,7 +267,7 @@ export class RouteStateManager {
 
   async saveModelSourcesState(routing: RoutingConfig): Promise<void> {
     const now = Date.now();
-    await writeJsonFileAtomically(this.getRouteModelSourcesPath(), {
+    await this.writeStateFile(this.getRouteModelSourcesPath(), {
       version: ROUTE_MODEL_SOURCES_STATE_VERSION,
       sources: routing.modelRegistry.sources.slice(0, MAX_ROUTE_MODEL_SOURCES),
       last_updated: now,

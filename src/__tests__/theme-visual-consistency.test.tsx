@@ -13,32 +13,12 @@ const configProfilesSectionSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/components/Route/ConfigProfilesSection.tsx'),
   'utf8'
 );
-const creditPanelCompactSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/CreditPanel/CreditPanelCompact.tsx'),
-  'utf8'
-);
-const transactionListCardSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/CreditPanel/TransactionListCard.tsx'),
-  'utf8'
-);
 const detectionResultsSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/components/DetectionResults.tsx'),
   'utf8'
 );
 const toastSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/components/Toast/Toast.tsx'),
-  'utf8'
-);
-const incomeStatsCardSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/CreditPanel/IncomeStatsCard.tsx'),
-  'utf8'
-);
-const expenseStatsCardSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/CreditPanel/ExpenseStatsCard.tsx'),
-  'utf8'
-);
-const rechargeSectionSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/CreditPanel/RechargeSection.tsx'),
   'utf8'
 );
 const sitesPageSource = readFileSync(
@@ -51,10 +31,6 @@ const siteCardDetailsSource = readFileSync(
 );
 const settingsPageSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/pages/SettingsPage.tsx'),
-  'utf8'
-);
-const creditPageSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/pages/CreditPage.tsx'),
   'utf8'
 );
 const skeletonSource = readFileSync(
@@ -176,29 +152,15 @@ describe('theme visual consistency', () => {
     expect(settingsPageSource).not.toContain('text-slate-500');
   });
 
-  it('keeps credit surfaces, detection results, and group tabs off legacy utility color palettes', () => {
-    expect(creditPanelCompactSource).not.toContain('text-purple-600');
-    expect(creditPanelCompactSource).not.toContain('text-blue-600');
-    expect(creditPanelCompactSource).not.toContain('text-green-600');
-    expect(creditPanelCompactSource).not.toContain('text-gray-600');
-    expect(creditPanelCompactSource).not.toContain('text-primary-500');
-    expect(creditPanelCompactSource).not.toContain('text-primary-600');
-    expect(creditPanelCompactSource).not.toContain('dark:text-primary-400');
-    expect(creditPanelCompactSource).not.toContain('bg-slate-50');
-    expect(creditPanelCompactSource).not.toContain('text-slate-500');
-    expect(creditPanelCompactSource).not.toContain('bg-white');
+  it('keeps detection results and group tabs off legacy utility color palettes', () => {
     expect(detectionResultsSource).not.toContain('text-primary-400');
-    expect(transactionListCardSource).not.toContain('bg-green-100');
-    expect(transactionListCardSource).not.toContain('bg-red-100');
-    expect(transactionListCardSource).not.toContain('bg-yellow-100');
-    expect(transactionListCardSource).not.toContain('bg-gray-100');
     expect(detectionResultsSource).not.toContain('text-gray-300');
     expect(detectionResultsSource).not.toContain('text-gray-400');
     expect(detectionResultsSource).not.toContain('border-green-500');
     expect(detectionResultsSource).not.toContain('border-red-500');
   });
 
-  it('keeps toast and daily stats cards on product tokens instead of legacy light/dark palettes', () => {
+  it('keeps toast cards on product tokens instead of legacy light/dark palettes', () => {
     expect(toastSource).not.toContain('text-green-500');
     expect(toastSource).not.toContain('text-red-500');
     expect(toastSource).not.toContain('text-yellow-500');
@@ -208,17 +170,6 @@ describe('theme visual consistency', () => {
     expect(toastSource).not.toContain('bg-yellow-50');
     expect(toastSource).not.toContain('bg-blue-50');
     expect(toastSource).not.toContain('text-slate-700');
-    expect(incomeStatsCardSource).not.toContain('bg-white');
-    expect(incomeStatsCardSource).not.toContain('text-light-text');
-    expect(incomeStatsCardSource).not.toContain('bg-primary-50');
-    expect(expenseStatsCardSource).not.toContain('bg-white');
-    expect(expenseStatsCardSource).not.toContain('text-light-text');
-    expect(expenseStatsCardSource).not.toContain('bg-red-50');
-    expect(expenseStatsCardSource).not.toContain('text-red-600');
-    expect(rechargeSectionSource).not.toContain('bg-white');
-    expect(rechargeSectionSource).not.toContain('text-light-text');
-    expect(rechargeSectionSource).not.toContain('text-red-500');
-    expect(rechargeSectionSource).not.toContain('focus:ring-primary-500');
   });
 
   it('keeps sites page controls and site detail chips on product tokens', () => {
@@ -236,10 +187,7 @@ describe('theme visual consistency', () => {
     expect(siteCardDetailsSource).not.toContain('text-orange-600');
   });
 
-  it('keeps credit page controls, skeleton surfaces, and cli toggle knobs on neutral theme tokens', () => {
-    expect(creditPageSource).not.toContain('bg-white');
-    expect(creditPageSource).not.toContain('text-primary-500');
-    expect(creditPageSource).not.toContain('text-primary-600');
+  it('keeps skeleton surfaces and cli toggle knobs on neutral theme tokens', () => {
     expect(skeletonSource).not.toContain('bg-slate-200');
     expect(skeletonSource).not.toContain('dark:bg-slate-700');
     expect(skeletonSource).not.toContain('bg-white/80');

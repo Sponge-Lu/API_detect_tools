@@ -70,15 +70,6 @@ describe('app storage manifest', () => {
     expect(portableIds).toEqual(['stable-config', 'custom-cli-configs', 'config-file-profiles']);
   });
 
-  it('requires explicit backup inclusion for credit cookies', () => {
-    const entry = findAppStorageEntry('credit-settings');
-
-    expect(entry?.containsSecrets).toBe(true);
-    expect(entry?.backup.defaultIncluded).toBe(false);
-    expect(entry?.backup.requiresExplicitInclude).toBe(true);
-    expect(entry?.backup.modes).toEqual(['explicit-sensitive']);
-  });
-
   it('bounds every app-managed runtime, cache, statistics, log, and update file', () => {
     const noisyEntries = APP_STORAGE_ENTRIES.filter(
       entry =>

@@ -141,12 +141,26 @@ async function persistNormalizedCustomCliConfigs(
   }
 }
 
-export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
+let storageQueue: Promise<unknown> = Promise.resolve();
+
+function serializeStorage<T>(operation: () => Promise<T>): Promise<T> {
+  const pending = storageQueue.then(operation, operation);
+  storageQueue = pending.catch(() => undefined);
+  return pending;
+}
+
+export function loadCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
+  return serializeStorage(readCustomCliConfigStorage);
+}
+
+async function readCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
   const filePath = getCustomCliConfigFilePath();
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     const data = JSON.parse(content);
-    const configs = Array.isArray(data.configs) ? data.configs : [];
+    if (!data || !Array.isArray(data.configs))
+      throw new Error('Invalid direct configuration storage');
+    const configs = data.configs;
     const decryptedConfigs = decryptCustomCliConfigs(configs);
 
     const beforeNormalization = JSON.stringify(decryptedConfigs);
@@ -171,10 +185,10 @@ export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStora
       (error as { code?: string }).code === 'ENOENT'
     ) {
       Logger.info('[CustomCliConfigService] 配置文件不存在，使用默认配置');
-      return DEFAULT_CUSTOM_CLI_CONFIG_STORAGE;
+      return { configs: [], activeConfigId: null };
     }
     Logger.error('[CustomCliConfigService] 读取配置文件失败:', error);
-    return DEFAULT_CUSTOM_CLI_CONFIG_STORAGE;
+    throw error;
   }
 }
 
@@ -183,7 +197,9 @@ export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
   try {
     const content = fsSync.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(content);
-    const configs = Array.isArray(data.configs) ? data.configs : [];
+    if (!data || !Array.isArray(data.configs))
+      throw new Error('Invalid direct configuration storage');
+    const configs = data.configs;
     const decryptedConfigs = decryptCustomCliConfigs(configs);
 
     normalizeCustomCliConfigs(decryptedConfigs);
@@ -199,16 +215,63 @@ export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
       'code' in error &&
       (error as { code?: string }).code === 'ENOENT'
     ) {
-      return DEFAULT_CUSTOM_CLI_CONFIG_STORAGE;
+      return { configs: [], activeConfigId: null };
     }
     Logger.error('[CustomCliConfigService] 同步读取配置文件失败:', error);
-    return DEFAULT_CUSTOM_CLI_CONFIG_STORAGE;
+    throw error;
   }
 }
 
+export async function updateCustomCliConfigStorage(
+  update: (current: CustomCliConfigStorage) => CustomCliConfigStorage | null
+): Promise<CustomCliConfigStorage> {
+  return serializeStorage(async () => {
+    const previous = await readCustomCliConfigStorage();
+    const next = update(previous);
+    if (!next) return previous;
+    await persistCustomCliConfigStorage(next, previous);
+    return next;
+  });
+}
+
 export async function saveCustomCliConfigStorage(data: CustomCliConfigStorage): Promise<void> {
+  await updateCustomCliConfigStorage(current => ({
+    ...data,
+    configs: data.configs.map(config => {
+      const latest = current.configs.find(item => item.id === config.id);
+      if (
+        !latest ||
+        latest.baseUrl !== config.baseUrl ||
+        latest.modelUrl !== config.modelUrl ||
+        latest.routeAuthScheme !== config.routeAuthScheme
+      )
+        return config;
+      const keys = normalizeCustomCliApiKeys(config.apiKeys, { legacyApiKey: config.apiKey });
+      const latestKeys = normalizeCustomCliApiKeys(latest.apiKeys, { legacyApiKey: latest.apiKey });
+      let changed = false;
+      const merged = keys.map(key => {
+        const persisted = latestKeys.find(item => item.id === key.id && item.key === key.key);
+        if (!persisted || (persisted.lastModelFetch || 0) <= (key.lastModelFetch || 0)) return key;
+        changed = true;
+        return { ...key, models: persisted.models, lastModelFetch: persisted.lastModelFetch };
+      });
+      return changed
+        ? {
+            ...config,
+            apiKeys: merged,
+            models: Array.from(new Set(merged.flatMap(key => key.models))),
+            lastModelFetch: Math.max(config.lastModelFetch || 0, latest.lastModelFetch || 0),
+          }
+        : config;
+    }),
+  }));
+}
+
+async function persistCustomCliConfigStorage(
+  data: CustomCliConfigStorage,
+  previous: CustomCliConfigStorage
+): Promise<void> {
   const filePath = getCustomCliConfigFilePath();
-  const previous = await loadCustomCliConfigStorage();
   const normalizedConfigs = data.configs.map(config => ({ ...config }));
   normalizeCustomCliConfigs(normalizedConfigs);
   try {
@@ -216,21 +279,20 @@ export async function saveCustomCliConfigStorage(data: CustomCliConfigStorage): 
       configs: encryptCustomCliConfigs(normalizedConfigs),
       activeConfigId: data.activeConfigId,
     };
-    await fs.writeFile(filePath, JSON.stringify(encryptedData, null, 2), 'utf-8');
+    await writeTextFileAtomically(filePath, JSON.stringify(encryptedData, null, 2));
+  } catch (error) {
+    Logger.error('[CustomCliConfigService] 保存配置文件失败:', error);
+    throw error;
+  }
+  try {
     const nextIds = new Set(normalizedConfigs.map(config => config.id));
     await routeStateAffinityService.removeBySites(
       previous.configs
         .filter(config => !nextIds.has(config.id))
         .map(config => buildCustomCliRouteSiteId(config.id))
     );
-    Logger.info('[CustomCliConfigService] 配置文件已保存');
-  } catch (error: unknown) {
-    const rollbackData = {
-      configs: encryptCustomCliConfigs(previous.configs),
-      activeConfigId: previous.activeConfigId,
-    };
-    await fs.writeFile(filePath, JSON.stringify(rollbackData, null, 2), 'utf-8');
-    Logger.error('[CustomCliConfigService] 保存配置文件失败:', error);
-    throw error;
+  } catch (error) {
+    Logger.warn('[CustomCliConfigService] 清理已删除配置的关联状态失败:', error);
   }
+  Logger.info('[CustomCliConfigService] 配置文件已保存');
 }

@@ -9,7 +9,7 @@ describe('site sort compatibility', () => {
     expect(normalizeSiteSortField('rpm')).toBeNull();
     expect(normalizeSiteSortField('tpm')).toBeNull();
     expect(normalizeSiteSortField('lastUpdate')).toBeNull();
-    expect(normalizeSiteSortField('ldcRatio')).toBe('ldcRatio');
+    expect(normalizeSiteSortField('ldcRatio')).toBeNull();
   });
 
   it('keeps supported visible fields unchanged', () => {

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as modelMetadataService from '../main/model-metadata-service';
 import type {
   RouteModelMappingOverride,
   RouteModelRegistryConfig,
@@ -57,6 +58,8 @@ vi.mock('../main/utils/logger', () => ({
 
 import {
   deleteModelDisplayItem,
+  getModelRegistry,
+  refreshModelRegistryMetadata,
   rebuildModelRegistry,
   resolveCanonicalName,
   syncModelRegistrySources,
@@ -164,6 +167,7 @@ function createSource(overrides: Partial<RouteModelSourceRef> = {}): RouteModelS
 }
 
 describe('route model registry service', () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
     unifiedConfigManagerMock.exportConfigSync.mockReset();
     unifiedConfigManagerMock.getRoutingConfig.mockReset();
@@ -176,6 +180,82 @@ describe('route model registry service', () => {
       configs: [],
       activeConfigId: null,
     });
+  });
+
+  it('preserves persisted metadata offline and reads current routing after metadata refresh', async () => {
+    const registry = createRegistryConfig();
+    registry.entries.model = {
+      canonicalName: 'model',
+      aliases: ['old'],
+      vendor: 'gpt',
+      sources: [],
+      hasOverride: false,
+      createdAt: 1,
+      updatedAt: 1,
+      metadata: { context: 1234 },
+    };
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: registry });
+    const get = vi.spyOn(modelMetadataService, 'getModelMetadata').mockReturnValue(undefined);
+    expect(getModelRegistry().entries.model.metadata?.context).toBe(1234);
+    let finishRefresh!: () => void;
+    vi.spyOn(modelMetadataService, 'refreshModelMetadata').mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishRefresh = resolve;
+        })
+    );
+    const pending = refreshModelRegistryMetadata(true);
+    const current = {
+      ...registry,
+      entries: { model: { ...registry.entries.model, aliases: ['changed'] } },
+    };
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: current });
+    get.mockReturnValue({ context: 5678 });
+    finishRefresh();
+    expect(await pending).toBe(current);
+    expect(current.entries.model.aliases).toEqual(['changed']);
+    expect(current.entries.model.metadata?.context).toBe(5678);
+    expect(unifiedConfigManagerMock.updateRouteModelRegistry).not.toHaveBeenCalled();
+  });
+
+  it('includes manual keys and filters disabled or masked local keys', async () => {
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', enabled: true }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          api_key: 'plain-manual',
+          cached_data: { models: ['gpt-4.1'] },
+          local_api_keys: [
+            {
+              id: 'active',
+              key: 'local-key',
+              group: 'default',
+              models: ['gpt-4.1'],
+              status: 'active',
+            },
+            {
+              id: 'disabled',
+              key: 'disabled-key',
+              group: 'default',
+              models: ['gpt-4.1'],
+              status: 'disabled',
+            },
+            { id: 'masked', key: 'sk-***', group: 'default', models: ['gpt-4.1'] },
+          ],
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: createRegistryConfig(),
+    });
+    const result = await rebuildModelRegistry(true);
+    expect(result.sources[0].availableApiKeys?.map(key => key.apiKeyName)).toEqual([
+      '本地 API Key',
+      '手动 API Key',
+    ]);
+    expect(result.sources[0].availableUserGroups).toContain('default');
   });
 
   it('applies source-scoped overrides while rebuilding the registry', async () => {

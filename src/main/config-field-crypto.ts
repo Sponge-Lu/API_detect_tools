@@ -207,6 +207,9 @@ function encryptAccountFields(account: AccountCredential): AccountCredential {
   if (encryptedAccount.access_token) {
     encryptedAccount.access_token = encryptField(encryptedAccount.access_token);
   }
+  if (encryptedAccount.api_key) {
+    encryptedAccount.api_key = encryptField(encryptedAccount.api_key);
+  }
   if (encryptedAccount.local_api_keys) {
     encryptedAccount.local_api_keys = encryptedAccount.local_api_keys.map(item => ({
       ...item,
@@ -245,6 +248,9 @@ function decryptAccountFields(account: AccountCredential): AccountCredential {
 
   if (decryptedAccount.access_token) {
     decryptedAccount.access_token = decryptField(decryptedAccount.access_token);
+  }
+  if (decryptedAccount.api_key) {
+    decryptedAccount.api_key = decryptField(decryptedAccount.api_key);
   }
   if (decryptedAccount.local_api_keys) {
     decryptedAccount.local_api_keys = decryptedAccount.local_api_keys.map(item => ({

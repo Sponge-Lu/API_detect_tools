@@ -67,6 +67,44 @@ import {
 } from '../main/endpoint-test-service';
 
 const directTarget = { kind: 'direct' as const, configId: 'direct-1' };
+
+describe('managed local key scopes', () => {
+  it('includes local keys and their models without exposing raw values', async () => {
+    mocks.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Managed', url: 'https://example.com' }],
+      accounts: [
+        {
+          id: 'account-1',
+          site_id: 'site-1',
+          local_api_keys: [
+            {
+              id: 'local-key',
+              name: 'Local',
+              key: 'plain-secret',
+              models: ['local-model'],
+              source: 'local',
+            },
+            {
+              id: 'disabled-key',
+              name: 'Disabled',
+              key: 'disabled-secret',
+              models: ['disabled-model'],
+              status: false,
+            },
+          ],
+        },
+      ],
+    });
+    const result = await getEndpointTestState({
+      kind: 'managed',
+      siteId: 'site-1',
+      accountId: 'account-1',
+    });
+    expect(result.apiKeys).toMatchObject([{ id: 'local-key', models: ['local-model'] }]);
+    expect(result.models).toEqual(['local-model']);
+    expect(JSON.stringify(result)).not.toContain('plain-secret');
+  });
+});
 const directApiKeyId = 'custom-cli-key:direct-1';
 
 function directConfig(overrides: Record<string, unknown> = {}) {
@@ -561,7 +599,11 @@ describe('endpoint-test-service', () => {
     const state = await getEndpointTestState(directTarget);
     expect(state.apiKeys).toMatchObject([
       { id: 'custom-cli-key:direct-1:key-a', label: 'Direct One / 主力 Key' },
-      { id: 'custom-cli-key:direct-1:key-b', label: 'Direct One Key #2', models: ['model-b'] },
+      {
+        id: 'custom-cli-key:direct-1:key-b',
+        label: 'Direct One Key #2',
+        models: ['model-b', 'model-c'],
+      },
     ]);
     expect(state.apiKeys).toHaveLength(2);
 
@@ -577,6 +619,31 @@ describe('endpoint-test-service', () => {
       configId: 'direct-1',
       apiKeyId: 'key-b',
     });
+  });
+
+  it('syncs manual models into every direct key scope and the merged model list', async () => {
+    mocks.loadStorage.mockResolvedValue({
+      configs: [
+        directConfig({
+          models: ['model-a', 'model-b'],
+          manualModels: ['model-c'],
+          apiKeys: [
+            { id: 'key-a', name: '主力 Key', key: 'direct-secret-a', models: ['model-a'] },
+            { id: 'key-b', name: '', key: 'direct-secret-b', models: [] },
+          ],
+        }),
+      ],
+    });
+
+    const state = await getEndpointTestState(directTarget);
+
+    // 手动模型对所有 Key 可用（与路由模型注册表语义一致），无快照的 Key 回退到拉取 + 手动模型
+    expect(state.apiKeys).toMatchObject([
+      { id: 'custom-cli-key:direct-1:key-a', models: ['model-a', 'model-c'] },
+      { id: 'custom-cli-key:direct-1:key-b', models: ['model-a', 'model-b', 'model-c'] },
+    ]);
+    expect(state.models).toEqual(expect.arrayContaining(['model-a', 'model-b', 'model-c']));
+    expect(state.models).toHaveLength(3);
   });
 
   it('falls back to the first key when a stored selection no longer exists', async () => {

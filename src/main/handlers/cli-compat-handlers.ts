@@ -486,7 +486,12 @@ export function registerCliCompatHandlers() {
           `Saving CLI config for ${accountId ? `account: ${accountId}` : `site: ${siteUrl}`}`
         );
 
-        const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+        const explicitAccount = accountId ? unifiedConfigManager.getAccountById(accountId) : null;
+        const site = explicitAccount
+          ? unifiedConfigManager
+              .exportConfigSync()
+              ?.sites.find(item => item.id === explicitAccount.site_id)
+          : unifiedConfigManager.getSiteByUrl(siteUrl);
         if (!site) {
           log.warn(`Site not found for URL: ${siteUrl}`);
           return { success: false, error: 'Site not found' };

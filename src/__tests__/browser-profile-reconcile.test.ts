@@ -22,6 +22,7 @@ const {
         account_name?: string;
         auth_source: string;
         browser_profile_path?: string;
+        automation_slot?: number;
         created_at: number;
       }>,
     },
@@ -63,6 +64,8 @@ vi.mock('electron', () => ({
 vi.mock('../main/unified-config-manager', () => ({
   unifiedConfigManager: {
     loadConfig: mockLoadConfig,
+    getConfig: mockLoadConfig,
+    exportConfigSync: () => state.config,
     saveConfig: mockSaveConfig,
     getSites: mockGetSites,
     getAccountsBySiteId: mockGetAccountsBySiteId,
@@ -83,6 +86,40 @@ vi.mock('../main/utils/logger', () => ({
 }));
 
 describe('BrowserProfileManager', () => {
+  it('allocates distinct slots for simultaneous account requests', async () => {
+    const { browserProfileManager } = await import('../main/browser-profile-manager');
+    state.config.accounts = ['first', 'second'].map(id => ({
+      id,
+      site_id: 'site-a',
+      auth_source: 'manual',
+      created_at: 1,
+    }));
+    expect(
+      await Promise.all(
+        state.config.accounts.map(account =>
+          browserProfileManager.ensureAutomationSlot('site-a', account.id)
+        )
+      )
+    ).toEqual([2, 3]);
+  });
+  it('repairs the automation slot from its bound profile and keeps it after another account is removed', async () => {
+    const { browserProfileManager } = await import('../main/browser-profile-manager');
+    state.config.accounts = [
+      { id: 'first', site_id: 'site-a', auth_source: 'manual', created_at: 1 },
+      {
+        id: 'bound',
+        site_id: 'site-a',
+        auth_source: 'isolated_profile',
+        browser_profile_path: path.join(userDataDir, 'browser-runtime', 'profiles', 'slot-4'),
+        automation_slot: 0,
+        created_at: 2,
+      },
+    ];
+    expect(await browserProfileManager.ensureAutomationSlot('site-a', 'bound')).toBe(4);
+    state.config.accounts.shift();
+    expect(await browserProfileManager.ensureAutomationSlot('site-a', 'bound')).toBe(4);
+    expect(state.config.accounts[0].automation_slot).toBe(4);
+  });
   let tempDir: string;
   let userDataDir: string;
 
@@ -155,8 +192,8 @@ describe('BrowserProfileManager', () => {
     // slot dirs are global under browser-profiles; site-b may reuse site-a's slot-2 dir
     expect(result.createdSlots).toBeGreaterThanOrEqual(2);
 
-    const slot2 = path.join(userDataDir, 'browser-profiles', 'slot-2');
-    const slot4 = path.join(userDataDir, 'browser-profiles', 'slot-4');
+    const slot2 = path.join(userDataDir, 'browser-runtime', 'profiles', 'slot-2');
+    const slot4 = path.join(userDataDir, 'browser-runtime', 'profiles', 'slot-4');
 
     expect(state.config.accounts.find(a => a.id === 'acc-iso-2')?.browser_profile_path).toBe(slot2);
     expect(state.config.accounts.find(a => a.id === 'acc-iso-4')?.browser_profile_path).toBe(slot4);
@@ -205,8 +242,8 @@ describe('BrowserProfileManager', () => {
 
     const p1 = state.config.accounts.find(a => a.id === 'a1')?.browser_profile_path;
     const p2 = state.config.accounts.find(a => a.id === 'a2')?.browser_profile_path;
-    expect(p1).toBe(path.join(userDataDir, 'browser-profiles', 'slot-3'));
-    expect(p2).toBe(path.join(userDataDir, 'browser-profiles', 'slot-2'));
+    expect(p1).toBe(path.join(userDataDir, 'browser-runtime', 'profiles', 'slot-3'));
+    expect(p2).toBe(path.join(userDataDir, 'browser-runtime', 'profiles', 'slot-2'));
     expect(p1).not.toBe(p2);
     expect(fs.existsSync(p1!)).toBe(true);
     expect(fs.existsSync(p2!)).toBe(true);
@@ -258,6 +295,7 @@ describe('BrowserProfileManager', () => {
     expect(mockUpdateAccount).toHaveBeenCalledWith('manual-account', {
       auth_source: 'main_profile',
       browser_profile_path: undefined,
+      automation_slot: 1,
     });
     expect(state.config.accounts[0].auth_source).toBe('main_profile');
     expect(state.config.accounts[0].browser_profile_path).toBeUndefined();
@@ -265,7 +303,7 @@ describe('BrowserProfileManager', () => {
 
   it('prevents two accounts on the same site from binding the same Profile', async () => {
     const mainProfilePath = path.join(tempDir, 'Chrome', 'User Data');
-    const isolatedProfilePath = path.join(userDataDir, 'browser-profiles', 'slot-2');
+    const isolatedProfilePath = path.join(userDataDir, 'browser-runtime', 'profiles', 'slot-2');
     await fsp.mkdir(mainProfilePath, { recursive: true });
     await fsp.mkdir(isolatedProfilePath, { recursive: true });
     state.config.settings.browser_profile = { main_profile_path: mainProfilePath };

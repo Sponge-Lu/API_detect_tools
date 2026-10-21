@@ -220,7 +220,7 @@ describe('DirectCliConfigEditorContent', () => {
     useCustomCliConfigStore.setState({ configs: [config] });
 
     await renderDialog(config);
-    const groupInput = screen.getByRole('textbox', { name: 'API Key 1 分组' });
+    const groupInput = screen.getByRole('combobox', { name: 'API Key 1 分组' });
     expect(groupInput).toHaveValue('① 默认');
     const modelItem = screen.getByTitle('claude-3.7').closest('[data-testid="direct-model-item"]');
     expect(modelItem).toHaveTextContent('① 默认');
@@ -232,6 +232,32 @@ describe('DirectCliConfigEditorContent', () => {
     fireEvent.blur(groupInput);
     expect(groupInput).toHaveValue('② 高级');
     expect(modelItem).toHaveTextContent('② 高级');
+  });
+
+  it('offers existing key groups as suggestions while keeping free-text entry', async () => {
+    const config = createConfig();
+    config.apiKeys = [
+      { id: 'key-a', name: 'A', key: 'sk-a', group: '① 默认', groupMultiplier: 1, models: [] },
+      { id: 'key-b', name: 'B', key: 'sk-b', group: '2 高级', groupMultiplier: 1, models: [] },
+    ];
+    config.apiKey = 'sk-a';
+    useCustomCliConfigStore.setState({ configs: [config] });
+
+    await renderDialog(config);
+
+    const firstGroupInput = screen.getByRole('combobox', { name: 'API Key 1 分组' });
+    expect(firstGroupInput).toHaveAttribute('list', 'direct-key-group-options-cfg-1');
+
+    const datalist = document.getElementById('direct-key-group-options-cfg-1');
+    expect(datalist).not.toBeNull();
+    const suggestedGroups = Array.from(datalist!.querySelectorAll('option')).map(
+      option => option.value
+    );
+    expect(suggestedGroups).toEqual(['① 默认', '② 高级']);
+
+    fireEvent.change(firstGroupInput, { target: { value: '3 专属' } });
+    fireEvent.blur(firstGroupInput);
+    expect(firstGroupInput).toHaveValue('③ 专属');
   });
 
   it('saves the gas station URL with direct config identity fields', async () => {

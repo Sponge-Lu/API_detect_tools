@@ -1,7 +1,7 @@
 /**
  * 配置文件卡片区 UI 回归测试
  * 覆盖: 整卡点击编辑、卡片按钮 stopPropagation、徽章、删除确认、
- *       segmented 模型范围、本地配置直接保存、行级 diff 预览、会话关联默认折叠
+ *       segmented 模型范围、本地配置直接保存、行级 diff 预览、会话关联卡片已移除
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +49,7 @@ function api() {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   const config = api();
   window.electronAPI.appData = {
     onChanged: vi.fn(() => vi.fn()),
@@ -58,6 +59,8 @@ beforeEach(() => {
   config.upsert.mockImplementation(async ({ profile }: { profile: unknown }) => profile);
   config.delete.mockResolvedValue(undefined);
   config.readFiles.mockResolvedValue([]);
+  config.listBackups = vi.fn().mockResolvedValue([]);
+  config.previewBackupRestore = vi.fn();
   config.preview.mockResolvedValue({ files: [] });
   config.previewDirectEdit.mockResolvedValue({ files: [] });
   config.previewRouteKeyRotation.mockResolvedValue({ transactionId: 'rotation-tx', files: [] });
@@ -65,6 +68,97 @@ beforeEach(() => {
 });
 
 describe('ConfigProfilesSection UI refresh', () => {
+  it('previews a backup without exposing contents and preserves edits to other files on restore', async () => {
+    const config = api();
+    config.load.mockResolvedValue([
+      makeProfile({
+        revision: 2,
+        files: [
+          { id: 'file-1', path: 'C:/test/config.json', template: '{}' },
+          { id: 'file-2', path: 'C:/test/other.json', template: '{}' },
+        ],
+      }),
+    ]);
+    const snapshots = [
+      {
+        fileId: 'file-1',
+        path: 'C:/test/config.json',
+        exists: true,
+        content: 'current',
+        hash: 'h1',
+        mtimeMs: 1,
+      },
+      {
+        fileId: 'file-2',
+        path: 'C:/test/other.json',
+        exists: true,
+        content: 'other',
+        hash: 'h2',
+        mtimeMs: 1,
+      },
+    ];
+    config.readFiles.mockResolvedValue(snapshots);
+    let resolveBackups!: (entries: unknown[]) => void;
+    config.listBackups.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveBackups = resolve;
+        })
+    );
+    config.previewBackupRestore.mockResolvedValue({
+      transactionId: 'restore-tx',
+      profileId: 'profile-1',
+      operation: 'backup-restore',
+      files: [{ ...snapshots[0], nextContent: 'secret-backup-credential', changed: true }],
+    });
+    render(<ConfigProfilesSection />);
+    fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
+    fireEvent.click(screen.getAllByRole('button', { name: '读取' })[0]);
+    const otherEditor = await screen.findByLabelText('测试方案 本地文件 C:/test/other.json');
+    fireEvent.click(screen.getAllByRole('button', { name: '备份' })[0]);
+    fireEvent.change(otherEditor, { target: { value: 'unsaved other file' } });
+    await act(async () =>
+      resolveBackups([
+        { id: 'original', kind: 'original', createdAt: 1, size: 24, sha256: 'backup-hash' },
+      ])
+    );
+    const dialog = await screen.findByRole('dialog', { name: '配置文件备份' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '预览恢复' }));
+    await waitFor(() =>
+      expect(config.previewBackupRestore).toHaveBeenCalledWith({
+        profileId: 'profile-1',
+        fileId: 'file-1',
+        expectedRevision: 2,
+        backupId: 'original',
+        expectedHash: 'backup-hash',
+      })
+    );
+    expect(config.commit).not.toHaveBeenCalled();
+    expect(screen.queryByText('secret-backup-credential')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
+    await waitFor(() =>
+      expect(config.commit).toHaveBeenCalledWith({ transactionId: 'restore-tx' })
+    );
+    expect(await screen.findByLabelText('测试方案 本地文件 C:/test/other.json')).toHaveValue(
+      'unsaved other file'
+    );
+    expect(
+      screen.queryByLabelText('测试方案 本地文件 C:/test/config.json')
+    ).not.toBeInTheDocument();
+    expect(config.readFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an empty backup list without starting a restore', async () => {
+    const config = api();
+    config.load.mockResolvedValue([makeProfile()]);
+    render(<ConfigProfilesSection />);
+    fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
+    fireEvent.click(screen.getByRole('button', { name: '备份' }));
+    expect(await screen.findByText('暂无备份')).toBeInTheDocument();
+    expect(config.previewBackupRestore).not.toHaveBeenCalled();
+    expect(config.commit).not.toHaveBeenCalled();
+  });
+
   it('reloads the API key shown in the editor when route credentials change', async () => {
     const config = api();
     const previous = makeProfile({
@@ -347,17 +441,54 @@ describe('ConfigProfilesSection UI refresh', () => {
     expect(screen.queryByText('确认写入内容')).not.toBeInTheDocument();
   });
 
-  it('keeps session association collapsed by default with a single heading', async () => {
+  it('does not render the session association card in the editor', async () => {
     const config = api();
     config.load.mockResolvedValue([makeProfile()]);
     render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
-    const heading = await screen.findByText('会话关联');
-    const details = heading.closest('details');
-    expect(details).not.toBeNull();
-    expect(details).not.toHaveAttribute('open');
-    // 合并重复标题:同一 section 只有一个「会话关联」标题
-    expect(screen.queryByText('对话记录路径')).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue('测试方案')).toBeInTheDocument();
+    expect(screen.queryByText('会话关联')).not.toBeInTheDocument();
+  });
+
+  it('switches a built-in profile to official account login', async () => {
+    const config = api();
+    const profile = makeProfile({
+      isExample: true,
+      builtin: { clientType: 'codex', version: 6, fingerprint: 'fingerprint' },
+      authMode: 'third-party',
+      revision: 2,
+    });
+    config.load.mockResolvedValue([profile]);
+    config.switchAuthMode.mockImplementation(async ({ authMode }: { authMode: string }) => ({
+      ...profile,
+      authMode,
+      revision: 3,
+      files: [{ id: 'file-1', path: 'C:/test/config.toml', template: 'model = "gpt-6-sol"' }],
+    }));
+    render(<ConfigProfilesSection />);
+
+    fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
+    fireEvent.click(await screen.findByRole('button', { name: '官方账号登录' }));
+    expect(screen.getByRole('dialog', { name: '切换接入方式' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认切换' }));
+
+    await waitFor(() =>
+      expect(config.switchAuthMode).toHaveBeenCalledWith({
+        profileId: 'profile-1',
+        authMode: 'official',
+        expectedRevision: 2,
+      })
+    );
+    expect(await screen.findByText(/官方账号登录由客户端自行完成/)).toBeInTheDocument();
+  });
+
+  it('restores deleted built-in templates from the header', async () => {
+    const config = api();
+    config.load.mockResolvedValue([]);
+    render(<ConfigProfilesSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '恢复内置模板' }));
+    await waitFor(() => expect(config.restoreMissingBuiltins).toHaveBeenCalledTimes(1));
   });
 });

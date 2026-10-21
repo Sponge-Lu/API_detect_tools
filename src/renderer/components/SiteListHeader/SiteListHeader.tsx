@@ -9,7 +9,10 @@ import {
   type HistoryEndpointTrack,
 } from '../../../shared/types/route-proxy';
 import type { SiteType } from '../../../shared/types/site';
-import { HISTORY_POLL_INTERVAL_MS } from '../Route/Usability/HistoryBucketBars';
+import {
+  HISTORY_POLL_INTERVAL_MS,
+  HISTORY_TOTAL_ENDPOINT,
+} from '../Route/Usability/HistoryBucketBars';
 import { useUIStore } from '../../store/uiStore';
 import type { SortField, SortOrder } from '../../store/uiStore';
 
@@ -51,7 +54,6 @@ const ALL_COLUMNS: SiteListColumn[] = [
   { label: '余额', field: 'balance', centered: true },
   { label: '今日消费', field: 'todayUsage', centered: true },
   { label: '模型数', field: 'modelCount', centered: true },
-  { label: 'LDC', field: 'ldcRatio', centered: true },
   { label: '请求端点', centered: true, historySelector: true },
 ];
 
@@ -79,9 +81,9 @@ function getEndpointOptions(data: unknown): string[] {
       })
     : [];
 
-  return Array.from(
-    new Set<string>([...ROUTE_HISTORY_ENDPOINTS, ...discoveredEndpoints])
-  ).sort(compareRouteHistoryEndpoints);
+  return Array.from(new Set<string>([...ROUTE_HISTORY_ENDPOINTS, ...discoveredEndpoints])).sort(
+    compareRouteHistoryEndpoints
+  );
 }
 
 function HistoryHeaderControls() {
@@ -122,6 +124,7 @@ function HistoryHeaderControls() {
   }, []);
 
   useEffect(() => {
+    if (selectedEndpoint === HISTORY_TOTAL_ENDPOINT) return;
     if (endpoints.length === 0) {
       if (selectedEndpoint !== null) setSelectedEndpoint(null);
       return;
@@ -142,11 +145,16 @@ function HistoryHeaderControls() {
         aria-label="请求端点选择"
       >
         {endpoints.length > 0 ? (
-          endpoints.map(endpoint => {
+          [HISTORY_TOTAL_ENDPOINT, ...endpoints].map(endpoint => {
             const isSelected = selectedEndpoint === endpoint;
-            const endpointLabel = getRouteHistoryEndpointLabel(endpoint);
+            const endpointLabel =
+              endpoint === HISTORY_TOTAL_ENDPOINT ? '总计' : getRouteHistoryEndpointLabel(endpoint);
             const endpointTitle =
-              endpointLabel === endpoint ? endpoint : `${endpointLabel} · ${endpoint}`;
+              endpoint === HISTORY_TOTAL_ENDPOINT
+                ? '总计（所有请求端点）'
+                : endpointLabel === endpoint
+                  ? endpoint
+                  : `${endpointLabel} · ${endpoint}`;
             return (
               <button
                 key={endpoint}
@@ -245,7 +253,7 @@ export function SiteListHeader({
 
   return (
     <div
-      className={`sticky top-0 z-20 grid items-center gap-x-1 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/95 px-3 py-2 text-xs font-medium uppercase tracking-wide text-[var(--text-secondary)] backdrop-blur ${className}`.trim()}
+      className={`sticky top-0 z-[var(--z-sticky)] grid items-center gap-x-1 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/95 px-3 py-2 text-xs font-medium uppercase tracking-wide text-[var(--text-secondary)] backdrop-blur ${className}`.trim()}
       style={{
         gridTemplateColumns: `${columnWidths.map(width => `${width}px`).join(' ')}${actions ? ' 1fr' : ''}`,
       }}

@@ -68,13 +68,14 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
   addSite: async site => {
     const { config, saveConfig } = get();
     if (!config) return;
-    set({
-      config: {
-        ...config,
-        sites: [...config.sites, site],
-      },
-    });
-    await saveConfig();
+    const nextConfig = { ...config, sites: [...config.sites, site] };
+    set({ config: nextConfig });
+    try {
+      await saveConfig();
+    } catch (error) {
+      if (get().config === nextConfig) set({ config });
+      throw error;
+    }
   },
 
   updateSite: async (index, site) => {
@@ -87,13 +88,14 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
       ...existingSite, // 保留 cached_data、cli_config 等字段
       ...site, // 覆盖用户编辑的字段
     };
-    set({
-      config: {
-        ...config,
-        sites: newSites,
-      },
-    });
-    await saveConfig();
+    const nextConfig = { ...config, sites: newSites };
+    set({ config: nextConfig });
+    try {
+      await saveConfig();
+    } catch (error) {
+      if (get().config === nextConfig) set({ config });
+      throw error;
+    }
   },
 
   deleteSite: async index => {
@@ -127,6 +129,7 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
       toast.error('删除站点失败');
       sessionEventLog.error('sites', `删除站点失败：${siteToDelete.name}`);
       set({ config });
+      throw error;
     } finally {
       set({ saving: false });
     }
@@ -140,13 +143,14 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
       ...newSites[index],
       enabled: !newSites[index].enabled,
     };
-    set({
-      config: {
-        ...config,
-        sites: newSites,
-      },
-    });
-    await saveConfig();
+    const nextConfig = { ...config, sites: newSites };
+    set({ config: nextConfig });
+    try {
+      await saveConfig();
+    } catch (error) {
+      if (get().config === nextConfig) set({ config });
+      throw error;
+    }
   },
 
   reorderSites: async (fromIndex, toIndex) => {
@@ -155,13 +159,14 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
     const newSites = [...config.sites];
     const [movedSite] = newSites.splice(fromIndex, 1);
     newSites.splice(toIndex, 0, movedSite);
-    set({
-      config: {
-        ...config,
-        sites: newSites,
-      },
-    });
-    await saveConfig();
+    const nextConfig = { ...config, sites: newSites };
+    set({ config: nextConfig });
+    try {
+      await saveConfig();
+    } catch (error) {
+      if (get().config === nextConfig) set({ config });
+      throw error;
+    }
   },
 
   // 设置操作
@@ -191,6 +196,7 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
       Logger.error('保存配置失败:', error);
       toast.error('保存配置失败');
       sessionEventLog.error('sites', '站点配置保存失败');
+      throw error;
     } finally {
       set({ saving: false });
     }

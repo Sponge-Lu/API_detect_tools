@@ -21,6 +21,8 @@ import * as path from 'path';
 import { app, net, shell } from 'electron';
 import { spawn } from 'child_process';
 import axios from 'axios';
+import { createHash } from 'crypto';
+import { createReadStream } from 'fs';
 
 export interface DownloadProgress {
   percent: number;
@@ -70,6 +72,8 @@ export class UpdateService {
   private settings: UpdateSettings | null = null;
   private currentRequest: Electron.ClientRequest | null = null;
   private downloadCancelled = false;
+  private releaseDigests = new Map<string, string>();
+  private verifiedInstallers = new Map<string, string>();
 
   constructor() {
     const userDataPath = app.getPath('userData');
@@ -127,29 +131,42 @@ export class UpdateService {
     }
 
     const platform = process.platform;
+    const compatibleAssets = release.assets
+      .filter((asset: any) => {
+        const match = asset.name.match(/(?:^|[-_ .])(x64|arm64|ia32|universal)(?=[-_ .]|$)/i);
+        if (!match) return process.arch === 'x64';
+        return (
+          match[1].toLowerCase() === process.arch ||
+          (platform === 'darwin' && match[1].toLowerCase() === 'universal')
+        );
+      })
+      .sort(
+        (a: any, b: any) =>
+          Number(b.name.includes(process.arch)) - Number(a.name.includes(process.arch))
+      );
     let targetAsset;
 
     // 根据平台筛选对应的安装包
     if (platform === 'win32') {
       // Windows: 查找 Setup.exe
-      targetAsset = release.assets.find(
+      targetAsset = compatibleAssets.find(
         (asset: any) => asset.name.endsWith('.exe') && asset.name.includes('Setup')
       );
     } else if (platform === 'darwin') {
       // macOS: 优先查找 dmg，其次 zip (不包含 blockmap)
-      targetAsset = release.assets.find(
+      targetAsset = compatibleAssets.find(
         (asset: any) => asset.name.endsWith('.dmg') && !asset.name.includes('blockmap')
       );
       if (!targetAsset) {
-        targetAsset = release.assets.find(
+        targetAsset = compatibleAssets.find(
           (asset: any) => asset.name.endsWith('.zip') && !asset.name.includes('blockmap')
         );
       }
     } else if (platform === 'linux') {
       // Linux: 优先查找 AppImage，其次 deb
-      targetAsset = release.assets.find((asset: any) => asset.name.endsWith('.AppImage'));
+      targetAsset = compatibleAssets.find((asset: any) => asset.name.endsWith('.AppImage'));
       if (!targetAsset) {
-        targetAsset = release.assets.find((asset: any) => asset.name.endsWith('.deb'));
+        targetAsset = compatibleAssets.find((asset: any) => asset.name.endsWith('.deb'));
       }
     }
 
@@ -168,6 +185,11 @@ export class UpdateService {
    */
   private buildReleaseInfo(release: any): ReleaseInfo {
     const version = (release.tag_name as string).replace(/^v/, '');
+    for (const asset of release.assets ?? []) {
+      if (typeof asset.digest === 'string' && /^sha256:[a-f0-9]{64}$/i.test(asset.digest)) {
+        this.releaseDigests.set(asset.browser_download_url, asset.digest.slice(7).toLowerCase());
+      }
+    }
     return {
       version,
       releaseDate: release.published_at,
@@ -279,7 +301,15 @@ export class UpdateService {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        return await this.doDownload(url, onProgress);
+        const expected = this.releaseDigests.get(url);
+        if (!expected) throw new Error('更新包缺少可信 SHA-256，请重新检查更新或前往发布页下载');
+        const downloadedPath = await this.doDownload(url, onProgress);
+        if (await this.hashInstaller(downloadedPath) !== expected) {
+          await fs.unlink(downloadedPath);
+          throw new Error('更新包 SHA-256 校验失败');
+        }
+        this.verifiedInstallers.set(path.resolve(downloadedPath), expected);
+        return downloadedPath;
       } catch (err: any) {
         const isRetryable =
           !this.downloadCancelled &&
@@ -432,6 +462,10 @@ export class UpdateService {
    * 安装更新：启动安装程序并退出应用
    */
   async installUpdate(filePath: string): Promise<void> {
+    const expected = this.verifiedInstallers.get(path.resolve(filePath));
+    if (!expected || await this.hashInstaller(filePath) !== expected) {
+      throw new Error('更新包未验证或已被修改，请重新下载');
+    }
     Logger.info(`[UpdateService] 启动安装: ${filePath}`);
 
     const platform = process.platform;
@@ -488,6 +522,12 @@ export class UpdateService {
       this.settings = defaultSettings;
       return defaultSettings;
     }
+  }
+
+  private async hashInstaller(filePath: string): Promise<string> {
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+    return hash.digest('hex');
   }
 
   /**

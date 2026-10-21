@@ -1,7 +1,7 @@
 /**
  * 输入: SiteCardHeaderProps (站点数据、检测结果、CLI 兼容性)
  * 输出: React 组件 (站点列表行头部 UI)
- * 定位: 展示层 - 站点列表行头部组件，显示站点基本信息与关键指标
+ * 定位: 展示层 - 显示接入点信息与关键指标，名称通过回调打开系统浏览器
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -9,6 +9,7 @@
  * - PROJECT_INDEX.md
  */
 
+import { CircleAlert } from 'lucide-react';
 import { HistoryCell } from '../HistoryCell';
 import type { SiteCardHeaderProps } from './types';
 
@@ -36,8 +37,6 @@ export function SiteCardHeader({
   site,
   siteResult,
   lastSyncDisplay,
-  errorCode,
-  timeoutSeconds,
   columnWidths,
   modelCount,
   accessPointType = 'managed',
@@ -46,10 +45,9 @@ export function SiteCardHeader({
   onOpenSite,
 }: SiteCardHeaderProps) {
   const isCustomCli = accessPointType === 'custom-cli';
-  const ldcDisplay =
-    !isCustomCli && siteResult?.ldcPaymentSupported && siteResult.ldcExchangeRate
-      ? siteResult.ldcExchangeRate
-      : '--';
+  const issueMessages = Array.from(
+    new Set([...(siteResult?.issues || []), ...(siteResult?.error ? [siteResult.error] : [])])
+  );
 
   return (
     <div
@@ -63,18 +61,13 @@ export function SiteCardHeader({
         <div className="flex min-w-0 items-center gap-1.5">
           <button
             onClick={event => {
-              if (isCustomCli) {
-                return;
-              }
               event.stopPropagation();
               onOpenSite(site, accountId);
             }}
-            className={`group flex min-w-0 items-center gap-1.5 transition-colors ${
-              isCustomCli ? 'cursor-default' : 'hover:text-[var(--accent)]'
-            }`}
+            className="group flex min-w-0 items-center gap-1.5 transition-colors hover:text-[var(--accent)]"
             title={
               isCustomCli
-                ? `直连配置 ${site.name}`
+                ? `打开直连配置 ${site.name}`
                 : `打开站点 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`
             }
             type="button"
@@ -92,14 +85,15 @@ export function SiteCardHeader({
               {site.name}
             </span>
           </button>
-          {errorCode && (
-            <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
-              {errorCode}
-            </span>
-          )}
-          {!errorCode && timeoutSeconds !== null && (
-            <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
-              T/O
+          {issueMessages.length > 0 && (
+            <span
+              className="flex-shrink-0 text-[var(--danger)]"
+              title={issueMessages.join('\n')}
+              aria-label={`站点异常：${issueMessages.join('；')}`}
+              role="img"
+              tabIndex={0}
+            >
+              <CircleAlert className="h-4 w-4" aria-hidden="true" />
             </span>
           )}
         </div>
@@ -159,19 +153,7 @@ export function SiteCardHeader({
         </span>
       </div>
 
-      {/* 列 7: LDC */}
-      <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
-        <span
-          className={`truncate font-mono font-medium ${
-            ldcDisplay === '--' ? 'text-[var(--text-tertiary)]' : 'text-[var(--accent)]'
-          }`}
-          title={ldcDisplay === '--' ? '不支持 LDC' : `LDC 兑换比例: ${ldcDisplay}`}
-        >
-          {ldcDisplay}
-        </span>
-      </div>
-
-      {/* 列 8: History（端点选择 + 时间桶条形图）*/}
+      {/* 列 7: History（端点选择 + 时间桶条形图）*/}
       <div
         className="flex items-center px-2"
         onClick={event => event.stopPropagation()}

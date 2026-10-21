@@ -1,8 +1,6 @@
 import {
-  Coins,
   LayoutDashboard,
   FileJson,
-  GitFork,
   Route as RouteIcon,
   ScrollText,
   Server,
@@ -29,9 +27,7 @@ export interface OverviewSubpageMeta {
 export const APP_PAGE_ORDER: VisibleTabId[] = [
   'overview',
   'sites',
-  'credit',
   'route',
-  'model-mapping',
   'config-files',
   'logs',
   'settings',
@@ -52,13 +48,6 @@ export const APP_PAGE_META = {
     description: '集中维护站点配置、账号、检测结果与日常操作。',
     icon: Server,
   },
-  credit: {
-    id: 'credit',
-    navLabel: 'LDC 积分',
-    title: 'LDC 积分',
-    description: '查看 Linux Do Credit 账户积分、收支统计与充值入口。',
-    icon: Coins,
-  },
   route: {
     id: 'route',
     navLabel: '本地路由',
@@ -66,18 +55,11 @@ export const APP_PAGE_META = {
     description: '统一管理本地网关、客户端配置文件与运行状态。',
     icon: RouteIcon,
   },
-  'model-mapping': {
-    id: 'model-mapping',
-    navLabel: '模型映射',
-    title: '模型映射',
-    description: '管理逻辑模型、原始模型、来源优先级与故障转移顺序。',
-    icon: GitFork,
-  },
   'config-files': {
     id: 'config-files',
-    navLabel: '路由设置',
-    title: '路由设置',
-    description: '管理会话路由卡片与预创建路由。',
+    navLabel: '路由模型',
+    title: '路由模型',
+    description: '管理会话路由卡片、预创建路由与模型映射优先级。',
     icon: FileJson,
   },
   logs: {

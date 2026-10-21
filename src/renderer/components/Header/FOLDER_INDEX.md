@@ -6,14 +6,12 @@
 
 **特点**:
 - Logo 和应用标题
-- Credit 面板（Linux Do Credit 积分监控）
 - 保存状态指示器
 - 设置按钮（带更新提示徽章）
 - 响应式设计
 
 **依赖关系**:
 - 被 `App.tsx` 使用
-- 依赖 `components/CreditPanel` 显示积分信息
 - 依赖 `store/uiStore` 管理 UI 状态
 
 ---

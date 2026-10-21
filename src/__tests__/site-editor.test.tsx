@@ -254,6 +254,119 @@ describe('SiteEditor', () => {
     );
   });
 
+  it('编辑站点时应回填并保存刷新代理配置', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    const site: SiteConfig = {
+      id: 'site-proxy',
+      name: 'Proxy Site',
+      url: 'https://example.com',
+      site_type: 'newapi',
+      api_key: 'sk-test',
+      system_token: 'token-123',
+      user_id: '42',
+      enabled: true,
+      group: 'default',
+      proxy_url: 'http://127.0.0.1:7890',
+    };
+
+    render(
+      <SiteEditor
+        site={site}
+        editingAccount={null}
+        onSave={onSave}
+        onCancel={vi.fn()}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    const proxyInput = screen.getByPlaceholderText(
+      'http://127.0.0.1:7890 或 socks5://...'
+    ) as HTMLInputElement;
+    expect(proxyInput).toHaveValue('http://127.0.0.1:7890');
+
+    fireEvent.change(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ proxy_url: 'socks5://127.0.0.1:1080' }),
+      expect.objectContaining({ systemToken: 'token-123' })
+    );
+  });
+
+  it('刷新代理格式非法时应阻止保存', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SiteEditor
+        initialMode="manual"
+        onSave={onSave}
+        onCancel={vi.fn()}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('输入站点名称'), {
+      target: { value: 'Manual Hub' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('https://api.example.com'), {
+      target: { value: 'https://manual.example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('输入用户ID'), {
+      target: { value: 'manual-user' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('请手动填入 Access Token'), {
+      target: { value: 'manual-token' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:7890 或 socks5://...'), {
+      target: { value: 'ftp://not-a-proxy' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '保存站点' }));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(await screen.findByText(/代理地址格式不正确/)).toBeInTheDocument();
+  });
+
+  it('刷新代理留空或省略协议时应允许保存', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SiteEditor
+        initialMode="manual"
+        onSave={onSave}
+        onCancel={vi.fn()}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('输入站点名称'), {
+      target: { value: 'Manual Hub' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('https://api.example.com'), {
+      target: { value: 'https://manual.example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('输入用户ID'), {
+      target: { value: 'manual-user' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('请手动填入 Access Token'), {
+      target: { value: 'manual-token' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:7890 或 socks5://...'), {
+      target: { value: '127.0.0.1:7890' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '保存站点' }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ proxy_url: '127.0.0.1:7890' }),
+      expect.anything()
+    );
+  });
+
   it('智能添加已有站点时应使用隔离 Profile 保存账户', async () => {
     vi.useFakeTimers();
     const onSave = vi.fn().mockResolvedValue(undefined);

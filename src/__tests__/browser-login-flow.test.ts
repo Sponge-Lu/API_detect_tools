@@ -1,11 +1,89 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'module';
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.resetModules();
   vi.clearAllMocks();
 });
 
 describe('browser login flow', () => {
+  it.each([1, 2])(
+    'cleans session files only for app-managed profiles (slot %i)',
+    async slotIndex => {
+      const mainProfile = { userDataDir: 'C:/system-browser', profileDirectory: 'Profile 1' };
+      const getMainProfileLaunchOptions = vi.fn(async () => ({
+        success: true,
+        options: mainProfile,
+      }));
+      vi.doMock('../main/browser-profile-manager', () => ({
+        browserProfileManager: { getMainProfileLaunchOptions },
+      }));
+      vi.doMock('../main/utils/http-client', () => ({}));
+      vi.doMock('../main/utils/logger', () => ({
+        default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      }));
+      vi.doMock('electron', () => ({ app: { getPath: () => 'C:/test-user-data' } }));
+      vi.doMock('puppeteer-core', () => ({
+        default: { connect: vi.fn(async () => ({ on: vi.fn() })) },
+      }));
+      const childProcess = createRequire(import.meta.url)(
+        'child_process'
+      ) as typeof import('child_process');
+      const spawn = vi.spyOn(childProcess, 'spawn').mockReturnValue({
+        on: vi.fn(),
+      } as unknown as ReturnType<typeof childProcess.spawn>);
+      const { ChromeManager } = await import('../main/chrome-manager');
+      const manager = new ChromeManager() as unknown as {
+        launchBrowserForSlot: (slot: number, url: string) => Promise<void>;
+        getChromePath: () => string;
+        getSlotUserDataDir: (slot: number) => string;
+        cleanupSessionFiles: (directory: string) => void;
+        pickDebugPort: () => Promise<number>;
+        waitForPortFree: () => Promise<void>;
+        waitForPortReady: () => Promise<void>;
+      };
+      vi.spyOn(manager, 'getChromePath').mockReturnValue(process.execPath);
+      vi.spyOn(manager, 'getSlotUserDataDir').mockReturnValue('C:/isolated-browser');
+      vi.spyOn(manager, 'pickDebugPort').mockResolvedValue(9333);
+      vi.spyOn(manager, 'waitForPortFree').mockResolvedValue();
+      vi.spyOn(manager, 'waitForPortReady').mockResolvedValue();
+      const cleanup = vi.spyOn(manager, 'cleanupSessionFiles').mockImplementation(() => undefined);
+
+      await manager.launchBrowserForSlot(slotIndex, 'about:blank');
+
+      if (slotIndex === 1) {
+        expect(cleanup).not.toHaveBeenCalled();
+        expect(spawn.mock.calls[0][1]).toContain('--user-data-dir=C:/system-browser');
+        expect(spawn.mock.calls[0][1]).toContain('--profile-directory=Profile 1');
+      } else {
+        expect(getMainProfileLaunchOptions).not.toHaveBeenCalled();
+        expect(cleanup).toHaveBeenCalledWith('C:/isolated-browser');
+      }
+    }
+  );
+
+  it('uses the persistent login directory for slot zero and releases ownership on completion', async () => {
+    vi.doMock('../main/utils/http-client', () => ({
+      httpGet: vi.fn(),
+      httpPost: vi.fn(),
+      httpRequest: vi.fn(),
+    }));
+    vi.doMock('../main/browser-profile-manager', () => ({ browserProfileManager: {} }));
+    vi.doMock('puppeteer-core', () => ({ default: {} }));
+    vi.doMock('electron', () => ({ app: { getPath: () => 'C:/test-user-data' } }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    vi.spyOn(manager as any, 'getBrowserProfilesRoot').mockReturnValue('C:/profiles');
+    expect((manager as any).getSlotUserDataDir(0)).toBe(manager.getDefaultLoginProfilePath());
+    expect(manager.getDefaultLoginProfilePath().replaceAll('\\', '/')).toBe('C:/profiles/login');
+    (manager as any).loginBrowserState = { busy: true };
+    manager.completeLogin();
+    expect((manager as any).loginBrowserState.busy).toBe(false);
+  });
   it('initializeSiteAccount uses login browser state when loginMode is enabled', async () => {
     vi.doMock('../main/utils/logger', () => ({
       default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -1447,7 +1525,7 @@ describe('browser login flow', () => {
     }
   });
 
-  it('browser-profile:open-site-for-checkin 应按账户 Profile 打开站点并在识别登录后 2 秒关闭', async () => {
+  it('browser-profile:open-site-for-checkin uses the account profile and a 15 second close delay', async () => {
     const handlers = new Map<string, (...args: any[]) => any>();
     const loadConfig = vi.fn(async () => undefined);
     const getSiteById = vi.fn(() => ({
@@ -1476,12 +1554,14 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig,
+        getConfig: loadConfig,
         getAccountById,
         getSiteById,
       },
     }));
     vi.doMock('../main/browser-profile-manager', () => ({
       browserProfileManager: {
+        ensureAutomationSlot: vi.fn(async () => 0),
         detectMainChromeProfile: vi.fn(),
         getIsolatedProfileLaunchOptions: vi.fn(),
         deleteIsolatedProfile: vi.fn(),
@@ -1524,7 +1604,7 @@ describe('browser login flow', () => {
       {
         siteType: 'newapi',
         maxWaitTimeMs: 120000,
-        closeDelayMs: 2000,
+        closeDelayMs: 15000,
       }
     );
     expect(result).toEqual({ success: true });
@@ -1561,6 +1641,7 @@ describe('browser login flow', () => {
     }));
     vi.doMock('../main/browser-profile-manager', () => ({
       browserProfileManager: {
+        ensureAutomationSlot: vi.fn(async () => 0),
         listAccountProfileOptions,
         bindAccountProfile,
         detectMainChromeProfile: vi.fn(),
@@ -1626,11 +1707,13 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig,
+        getConfig: loadConfig,
         getAccountById,
       },
     }));
     vi.doMock('../main/browser-profile-manager', () => ({
       browserProfileManager: {
+        ensureAutomationSlot: vi.fn(async () => 0),
         detectMainChromeProfile: vi.fn(),
         getIsolatedProfileLaunchOptions: vi.fn(),
         deleteIsolatedProfile: vi.fn(),
@@ -1714,12 +1797,14 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig,
+        getConfig: loadConfig,
         getAccountById,
         updateAccountCachedData,
       },
     }));
     vi.doMock('../main/browser-profile-manager', () => ({
       browserProfileManager: {
+        ensureAutomationSlot: vi.fn(async () => 0),
         detectMainChromeProfile: vi.fn(),
         getIsolatedProfileLaunchOptions: vi.fn(),
         deleteIsolatedProfile: vi.fn(),
@@ -1888,6 +1973,7 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig: vi.fn(async () => true),
+        getConfig: vi.fn(async () => true),
         getAccountById,
         getSiteById,
         getAccountsBySiteId: vi.fn(() => [{ id: 'acct-1' }]),
@@ -1998,6 +2084,7 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig: vi.fn(async () => true),
+        getConfig: vi.fn(async () => true),
         getAccountById,
         getSiteById,
         getAccountsBySiteId: vi.fn(() => [{ id: 'acct-sub2' }]),
@@ -2089,6 +2176,7 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig: vi.fn(async () => true),
+        getConfig: vi.fn(async () => true),
         getAccountById: vi.fn(() => ({
           id: 'acct-sub2',
           site_id: 'site-sub2',
@@ -2188,6 +2276,7 @@ describe('browser login flow', () => {
     vi.doMock('../main/unified-config-manager', () => ({
       unifiedConfigManager: {
         loadConfig: vi.fn(async () => true),
+        getConfig: vi.fn(async () => true),
         getAccountById,
         getSiteById,
         getAccountsBySiteId: vi.fn(() => [{ id: 'acct-1' }]),

@@ -4,15 +4,15 @@
 
 开发本项目前，请确认本地环境满足：
 
-- Node.js `>= 18`
+- Node.js `^20.19.0`、`^22.12.0` 或 `>=24.0.0`（与测试依赖的运行要求一致）
 - npm
-- 可用的 Chromium 浏览器，优先推荐 Google Chrome
+- 开发启动会准备固定版本的内置 Chromium，首次缺失时需要联网下载
 - Windows、macOS 或 Linux 任一桌面系统
 
 说明：
 
-- 仓库当前使用 `package-lock.json`，默认以 `npm` 为主。
-- 浏览器路径可通过环境变量或配置文件指定，开发阶段默认会自动探测。
+- 使用 `npm ci` 安装锁定依赖；开发与打包使用同一 Electron 版本。
+- 浏览器路径的显式配置优先级保持一致：环境变量、配置文件、内置 Chromium、本机浏览器。
 
 ---
 
@@ -21,17 +21,20 @@
 ```bash
 git clone https://github.com/Sponge-Lu/API_detect_tools.git
 cd API_detect_tools
-npm install
+npm ci
 npm run dev
 ```
 
 `npm run dev` 会执行：
 
-1. `scripts/dev-cleanup.cjs`
-2. `scripts/dev-main.cjs`
-3. `scripts/dev.cjs`
+1. `scripts/dev-cleanup.cjs` 清理开发进程。
+2. `scripts/dev.cjs` 并行启动 Vite 与 `scripts/dev-main.cjs`。
+3. `dev-main.cjs` 校验固定版本的 Chromium、编译主进程，等待 Vite 就绪后将准确地址传给 Electron。
 
 其中 `dev.cjs` 会并行拉起主进程与 Vite 渲染进程，并为日志添加前缀。
+
+主进程与 preload 修改后需要重启开发命令；渲染进程继续使用 Vite 热更新。
+开发与打包均使用 Electron 网络栈，配置仍通过 `app.getPath('userData')` 加载。
 
 ---
 
@@ -43,6 +46,7 @@ npm run dev
 npm run dev            # 清理后同时启动主进程与渲染进程
 npm run dev:main       # 仅启动 Electron 主进程
 npm run dev:renderer   # 仅启动 Vite
+npm run preview        # 构建页面并启动 Electron，使用与打包版一致的本地页面
 ```
 
 ### 构建
@@ -61,6 +65,14 @@ npm run dist:win
 npm run dist:mac
 npm run dist:linux
 ```
+
+打包后校验产物与当前构建一致，并启动内置浏览器执行页面检查：
+
+```powershell
+npm run verify:packaged -- release/win-unpacked/resources win32 x64
+```
+
+macOS 传入 `.app/Contents/Resources` 和 `darwin`，Linux 传入 `release/linux-unpacked/resources` 和 `linux`；最后一个参数为目标架构。跨架构时只校验资源，原生架构额外执行浏览器启动检查。CI 在上传产物前执行同一校验。
 
 ### 质量检查
 
@@ -87,8 +99,8 @@ npm run test:coverage
 ### 渲染进程
 
 - `src/renderer/components/`：UI 原语、对话框、工作台组件
-- `src/renderer/pages/`：一级页面容器，包括数据总览、站点管理、自定义 CLI、本地路由、日志、设置等
-- `src/renderer/store/`：`configStore`、`detectionStore`、`uiStore`、`routeStore`
+- `src/renderer/pages/`：一级页面容器，包括数据总览、站点管理、本地路由、路由模型（会话路由卡片 + 模型映射合并）、路由日志、设置
+- `src/renderer/store/`：`configStore`、`customCliConfigStore`、`detectionStore`、`routeStore`、`toastStore`、`uiStore`
 
 ### 共享层
 
@@ -148,7 +160,7 @@ npm run test:coverage
 
 ### 设计系统相关测试
 
-当前设计系统测试覆盖的是 **双主题** 与 `App*` 原语体系，而不是旧的多主题/iOS 原语体系。
+当前设计系统测试覆盖的是 **四套中性主题**（`Light` / `Dark` / `Modern` / `Modern Dark`）与 `App*` 原语体系，而不是旧的多套实验主题/iOS 原语体系。
 
 代表性测试包括：
 
@@ -173,7 +185,8 @@ npm run test:coverage
 - `sites-page-redesign.test.tsx`
 - `logs-page.test.tsx`
 - `unified-cli-config-dialog.test.tsx`
-- `custom-cli-page-redesign.test.tsx`
+- `custom-cli-config-editor-dialog.test.tsx`
+- `custom-cli-config-service.test.ts`
 
 当前 Route / CLI 相关测试重点覆盖：
 

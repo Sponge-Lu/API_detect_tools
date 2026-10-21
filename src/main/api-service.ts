@@ -1,7 +1,7 @@
 /**
- * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理), LDC_PAYMENT_NAMES (支付名称常量)
- * 输出: DetectionResult (含 LDC 支付信息, 签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据与认证失败状态
- * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持，获取签到统计，持久化检测状态
+ * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理)
+ * 输出: DetectionResult (含签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据与认证失败状态
+ * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，获取签到统计，持久化检测状态
  *
  * DetectionRequestContext: 多账户检测上下文
  * - accountId: 账户 ID，用于账户级缓存写入
@@ -19,7 +19,7 @@
 
 import type { SiteConfig } from './types/token';
 import { BUILTIN_GROUP_IDS, getApiKeyAvailability } from '../shared/types/site';
-import { httpGet, httpPost } from './utils/http-client';
+import { httpGet } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
 import {
   buildLoginExpiredErrorMessage,
@@ -28,6 +28,7 @@ import {
   mergeApiKeysPreservingRawValue,
 } from './token-service';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
+import { isSameLocalDay } from '../shared/utils/date';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
 import { captureSiteDailySnapshot } from './overview-service';
@@ -37,20 +38,17 @@ import {
   aggregateUsageData as sharedAggregateUsageData,
   type LogItem,
 } from '../shared/utils/log-filter';
-import type {
-  TopupInfoApiResponse,
-  AmountApiResponse,
-  PayMethod,
-  LdcPaymentInfo,
-  CheckinStats,
-  DetectionCacheData,
-} from '../shared/types/site';
-import { LDC_PAYMENT_NAMES } from '../shared/constants';
+import type { CheckinStats, DetectionCacheData } from '../shared/types/site';
 import {
   getSiteTypeProfile as getRegisteredSiteTypeProfile,
   resolveSiteType,
 } from './site-type-registry';
 import { detectSiteType } from './site-type-detector';
+import {
+  buildApiKeyHeaders,
+  buildVersionedApiUrl,
+  resolveApiKeyForUse,
+} from '../shared/utils/apiConfig';
 
 interface DetectionResult {
   name: string;
@@ -64,6 +62,7 @@ interface DetectionResult {
   todayTotalTokens?: number;
   todayRequests?: number;
   error?: string;
+  issues?: string[];
   has_checkin: boolean;
   can_check_in?: boolean;
   apiKeys?: any[];
@@ -71,20 +70,32 @@ interface DetectionResult {
   modelPricing?: any;
   lastRefresh?: number;
   accountId?: string;
-  ldcPaymentSupported?: boolean;
-  ldcExchangeRate?: string;
-  ldcPaymentType?: string;
   checkinStats?: CheckinStats;
 }
 
-function isSameLocalDay(
-  timestamp: number | undefined,
-  referenceTime: number = Date.now()
-): boolean {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-    return false;
+function collectApiKeyGroupIssues(
+  apiKeys: Array<{ id?: unknown; token_id?: unknown; name?: unknown; group?: unknown }> | undefined,
+  userGroups: Record<string, unknown> | undefined
+): string[] {
+  if (!apiKeys || !userGroups) {
+    return [];
   }
-  return new Date(timestamp).toDateString() === new Date(referenceTime).toDateString();
+
+  const knownGroups = new Set(Object.keys(userGroups));
+  const issues = new Set<string>();
+
+  for (const apiKey of apiKeys) {
+    const group = typeof apiKey.group === 'string' ? apiKey.group.trim() : '';
+    if (!group || knownGroups.has(group)) {
+      continue;
+    }
+
+    const name = typeof apiKey.name === 'string' ? apiKey.name.trim() : '';
+    const identifier = name || apiKey.id || apiKey.token_id || '未命名 API Key';
+    issues.add(`API Key「${identifier}」所属分组「${group}」不在当前用户分组列表中`);
+  }
+
+  return [...issues];
 }
 
 function shouldPreserveCompletedCheckin(params: {
@@ -210,6 +221,8 @@ export interface DetectionRequestContext {
   accountId?: string;
   /** 浏览器槽位索引（0=主浏览器，N=第N+1个账号的隔离浏览器） */
   browserSlot?: number;
+  /** 跳过 requestManager HTTP 响应缓存（手动强制刷新时置 true） */
+  skipHttpCache?: boolean;
 }
 
 interface DetectionAuthContext {
@@ -631,6 +644,10 @@ export class ApiService {
     const shouldSerialize = Boolean(context?.accountId);
 
     const run = async (): Promise<DetectionResult> => {
+      // 手动强制刷新需穿透 requestManager 的 HTTP 响应缓存
+      if (quickRefresh && !context?.skipHttpCache) {
+        context = { ...context, skipHttpCache: true };
+      }
       site = await this.ensureSiteType(site);
       const detectionAuth = this.resolveDetectionAuth(site, context);
       let sharedPage: any = null;
@@ -662,7 +679,7 @@ export class ApiService {
         // 如果创建了浏览器页面，确保Cloudflare验证完成
         if (sharedPage) {
           Logger.info('🛡️ [ApiService] 检测到使用浏览器页面，确保Cloudflare验证完成...');
-          await this.waitForCloudflareChallenge(sharedPage, 600000);
+          await this.waitForCloudflareChallenge(sharedPage, 120000);
         }
 
         // 获取余额和今日消费，复用浏览器页面
@@ -681,6 +698,7 @@ export class ApiService {
             const tokenRequestContext = {
               siteType,
               ...(context?.browserSlot !== undefined ? { browserSlot: context.browserSlot } : {}),
+              proxyUrl: site.proxy_url,
             };
 
             // 并行获取所有扩展数据，传入共享的浏览器页面
@@ -696,14 +714,16 @@ export class ApiService {
                 authUserId,
                 detectionAuth.accessToken,
                 sharedPage,
-                siteType
+                siteType,
+                { proxyUrl: site.proxy_url }
               ),
               this.tokenService.fetchModelPricing(
                 site.url,
                 authUserId,
                 detectionAuth.accessToken,
                 sharedPage,
-                siteType
+                siteType,
+                { proxyUrl: site.proxy_url }
               ),
             ]);
 
@@ -739,7 +759,8 @@ export class ApiService {
               const groupedModelData = await this.fetchSub2ApiGroupedModels(
                 site,
                 apiKeys,
-                userGroups
+                userGroups,
+                context
               );
               if (groupedModelData.models.length > 0) {
                 models = groupedModelData.models;
@@ -891,25 +912,6 @@ export class ApiService {
           }
         }
 
-        // 检测是否支持 LDC 支付
-        let ldcPaymentSupported = false;
-        let ldcExchangeRate: string | undefined = undefined;
-        let ldcPaymentType: string | undefined = undefined;
-
-        try {
-          Logger.info('💰 [ApiService] 开始 LDC 支付检测...');
-          const ldcPaymentInfo = await this.detectLdcPayment(site, timeout, sharedPage, context);
-          ldcPaymentSupported = ldcPaymentInfo.ldcPaymentSupported;
-          ldcExchangeRate = ldcPaymentInfo.ldcExchangeRate;
-          ldcPaymentType = ldcPaymentInfo.ldcPaymentType;
-          Logger.info(
-            `✅ [ApiService] LDC 支付检测完成: 支持=${ldcPaymentSupported}, 比例=${ldcExchangeRate || '未知'}, 类型=${ldcPaymentType || '未知'}`
-          );
-        } catch (error: any) {
-          Logger.info('⚠️ [ApiService] LDC 支付检测失败:', error.message);
-          // 检测失败不影响整体检测流程
-        }
-
         const persistedDetectionCache = this.getPersistedDetectionCache(
           site.url,
           context?.accountId
@@ -935,6 +937,7 @@ export class ApiService {
           (preserveCompletedCheckin
             ? cachedData?.checkinStats || mapCachedCheckinStats(persistedDetectionCache)
             : undefined);
+        const issues = collectApiKeyGroupIssues(apiKeys, userGroups);
 
         const result = {
           name: site.name,
@@ -948,15 +951,13 @@ export class ApiService {
           todayTotalTokens: balanceData?.todayTotalTokens,
           todayRequests: balanceData?.todayRequests,
           error: undefined,
+          issues,
           has_checkin: hasCheckin,
           can_check_in: effectiveCanCheckIn, // 添加签到状态
           apiKeys,
           userGroups,
           modelPricing,
           lastRefresh: Date.now(), // 添加最后刷新时间
-          ldcPaymentSupported, // LDC 支付支持状态
-          ldcExchangeRate, // LDC 兑换比例
-          ldcPaymentType, // LDC 支付方式类型
           checkinStats: effectiveCheckinStats, // 签到统计数据 (New API)
           accountId: context?.accountId,
         };
@@ -1030,63 +1031,6 @@ export class ApiService {
     return shouldSerialize ? this.runSerializedForSite(site, run) : run();
   }
 
-  async detectAllSites(
-    config: any,
-    quickRefresh: boolean = false,
-    cachedResults?: DetectionResult[]
-  ): Promise<DetectionResult[]> {
-    const enabledSites = config.sites.filter(
-      (s: SiteConfig) => s.enabled && (s.group || 'default') !== BUILTIN_GROUP_IDS.UNAVAILABLE
-    );
-    const results: DetectionResult[] = [];
-
-    // 创建缓存数据映射（按站点名称索引）
-    const cachedMap = new Map<string, DetectionResult>();
-    if (cachedResults) {
-      cachedResults.forEach(result => cachedMap.set(result.name, result));
-    }
-
-    if (config.settings.concurrent) {
-      // 并发检测
-      const maxConcurrent = Math.max(1, config.settings.max_concurrent || 3);
-      let cursor = 0;
-
-      const worker = async () => {
-        while (true) {
-          const index = cursor++;
-          if (index >= enabledSites.length) break;
-          const site = enabledSites[index];
-          const cachedData = cachedMap.get(site.name);
-          const result = await this.detectSite(
-            site,
-            config.settings.timeout,
-            quickRefresh,
-            cachedData
-          );
-          results[index] = result;
-          if (result.status === '失败') {
-            Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})`);
-          }
-        }
-      };
-
-      const workerCount = Math.min(maxConcurrent, enabledSites.length);
-      await Promise.all(Array.from({ length: workerCount }, () => worker()));
-      return results;
-    }
-
-    // 顺序执行
-    for (const site of enabledSites) {
-      const cachedData = cachedMap.get(site.name);
-      const result = await this.detectSite(site, config.settings.timeout, quickRefresh, cachedData);
-      results.push(result);
-      if (result.status === '失败') {
-        Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})`);
-      }
-    }
-    return results;
-  }
-
   /**
    * 轻量级余额刷新（签到后使用）
    * 只获取余额和签到统计，不获取模型列表、API Keys 等
@@ -1102,7 +1046,8 @@ export class ApiService {
     timeout: number,
     checkinStats?: CheckinStats,
     browserPage?: any,
-    accountId?: string
+    accountId?: string,
+    options?: { skipHttpCache?: boolean }
   ): Promise<{
     success: boolean;
     balance?: number;
@@ -1125,8 +1070,14 @@ export class ApiService {
     }
 
     try {
-      // 只获取余额（传入浏览器页面以绕过Cloudflare）
-      const balanceResult = await this.fetchBalance(site, timeout, authToken, browserPage);
+      // 只获取余额（传入浏览器页面以绕过Cloudflare）；签到后跳过 HTTP 缓存避免回显签到前旧余额
+      const balanceResult = await this.fetchBalance(
+        site,
+        timeout,
+        authToken,
+        browserPage,
+        options?.skipHttpCache ? { skipHttpCache: true } : undefined
+      );
       const balance = balanceResult?.balance;
 
       Logger.info(`✅ [ApiService] 余额刷新成功: ${balance}`);
@@ -1169,124 +1120,119 @@ export class ApiService {
   /**
    * 智能等待Cloudflare验证完成
    * @param page Puppeteer页面对象
-   * @param maxWaitTime 最大等待时间（毫秒），默认10分钟
+   * @param maxWaitTime 最大等待时间（毫秒），默认2分钟；超时明确失败而非"继续执行"
    */
-  private async waitForCloudflareChallenge(page: any, maxWaitTime: number = 600000): Promise<void> {
-    Logger.info('🛡️ [ApiService] 开始Cloudflare验证检测（最长等待10分钟）...');
+  private async waitForCloudflareChallenge(page: any, maxWaitTime: number = 120000): Promise<void> {
+    Logger.info(
+      `🛡️ [ApiService] 开始Cloudflare验证检测（最长等待${Math.round(maxWaitTime / 1000)}秒）...`
+    );
 
     const startTime = Date.now();
     let lastLogTime = startTime;
 
-    try {
-      // 1. 等待body元素加载
-      await page.waitForSelector('body', { timeout: 30000 });
-      Logger.info('✅ [ApiService] 页面body已加载');
+    // 1. 等待body元素加载
+    await page.waitForSelector('body', { timeout: 30000 });
+    Logger.info('✅ [ApiService] 页面body已加载');
 
-      // 2. 循环检测验证状态
-      while (Date.now() - startTime < maxWaitTime) {
-        try {
-          // 检查页面是否已关闭（浏览器关闭会导致页面关闭）
-          if (page.isClosed()) {
-            throw new Error('浏览器已关闭，操作已取消');
-          }
-
-          // 2.1 检测是否仍在验证中
-          const verificationStatus = await runOnPageQueue(page, () =>
-            page.evaluate(() => {
-              const doc = (globalThis as any).document;
-
-              // 检测Cloudflare验证相关元素
-              const cfChallenge = doc.querySelector('[class*="cf-challenge"]');
-              const cfVerifying = doc.querySelector('[class*="cf-browser-verification"]');
-              const cfLoading = doc.querySelector('[id*="challenge-stage"]');
-              const cfSpinner = doc.querySelector('[class*="cf-spinner"]');
-
-              // 检测标题
-              const titleCheck =
-                doc.title.includes('Just a moment') ||
-                doc.title.includes('Checking your browser') ||
-                doc.title.includes('Please wait');
-
-              // 检测body class
-              const bodyCheck =
-                doc.body.className.includes('no-js') || doc.body.className.includes('cf-challenge');
-
-              // 检测iframe（某些站点使用iframe进行验证）
-              const iframeCheck = doc.querySelector('iframe[src*="challenges.cloudflare.com"]');
-
-              const isVerifying = !!(
-                cfChallenge ||
-                cfVerifying ||
-                cfLoading ||
-                cfSpinner ||
-                titleCheck ||
-                bodyCheck ||
-                iframeCheck
-              );
-
-              return {
-                isVerifying,
-                title: doc.title,
-                bodyClass: doc.body.className,
-              };
-            })
-          );
-
-          // 每30秒输出一次日志
-          const elapsed = Date.now() - startTime;
-          if (elapsed - (lastLogTime - startTime) >= 30000) {
-            Logger.info(
-              `⏳ [ApiService] Cloudflare验证中... (${Math.floor(elapsed / 1000)}s / ${Math.floor(maxWaitTime / 1000)}s)`
-            );
-            lastLogTime = Date.now();
-          }
-
-          if (!verificationStatus.isVerifying) {
-            Logger.info('✅ [ApiService] Cloudflare验证已完成');
-            Logger.info(`   - 页面标题: ${verificationStatus.title}`);
-
-            // 验证完成后额外等待2秒确保页面稳定
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // 等待网络空闲（最多3秒）
-            try {
-              await page.waitForNetworkIdle({ timeout: 3000 });
-              Logger.info('✅ [ApiService] 网络已空闲');
-            } catch (e) {
-              Logger.info('⚠️ [ApiService] 网络未完全空闲，继续执行');
-            }
-
-            return;
-          }
-
-          // 仍在验证中，等待2秒后重新检测
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } catch (error: any) {
-          // 如果是浏览器关闭错误，直接抛出
-          if (error.message.includes('浏览器已关闭') || error.message.includes('操作已取消')) {
-            Logger.info('⚠️ [ApiService] 检测到浏览器已关闭，停止Cloudflare验证等待');
-            throw error;
-          }
-
-          // 检查页面是否已关闭
-          if (page.isClosed()) {
-            throw new Error('浏览器已关闭，操作已取消');
-          }
-
-          Logger.error('❌ [ApiService] 验证检测错误:', error.message);
-          // 检测错误，等待3秒后继续
-          await new Promise(resolve => setTimeout(resolve, 3000));
+    // 2. 循环检测验证状态
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        // 检查页面是否已关闭（浏览器关闭会导致页面关闭）
+        if (page.isClosed()) {
+          throw new Error('浏览器已关闭，操作已取消');
         }
-      }
 
-      // 超时处理
-      if (Date.now() - startTime >= maxWaitTime) {
-        Logger.info('⚠️ [ApiService] Cloudflare验证超时（10分钟），继续执行');
+        // 2.1 检测是否仍在验证中
+        const verificationStatus = await runOnPageQueue(page, () =>
+          page.evaluate(() => {
+            const doc = (globalThis as any).document;
+
+            // 检测Cloudflare验证相关元素
+            const cfChallenge = doc.querySelector('[class*="cf-challenge"]');
+            const cfVerifying = doc.querySelector('[class*="cf-browser-verification"]');
+            const cfLoading = doc.querySelector('[id*="challenge-stage"]');
+            const cfSpinner = doc.querySelector('[class*="cf-spinner"]');
+
+            // 检测标题
+            const titleCheck =
+              doc.title.includes('Just a moment') ||
+              doc.title.includes('Checking your browser') ||
+              doc.title.includes('Please wait');
+
+            // 检测body class
+            const bodyCheck =
+              doc.body.className.includes('no-js') || doc.body.className.includes('cf-challenge');
+
+            // 检测iframe（某些站点使用iframe进行验证）
+            const iframeCheck = doc.querySelector('iframe[src*="challenges.cloudflare.com"]');
+
+            const isVerifying = !!(
+              cfChallenge ||
+              cfVerifying ||
+              cfLoading ||
+              cfSpinner ||
+              titleCheck ||
+              bodyCheck ||
+              iframeCheck
+            );
+
+            return {
+              isVerifying,
+              title: doc.title,
+              bodyClass: doc.body.className,
+            };
+          })
+        );
+
+        // 每30秒输出一次日志
+        const elapsed = Date.now() - startTime;
+        if (elapsed - (lastLogTime - startTime) >= 30000) {
+          Logger.info(
+            `⏳ [ApiService] Cloudflare验证中... (${Math.floor(elapsed / 1000)}s / ${Math.floor(maxWaitTime / 1000)}s)`
+          );
+          lastLogTime = Date.now();
+        }
+
+        if (!verificationStatus.isVerifying) {
+          Logger.info('✅ [ApiService] Cloudflare验证已完成');
+          Logger.info(`   - 页面标题: ${verificationStatus.title}`);
+
+          // 验证完成后额外等待2秒确保页面稳定
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          // 等待网络空闲（最多3秒）
+          try {
+            await page.waitForNetworkIdle({ timeout: 3000 });
+            Logger.info('✅ [ApiService] 网络已空闲');
+          } catch (e) {
+            Logger.info('⚠️ [ApiService] 网络未完全空闲，继续执行');
+          }
+
+          return;
+        }
+
+        // 仍在验证中，等待2秒后重新检测
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (error: any) {
+        // 如果是浏览器关闭错误，直接抛出
+        if (error.message.includes('浏览器已关闭') || error.message.includes('操作已取消')) {
+          Logger.info('⚠️ [ApiService] 检测到浏览器已关闭，停止Cloudflare验证等待');
+          throw error;
+        }
+
+        // 检查页面是否已关闭
+        if (page.isClosed()) {
+          throw new Error('浏览器已关闭，操作已取消');
+        }
+
+        Logger.error('❌ [ApiService] 验证检测错误:', error.message);
+        // 检测错误，等待3秒后继续
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
-    } catch (error: any) {
-      Logger.error('❌ [ApiService] Cloudflare等待失败:', error.message);
-      // 失败也继续执行
     }
+
+    // 超时：明确失败，交由上层标记站点失败并提示用户完成人机验证
+    throw new Error('Cloudflare 人机验证等待超时，请在弹出的浏览器窗口中完成验证后重新刷新');
   }
 
   /**
@@ -1377,18 +1323,39 @@ export class ApiService {
     );
   }
 
-  /** 站点级不可用错误（5xx / 连接失败），不应继续尝试其他端点 */
+  /**
+   * 判断是否为 TLS 握手失败（连接建立阶段被中断，非证书/非 HTTP 错误）。
+   *
+   * 特征：Node/BoringSSL 在建立 TLS 连接时报 EPROTO，且伴随 handshake alert；
+   * Electron net (Chromium) 则报 net::ERR_SSL_* 系列错误。
+   * 典型场景：直连被网络阻断（需走代理），表现为 SSLV3_ALERT_HANDSHAKE_FAILURE。
+   * 此类错误无 error.response，需要回退到浏览器会话（Chromium 会读取系统代理）才能连通。
+   */
+  private isTlsHandshakeError(error: any): boolean {
+    const code = error?.code;
+    const msg = (error?.message || '').toUpperCase();
+    if (code === 'EPROTO') return true;
+    return (
+      msg.includes('HANDSHAKE_FAILURE') ||
+      msg.includes('SSLV3_ALERT') ||
+      msg.includes('TLSV1_ALERT') ||
+      msg.includes('SSL ALERT') ||
+      msg.includes('ERR_SSL')
+    );
+  }
+
+  /** 站点级不可用错误（5xx / 连接失败 / DNS 解析失败），不应继续尝试其他端点 */
   private isSiteUnavailableError(error: any): boolean {
-    // 直接检查 axios 响应状态码（覆盖 521 等 Cloudflare 错误）
+    // 直接检查 HTTP 响应状态码（覆盖 521 等 Cloudflare 错误）
     const status = error?.response?.status;
     if (status && status >= 500) return true;
     const msg = error?.message || '';
     const codeMatch = msg.match(/HTTP\s+(\d{3})/i);
     if (codeMatch && parseInt(codeMatch[1]) >= 500) return true;
-    const code = error?.code || '';
-    return (
-      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN/.test(code) ||
-      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN/.test(msg)
+    // 同时匹配 Node (E*) 与 Electron net (net::ERR_*) 两种错误形态，保证开发/打包一致
+    const combined = `${error?.code || ''} ${msg}`.toUpperCase();
+    return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|ENOTFOUND|ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|ERR_CONNECTION_CLOSED|ERR_NAME_NOT_RESOLVED|ERR_ADDRESS_UNREACHABLE|ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED/.test(
+      combined
     );
   }
 
@@ -1417,9 +1384,11 @@ export class ApiService {
    */
   private isTimeoutError(error: any): boolean {
     if (!error) return false;
-    if (error.code === 'ECONNABORTED') return true;
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return true;
     const msg = String(error.message || '').toLowerCase();
-    return msg.includes('timeout') && msg.includes('exceeded');
+    // axios: "timeout of Nms exceeded"; electronFetch: "Request timeout after Nms"; Chromium: "net::ERR_TIMED_OUT"
+    if (msg.includes('err_timed_out') || msg.includes('etimedout')) return true;
+    return msg.includes('timeout') && (msg.includes('exceeded') || msg.includes('after'));
   }
 
   /**
@@ -1469,7 +1438,6 @@ export class ApiService {
     parseResponse: (data: any) => T,
     sharedPage?: any,
     cacheOptions?: { ttl?: number; skipCache?: boolean },
-    requestOptions?: { method?: 'GET' | 'POST'; data?: any },
     context?: DetectionRequestContext
   ): Promise<{ result: T; page?: any; pageRelease?: () => void }> {
     Logger.info('📡 [ApiService] 发起请求:', url);
@@ -1477,9 +1445,9 @@ export class ApiService {
     // 生成缓存 key（基于 URL 和用户 ID）
     const cacheKey = RequestManager.key(url, site.user_id || 'anonymous');
 
-    const method = requestOptions?.method ?? 'GET';
-
-    const fetchInBrowser = async (): Promise<{
+    const fetchInBrowser = async (
+      fallbackError?: any
+    ): Promise<{
       result: T;
       page?: any;
       pageRelease?: () => void;
@@ -1509,7 +1477,7 @@ export class ApiService {
         page = pageResult.page;
         pageRelease = pageResult.release;
 
-        await this.waitForCloudflareChallenge(page, 600000); // 10分钟
+        await this.waitForCloudflareChallenge(page, 120000); // 2分钟，超时明确失败
       } else {
         Logger.info('♻️ [ApiService] 复用共享浏览器页面');
       }
@@ -1521,17 +1489,49 @@ export class ApiService {
           site.user_id && this.getSiteTypeProfile(site).includeUserIdHeaders
             ? getAllUserIdHeaders(site.user_id)
             : {};
+        const requestHeaders = { ...headers, ...userIdHeaders };
 
-        const requestBody =
-          method === 'POST' ? JSON.stringify(requestOptions?.data ?? {}) : undefined;
-        const requestOnce = () =>
-          chromeManager.requestWithBrowserSession(page, url, {
-            method,
-            headers: { ...headers, ...userIdHeaders },
-            body: requestBody,
+        const requestOnce = async () => {
+          if (fallbackError && this.isTimeoutError(fallbackError)) {
+            return (await runOnPageQueue(page, () =>
+              page.evaluate(
+                async (
+                  requestUrl: string,
+                  requestHeaders: Record<string, string>,
+                  timeoutMs: number
+                ) => {
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                  try {
+                    const response = await fetch(requestUrl, {
+                      method: 'GET',
+                      headers: requestHeaders,
+                      credentials: 'include',
+                      signal: controller.signal,
+                    });
+                    return {
+                      status: response.status,
+                      statusText: response.statusText,
+                      text: await response.text(),
+                    };
+                  } finally {
+                    clearTimeout(timeoutId);
+                  }
+                },
+                url,
+                requestHeaders,
+                timeout * 1000
+              )
+            )) as { status: number; statusText: string; text: string };
+          }
+
+          return chromeManager.requestWithBrowserSession(page, url, {
+            method: 'GET',
+            headers: requestHeaders,
             timeoutMs: timeout * 1000,
             allowNodeFallback: false,
           });
+        };
 
         let response = await requestOnce();
         if (this.isBotDetectionPage(response.text)) {
@@ -1591,33 +1591,34 @@ export class ApiService {
         if (isPageClosed) {
           Logger.warn('⚠️ [ApiService] 共享页面已失效，置空后重试');
           sharedPage = undefined;
-          return await fetchInBrowser();
+          return await fetchInBrowser(error);
         }
         throw error;
       }
     }
 
     try {
-      const response =
-        method === 'GET'
-          ? // 使用 requestManager 包装请求，实现去重和缓存
-            // httpGet 在打包环境自动使用 Electron net 模块（Chromium 网络栈）
-            await requestManager.request(
-              cacheKey,
-              () => httpGet(url, { timeout: timeout * 1000, headers }),
-              { ttl: cacheOptions?.ttl ?? 30000, skipCache: cacheOptions?.skipCache }
-            )
-          : // POST 一般不做缓存与去重，避免副作用；若遇到站点风控/需要 Cookie，再走浏览器回退
-            await httpPost(url, requestOptions?.data ?? {}, { timeout: timeout * 1000, headers });
+      // 使用 requestManager 包装请求，实现去重和缓存
+      // httpGet 在打包环境自动使用 Electron net 模块（Chromium 网络栈）
+      const response = await requestManager.request(
+        cacheKey,
+        () =>
+          httpGet(url, {
+            timeout: timeout * 1000,
+            headers,
+            proxyUrl: site.proxy_url,
+          }),
+        {
+          ttl: cacheOptions?.ttl ?? 30000,
+          skipCache: cacheOptions?.skipCache ?? Boolean(context?.skipHttpCache),
+        }
+      );
 
-      // httpPost 在打包环境会返回状态码而不是抛异常；这里统一恢复 HTTP 错误语义。
-      if (method === 'POST' && (response.status === 401 || response.status === 403)) {
-        const responseHeaders = (
-          response as unknown as { headers?: Record<string, string | string[]> }
-        ).headers;
+      // 非 2xx 响应统一恢复 HTTP 错误语义（两栈一致），交由上层按状态码/响应体分类
+      if (response.status < 200 || response.status >= 300) {
         throw {
           message: `HTTP ${response.status}`,
-          response: { status: response.status, data: response.data, headers: responseHeaders },
+          response: { status: response.status, data: response.data },
         };
       }
 
@@ -1638,10 +1639,12 @@ export class ApiService {
         };
       }
 
-      Logger.info('✅ [ApiService] axios请求成功');
+      Logger.info('✅ [ApiService] HTTP请求成功');
       return { result: parseResponse(response.data), page: sharedPage };
     } catch (error: any) {
-      Logger.error('❌ [ApiService] axios请求失败:', {
+      // 失败请求（含 401 等授权失败、5xx）不保留缓存，避免 token 刷新后重试仍命中旧错误响应
+      requestManager.invalidate(cacheKey);
+      Logger.error('❌ [ApiService] HTTP请求失败:', {
         message: error.message,
         status: error.response?.status,
       });
@@ -1649,16 +1652,20 @@ export class ApiService {
       // IP 封锁：直接抛出，不走浏览器回退
       if (error.isIpBlocked) throw error;
 
-      // 第二步：检测是否为Cloudflare保护或Bot Detection
+      // 第二步：检测是否为Cloudflare保护、Bot Detection，或 TLS 握手失败（直连被阻断需走代理）
       const needBrowserFallback =
-        this.isCloudflareProtection(error) || error.isBotDetection === true;
+        this.isCloudflareProtection(error) ||
+        this.isBotDetectionPage(error?.response?.data) ||
+        error.isBotDetection === true ||
+        this.isTlsHandshakeError(error) ||
+        this.isTimeoutError(error);
       if (needBrowserFallback) {
         Logger.info('🛡️ [ApiService] 检测到Bot/Cloudflare保护，切换到浏览器模式...');
 
         // 已经判定需要浏览器模式：直接使用浏览器请求（优先复用 sharedPage）。
         // 注：后续旧的 fallback 分支保留作为兜底，但正常情况下不会执行到。
         try {
-          return await fetchInBrowser();
+          return await fetchInBrowser(error);
         } catch (browserError: any) {
           Logger.error('❌ [ApiService] 浏览器模式也失败:', browserError.message);
           throw browserError;
@@ -1703,7 +1710,14 @@ export class ApiService {
     let epCacheRetried = false;
 
     const headers: any = {
-      Authorization: `Bearer ${authToken}`,
+      ...(hasApiKey
+        ? buildApiKeyHeaders(
+            authToken,
+            context?.accountId
+              ? unifiedConfigManager.getAccountById(context.accountId)?.routeAuthScheme
+              : undefined
+          )
+        : { Authorization: `Bearer ${authToken}` }),
       'Content-Type': 'application/json',
     };
 
@@ -1721,7 +1735,10 @@ export class ApiService {
 
     while (true) {
       for (const endpoint of currentEndpoints) {
-        const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
+        const url =
+          endpoint === '/v1/models'
+            ? buildVersionedApiUrl(site.url, 'models')
+            : `${site.url.replace(/\/$/, '')}${endpoint}`;
 
         try {
           Logger.info('📡 [ApiService] 尝试获取模型列表:', {
@@ -1839,7 +1856,6 @@ export class ApiService {
               Logger.info('   完整响应:', JSON.stringify(data).substring(0, 200));
               return [];
             },
-            undefined,
             undefined,
             undefined,
             context
@@ -2006,11 +2022,11 @@ export class ApiService {
 
   private resolveSub2ApiRepresentativeKeyValue(apiKey: any): string {
     if (typeof apiKey?.key === 'string') {
-      return apiKey.key.trim();
+      return resolveApiKeyForUse(apiKey.key, 'remote');
     }
 
     if (typeof apiKey?.token === 'string') {
-      return apiKey.token.trim();
+      return resolveApiKeyForUse(apiKey.token, 'remote');
     }
 
     return '';
@@ -2042,12 +2058,12 @@ export class ApiService {
   private async fetchSub2ApiGroupedModels(
     site: SiteConfig,
     apiKeys: any[],
-    userGroups: Record<string, { id?: number | string; desc: string; ratio: number }> | undefined
+    userGroups: Record<string, { id?: number | string; desc: string; ratio: number }> | undefined,
+    context?: DetectionRequestContext
   ): Promise<{
     models: string[];
     modelPricing: { data: Record<string, { enable_groups: string[] }> };
   }> {
-    const cleanBaseUrl = site.url.replace(/\/$/, '');
     const representativeKeys = new Map<string, { value: string; rank: number }>();
 
     for (const apiKey of apiKeys || []) {
@@ -2078,12 +2094,18 @@ export class ApiService {
 
     for (const [groupName, representativeKey] of representativeKeys) {
       try {
-        const response = await httpGet(`${cleanBaseUrl}/v1/models`, {
+        const response = await httpGet(buildVersionedApiUrl(site.url, 'models'), {
           headers: {
-            Authorization: `Bearer ${representativeKey.value}`,
+            ...buildApiKeyHeaders(
+              representativeKey.value,
+              context?.accountId
+                ? unifiedConfigManager.getAccountById(context.accountId)?.routeAuthScheme
+                : undefined
+            ),
             'Content-Type': 'application/json',
           },
           timeout: 10000,
+          proxyUrl: site.proxy_url,
         });
 
         if (this.isBotDetectionPage(response.data)) {
@@ -2205,7 +2227,6 @@ export class ApiService {
       (data: any) => (data?.code === 0 ? data.data : undefined),
       sharedPage,
       undefined,
-      undefined,
       context
     );
 
@@ -2219,7 +2240,6 @@ export class ApiService {
         timeout,
         (data: any) => (data?.code === 0 ? data.data : undefined),
         sharedPage,
-        undefined,
         undefined,
         context
       );
@@ -2302,9 +2322,15 @@ export class ApiService {
             headers,
             site,
             timeout,
-            (data: any) => this.extractBalance(data),
+            (data: any) => {
+              // 200 + 认证失败载荷：显式抛错，避免被 extractBalance 静默吞成 undefined 余额
+              const payload = asObjectPayload(data);
+              if (isAuthFailureResponse(payload)) {
+                throw new Error(buildLoginExpiredErrorMessage('余额接口', payload));
+              }
+              return this.extractBalance(data);
+            },
             sharedPage,
-            undefined,
             undefined,
             context
           );
@@ -2546,7 +2572,6 @@ export class ApiService {
             },
             sharedPage,
             undefined,
-            undefined,
             context
           );
 
@@ -2622,124 +2647,6 @@ export class ApiService {
   }
 
   /**
-   * 检测站点是否支持 LDC 支付
-   * @param site 站点配置
-   * @param timeout 超时时间（秒）
-   * @param sharedPage 共享的浏览器页面
-   * @returns LDC 支付信息
-   */
-  private async detectLdcPayment(
-    site: SiteConfig,
-    timeout: number,
-    sharedPage?: any,
-    context?: DetectionRequestContext
-  ): Promise<LdcPaymentInfo> {
-    const result: LdcPaymentInfo = {
-      ldcPaymentSupported: false,
-      ldcExchangeRate: undefined,
-      ldcPaymentType: undefined,
-    };
-
-    try {
-      // 步骤1：调用 /api/user/topup/info 检查支付方式
-      const topupInfoUrl = `${site.url.replace(/\/$/, '')}/api/user/topup/info`;
-      const authToken = site.system_token || site.api_key;
-
-      if (!authToken) {
-        Logger.info('⚠️ [ApiService] 缺少认证令牌，跳过 LDC 支付检测');
-        return result;
-      }
-
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/json',
-      };
-
-      // 添加 User-ID headers
-      if (site.user_id) {
-        const userIdHeaders = getAllUserIdHeaders(site.user_id);
-        Object.assign(headers, userIdHeaders);
-      }
-
-      try {
-        const topupInfoResult = await this.fetchWithBrowserFallback<TopupInfoApiResponse>(
-          topupInfoUrl,
-          headers,
-          site,
-          timeout,
-          (data: any) => data as TopupInfoApiResponse,
-          sharedPage,
-          { ttl: 60000 }, // 缓存1分钟
-          undefined,
-          context
-        );
-
-        const topupInfo = topupInfoResult.result;
-
-        // 检查 pay_methods 数组中是否有 LDC 支付方式（支持多种名称）
-        const payMethods = topupInfo?.data?.pay_methods || [];
-        Logger.info(
-          `📋 [ApiService] 站点支付方式列表: ${JSON.stringify(payMethods.map((m: PayMethod) => ({ name: m.name, type: m.type })))}`
-        );
-
-        const ldcPayMethod = payMethods.find((method: PayMethod) =>
-          LDC_PAYMENT_NAMES.some(name => method.name?.toLowerCase() === name.toLowerCase())
-        );
-
-        if (ldcPayMethod) {
-          result.ldcPaymentSupported = true;
-          result.ldcPaymentType = ldcPayMethod.type; // 保存支付方式类型
-          Logger.info(`✅ [ApiService] 站点支持 LDC 支付, 类型: ${ldcPayMethod.type}`);
-
-          // 步骤2：调用 /api/user/amount 获取兑换比例（需要 POST 方法，传递 amount 参数）
-          try {
-            const amountUrl = `${site.url.replace(/\/$/, '')}/api/user/amount`;
-            Logger.info('📡 [ApiService] 发起 POST 请求获取兑换比例:', amountUrl);
-
-            // API 需要传递 amount 参数，传递 1 来获取 1 单位的兑换比例
-            const amountResult = await this.fetchWithBrowserFallback<AmountApiResponse>(
-              amountUrl,
-              headers,
-              site,
-              timeout,
-              (data: any) => data as AmountApiResponse,
-              sharedPage,
-              { ttl: 60000, skipCache: true },
-              { method: 'POST', data: { amount: 1 } },
-              context
-            );
-
-            const amountData = amountResult.result;
-            Logger.info('📦 [ApiService] /api/user/amount 原始响应:', JSON.stringify(amountData));
-            // 检查响应是否成功（success 不为 false 且 message 不是 error）
-            if (amountData?.data && amountData.message !== 'error') {
-              result.ldcExchangeRate = amountData.data;
-              Logger.info(`✅ [ApiService] LDC 兑换比例: ${result.ldcExchangeRate}`);
-            } else {
-              Logger.warn(
-                '⚠️ [ApiService] 获取兑换比例失败:',
-                amountData?.data || amountData?.message
-              );
-            }
-          } catch (amountError: any) {
-            Logger.warn('⚠️ [ApiService] 获取 LDC 兑换比例失败:', amountError.message);
-            // 兑换比例获取失败不影响支付支持状态
-          }
-        } else {
-          Logger.info('ℹ️ [ApiService] 站点不支持 LDC 支付');
-        }
-      } catch (topupError: any) {
-        Logger.info('⚠️ [ApiService] 获取充值信息失败:', topupError.message);
-        // topup/info 接口失败，设置为不支持
-      }
-    } catch (error: any) {
-      Logger.error('❌ [ApiService] LDC 支付检测异常:', error.message);
-    }
-
-    return result;
-  }
-
-  /**
    * 保存缓存显示数据到统一配置
    */
   private async saveCachedDisplayData(
@@ -2789,9 +2696,6 @@ export class ApiService {
           last_refresh: Date.now(),
           has_checkin: detectionResult.has_checkin,
           can_check_in: preserveCompletedCheckin ? false : detectionResult.can_check_in,
-          ldc_payment_supported: detectionResult.ldcPaymentSupported,
-          ldc_exchange_rate: detectionResult.ldcExchangeRate,
-          ldc_payment_type: detectionResult.ldcPaymentType,
           checkin_stats: nextCheckinStats,
           status: detectionResult.status,
           error: detectionResult.error,

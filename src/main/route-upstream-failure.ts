@@ -110,6 +110,10 @@ export function classifyUpstreamFailure(input: {
   if (typeof statusCode === 'number' && isUpstreamQuotaExhaustionResponse(statusCode, body)) {
     return { ...base, failureClass: 'quota_exhausted' };
   }
+  if (typeof statusCode === 'number' && [400, 413, 422].includes(statusCode) &&
+      /context[_ ](?:length|window)|maximum context|input token.{0,30}(?:exceed|limit)|prompt.{0,20}(?:too long|too large)|request_too_large|too many tokens/i.test(base.summary)) {
+    return { ...base, failureClass: 'overflow' };
+  }
   if (typeof statusCode === 'number' && REQUEST_FATAL_STATUS_CODES.has(statusCode)) {
     return { ...base, failureClass: 'request_fatal' };
   }
@@ -128,7 +132,7 @@ export function classifyUpstreamFailure(input: {
  * 计入成功率窗口会误禁用健康通道。故障转移行为不受此影响。
  */
 export function failureClassToOutcome(failureClass: RouteUpstreamFailureClass): RouteOutcome {
-  return failureClass === 'request_fatal' ? 'neutral' : 'failure';
+  return failureClass === 'request_fatal' || failureClass === 'overflow' ? 'neutral' : 'failure';
 }
 
 /** 凭证被拒：该 key 在此通道不可用 */
@@ -162,6 +166,7 @@ export function resolveRoutePathDisabledReason(
 
 /** quota_exhausted 恒为 0，确保其响应体永远无法进入聚合透传分支。 */
 const FAILURE_RETENTION_RANK: Record<RouteUpstreamFailureClass, number> = {
+  overflow: 5,
   request_fatal: 4,
   channel_fatal: 3,
   transient: 2,

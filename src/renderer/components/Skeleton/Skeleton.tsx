@@ -22,7 +22,7 @@ export function Skeleton({ className = '' }: SkeletonProps) {
  */
 export function SiteCardSkeleton() {
   return (
-    <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)]/80 p-4">
+    <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)]/80 p-4">
       <div className="flex items-center gap-4">
         {/* 站点名称 */}
         <Skeleton className="h-5 w-32" />
@@ -40,9 +40,9 @@ export function SiteCardSkeleton() {
         <Skeleton className="h-5 w-28" />
         {/* 操作按钮 */}
         <div className="ml-auto flex gap-2">
-          <Skeleton className="h-8 w-8 rounded-lg" />
-          <Skeleton className="h-8 w-8 rounded-lg" />
-          <Skeleton className="h-8 w-8 rounded-lg" />
+          <Skeleton className="h-8 w-8 rounded-[var(--radius-md)]" />
+          <Skeleton className="h-8 w-8 rounded-[var(--radius-md)]" />
+          <Skeleton className="h-8 w-8 rounded-[var(--radius-md)]" />
         </div>
       </div>
     </div>

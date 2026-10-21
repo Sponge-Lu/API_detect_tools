@@ -5,7 +5,7 @@
  *
  * 多账户支持:
  * - handleCheckIn: 接受 accountId，传递到 checkinAndRefresh IPC
- * - handleCheckInAll: 遍历所有 DetectionResult（含 accountId），逐账户签到
+ * - handleCheckInAll: 根据站点/账户配置生成目标，并用检测结果过滤已签到账户
  * - 签到结果按 (name, accountId) 精确匹配更新
  *
  * 签到失败时根据站点类型打开对应的手动签到页面:
@@ -30,12 +30,12 @@ import React from 'react';
 import Logger from '../utils/logger';
 import {
   BUILTIN_GROUP_IDS,
-  isAnyRouterSite as isAnyRouterSiteName,
-  type DetectionCacheData,
-  type DetectionResult,
+  isLoginBonusRouterSite,
+  isSiteCheckinEnabled,
   type SiteConfig,
   type SiteType,
 } from '../../shared/types/site';
+import { isSameLocalDay } from '../../shared/utils/date';
 import { useDetectionStore } from '../store/detectionStore';
 import { useConfigStore } from '../store/configStore';
 
@@ -51,6 +51,7 @@ interface UseCheckInOptions {
   detectSingle?: (site: SiteConfig, quickRefresh: boolean) => Promise<void>;
 }
 
+// 登录即送奖励（内部单位）：anyrouter/agentrouter 登录即赠 $25，此值即真实签到奖励
 const ANY_ROUTER_CHECKIN_QUOTA = 25 * 500000;
 
 export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInOptions) {
@@ -60,7 +61,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
   const getCheckInKey = (site: SiteConfig, accountId?: string) =>
     accountId ? `${site.name}::${accountId}` : site.name;
 
-  const isAnyRouterSiteConfig = (site: SiteConfig) => isAnyRouterSiteName(site.name);
+  const isAnyRouterSiteConfig = (site: SiteConfig) => isLoginBonusRouterSite(site.name);
 
   const buildManualCheckinCompletedResult = (site: SiteConfig, accountId?: string) => {
     const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
@@ -80,67 +81,15 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
     };
   };
 
-  const buildCheckinCompletionCache = (
-    result: DetectionResult
-  ): Pick<
-    DetectionCacheData,
-    'last_refresh' | 'has_checkin' | 'can_check_in' | 'checkin_stats'
-  > => {
-    const cachedData: Pick<
-      DetectionCacheData,
-      'last_refresh' | 'has_checkin' | 'can_check_in' | 'checkin_stats'
-    > = {
-      last_refresh: result.lastRefresh,
-      has_checkin: result.has_checkin ?? true,
-      can_check_in: false,
-    };
-
-    if (result.checkinStats) {
-      cachedData.checkin_stats = {
-        today_quota: result.checkinStats.todayQuota,
-        checkin_count: result.checkinStats.checkinCount,
-        total_checkins: result.checkinStats.totalCheckins,
-        site_type: result.checkinStats.siteType,
-      };
-    }
-
-    return cachedData;
-  };
-
-  const persistCheckinCompletion = async (
-    site: SiteConfig,
-    accountId: string | undefined,
-    result: DetectionResult
-  ) => {
-    if (!window.electronAPI.browserProfile?.persistCheckinCompletion) {
-      return true;
-    }
-
-    if (!site.id) {
-      Logger.warn('⚠️ [useCheckIn] 缺少站点 ID，无法持久化手动签到状态:', site.name);
-      return false;
-    }
-
-    const persistResult = await window.electronAPI.browserProfile.persistCheckinCompletion(
-      site.id,
-      accountId,
-      buildCheckinCompletionCache(result)
-    );
-
-    return persistResult?.success === true;
-  };
-
-  const markManualCheckinCompleted = async (site: SiteConfig, accountId?: string) => {
+  /**
+   * 手动签到辅助：仅在内存中标记"今日已签"，不持久化到 config.json。
+   * 用户只是被引导打开了站点页面，是否真的完成签到只有站点知道——
+   * 持久化会造成虚假"已签"状态，重启/刷新后应回到真实状态。
+   */
+  const markManualCheckinCompleted = (site: SiteConfig, accountId?: string) => {
     const nextResult = buildManualCheckinCompletedResult(site, accountId);
     upsertResult(nextResult);
-
-    const persisted = await persistCheckinCompletion(site, accountId, nextResult);
-    if (!persisted) {
-      Logger.warn('⚠️ [useCheckIn] 手动签到状态已更新到界面，但本地缓存保存失败:', {
-        siteId: site.id,
-        accountId,
-      });
-    }
+    Logger.info('ℹ️ [useCheckIn] 已打开站点签到页，内存标记今日已签（刷新后以站点实际状态为准）');
   };
 
   const resolveManualCheckinSiteType = (siteType?: SiteType): 'veloera' | 'newapi' => {
@@ -159,13 +108,19 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
 
   const buildAnyRouterCompletedResult = (site: SiteConfig, accountId?: string) => {
     const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
-    if (!existingResult) return null;
 
     return {
-      ...existingResult,
+      ...(existingResult || {
+        name: site.name,
+        url: site.url,
+        status: '成功',
+        models: [],
+        has_checkin: true,
+        accountId,
+      }),
       can_check_in: false,
       checkinStats: {
-        ...existingResult.checkinStats,
+        ...existingResult?.checkinStats,
         todayQuota: ANY_ROUTER_CHECKIN_QUOTA,
         siteType: resolveManualCheckinSiteType(site.site_type),
       },
@@ -175,7 +130,6 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
 
   const markAnyRouterCheckinCompleted = (site: SiteConfig, accountId?: string) => {
     const nextResult = buildAnyRouterCompletedResult(site, accountId);
-    if (!nextResult) return null;
     upsertResult(nextResult);
     return nextResult;
   };
@@ -273,6 +227,12 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
    */
   const handleCheckIn = async (site: SiteConfig, accountId?: string) => {
     const checkInKey = getCheckInKey(site, accountId);
+
+    // 用户显式关闭签到功能 → 不执行签到
+    if (!isSiteCheckinEnabled(site)) {
+      showAlert('该站点的签到功能已关闭，请先在站点设置中启用。', 'warning');
+      return;
+    }
 
     if (isAnyRouterSiteConfig(site)) {
       setCheckingIn(checkInKey);
@@ -425,36 +385,49 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
       return summary;
     }
 
-    // 构建 site lookup
-    const siteMap = new Map(config.sites.map(s => [s.name, s]));
-
-    // 收集所有可签到的 (site, accountId) 对
+    // 检测结果是可丢弃缓存，签到目标必须以持久化的站点和账户配置为准。
     type CheckTarget = { site: SiteConfig; accountId?: string; displayName: string };
     const targets: CheckTarget[] = [];
 
-    for (const r of results) {
-      const site = siteMap.get(r.name);
-      if (!site) continue;
+    for (const site of config.sites) {
       if (!site.enabled) continue;
+      // 用户显式关闭签到功能 → 该站点不参与签到，优先于站点自身的签到能力
+      if (!isSiteCheckinEnabled(site)) continue;
       if ((site.group || BUILTIN_GROUP_IDS.DEFAULT) === BUILTIN_GROUP_IDS.UNAVAILABLE) continue;
 
-      // 必须有认证信息（站点级或账户级）
-      if (!site.system_token && !site.user_id && !r.accountId) continue;
+      const accounts = config.accounts?.filter(account => account.site_id === site.id) || [];
+      const siteTargets = accounts.length > 0 ? accounts : [undefined];
 
-      // 必须支持签到
-      if (!r.has_checkin && !site.force_enable_checkin) continue;
+      for (const account of siteTargets) {
+        const accountId = account?.id;
+        const result = results.find(r => r.name === site.name && r.accountId === accountId);
 
-      // 如果今天已签到，跳过
-      const isToday = r.lastRefresh
-        ? new Date(r.lastRefresh).toDateString() === new Date().toDateString()
-        : false;
-      if (isToday && r.can_check_in === false) continue;
+        // 必须有认证信息（站点级或账户级）
+        if (!site.system_token && !site.user_id && !accountId) continue;
 
-      targets.push({
-        site,
-        accountId: r.accountId,
-        displayName: r.accountId ? `${r.name}(${r.accountId.slice(0, 6)})` : r.name,
-      });
+        // 优先使用检测缓存；缓存缺失时回退到持久化站点/账户签到能力标记。
+        const supportsCheckIn = result
+          ? result.has_checkin || site.force_enable_checkin
+          : site.force_enable_checkin ||
+            isAnyRouterSiteConfig(site) ||
+            (account?.metadata?.supports_checkin ??
+              account?.cached_data?.has_checkin ??
+              site.has_checkin ??
+              false);
+        if (!supportsCheckIn) continue;
+
+        // 如果今天已签到，跳过
+        const lastRefresh = result?.lastRefresh ?? account?.cached_data?.last_refresh;
+        const canCheckIn = result?.can_check_in ?? account?.cached_data?.can_check_in;
+        const isToday = isSameLocalDay(lastRefresh);
+        if (isToday && canCheckIn === false) continue;
+
+        targets.push({
+          site,
+          accountId,
+          displayName: accountId ? `${site.name}(${accountId.slice(0, 6)})` : site.name,
+        });
+      }
     }
 
     if (targets.length === 0) {
@@ -502,15 +475,20 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
           const existingResult = results.find(
             r => r.name === site.name && r.accountId === accountId
           );
-          if (existingResult) {
-            upsertResult({
-              ...existingResult,
-              balance: balanceResult?.balance ?? existingResult.balance,
-              can_check_in: false,
-              checkinStats: balanceResult?.checkinStats || checkinResult.checkinStats,
-              lastRefresh: Date.now(),
-            });
-          }
+          upsertResult({
+            ...(existingResult || {
+              name: site.name,
+              url: site.url,
+              status: '成功',
+              models: [],
+              has_checkin: true,
+              accountId,
+            }),
+            balance: balanceResult?.balance ?? existingResult?.balance,
+            can_check_in: false,
+            checkinStats: balanceResult?.checkinStats || checkinResult.checkinStats,
+            lastRefresh: Date.now(),
+          });
         } else {
           summary.failed++;
           siteResults.push({

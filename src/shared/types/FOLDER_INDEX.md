@@ -15,14 +15,13 @@
 ### 核心类型文件
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
+| **site.ts** | 站点（含站点级 `proxy_url` 刷新代理）、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
 | **endpoint-test.ts** | 手动上游端点测试目标、协议、API Key 选项、选择状态与结果 | EndpointTestTarget, EndpointTestProtocol, EndpointTestResult |
 | **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、含父子谱系与客户端模型的会话路由实例、端点历史类型；兼容 re-export 端点测试类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
 | **config-file-profile.ts** | 版本化配置方案、含协议元数据的目标目录、文件事务和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
 | **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
 | **custom-cli-config.ts** | 直连接入点配置、模型列表 URL 及接入点级上游协议 | CustomCliConfig, modelUrl, routeTargetProtocol, manualModels |
 | **config-detection.ts** | 四种 CLI 本地配置静态检测类型与官方端点/路径 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
-| **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
 ---
 ## 📝 类型详解
 ### site.ts - 站点相关类型
@@ -75,9 +74,6 @@ interface DetectionResult {
   error?: string;
   duration: number;
   timestamp: number;
-  // LDC 支付信息
-  ldcPaymentSupported?: boolean;  // 是否支持 LDC 支付
-  ldcExchangeRate?: string;       // 兑换比例（LDC:站点余额）
   // 签到统计数据 (New API 类型站点)
   checkinStats?: CheckinStats;    // 签到统计
 }
@@ -104,33 +100,6 @@ interface TokenInfo {
   expiresAt?: number;
   createdAt: number;
   lastUsed?: number;
-}
-
-// LDC 支付相关类型
-interface PayMethod {
-  name: string;   // 支付方式名称，如 "Linuxdo Credit"
-  type: string;   // 支付方式类型，如 "epay"
-}
-
-interface TopupInfoApiResponse {
-  success: boolean;
-  message: string;
-  data: {
-    amount_options: number[];
-    pay_methods: PayMethod[];
-    // ... 其他字段
-  };
-}
-
-interface AmountApiResponse {
-  success?: boolean;
-  message?: string;
-  data: string;   // 兑换比例，如 "10.00"
-}
-
-interface LdcPaymentInfo {
-  ldcPaymentSupported: boolean;
-  ldcExchangeRate?: string;
 }
 ```
 **当前约束**:
@@ -292,214 +261,6 @@ const cliConfig: CliConfig = {
 };
 
 ```
-### credit.ts - Linux Do Credit 积分类型
-**职责**: 定义 Linux Do Credit 积分检测功能相关类型
-**关键类型**:
-```typescript
-// 积分信息（完整版）
-interface CreditInfo {
-  // 基础信息
-  id: number;                 // 用户 ID
-  username: string;           // 用户名
-  nickname: string;           // 昵称
-  avatarUrl: string;          // 头像 URL
-  trustLevel: number;         // 信任等级 (0-4)
-  
-  // 积分信息
-  communityBalance: number;   // 基准值（Credit 余额）
-  gamificationScore: number;  // 当前分（论坛积分）
-  difference: number;         // 差值（实时收入/支出）
-  
-  // 收支信息
-  totalReceive: string;       // 总收入
-  totalPayment: string;       // 总支出
-  totalTransfer: string;      // 总转账
-  totalCommunity: string;     // 社区总额
-  availableBalance: string;   // 可用余额
-  
-  // 支付信息
-  payScore: number;           // 支付评分
-  payLevel: number;           // 支付等级
-  isPayKey: boolean;          // 是否有支付密钥
-  remainQuota: string;        // 剩余配额
-  dailyLimit: number;         // 每日限额
-  
-  // 状态信息
-  isAdmin: boolean;           // 是否管理员
-  lastUpdated: number;        // 最后更新时间戳
-}
-
-// 积分配置
-interface CreditConfig {
-  enabled: boolean;           // 是否启用
-  autoRefresh: boolean;       // 是否自动刷新
-  refreshInterval: number;    // 刷新间隔（秒），最小30秒
-}
-
-// 积分状态
-interface CreditState {
-  isLoggedIn: boolean;        // 是否已登录
-  isLoading: boolean;         // 是否正在加载
-  error: string | null;       // 错误信息
-  creditInfo: CreditInfo | null;
-  config: CreditConfig;
-}
-
-// 每日统计项
-interface DailyStatItem {
-  date: string;               // 日期，格式: "2025-12-24"
-  income: string;             // 收入金额
-  expense: string;            // 支出金额
-}
-
-// 每日统计数据
-interface DailyStats {
-  items: DailyStatItem[];     // 每日统计项列表
-  totalIncome: number;        // 总收入（计算值）
-  totalExpense: number;       // 总支出（计算值）
-  lastUpdated: number;        // 最后更新时间戳
-}
-
-// 交易订单
-interface TransactionOrder {
-  id: string;                 // 订单 ID
-  order_no: string;           // 订单号
-  order_name: string;         // 订单名称
-  amount: string;             // 金额
-  status: TransactionStatus;  // 交易状态
-  type: TransactionType;      // 交易类型
-  trade_time: string;         // 交易时间
-  // ... 更多字段
-}
-
-// 交易记录列表
-interface TransactionList {
-  total: number;              // 总数
-  page: number;               // 当前页码
-  pageSize: number;           // 每页数量
-  orders: TransactionOrder[]; // 订单列表
-  lastUpdated: number;        // 最后更新时间戳
-}
-
-// 统一响应格式
-interface CreditResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
-// IPC 通道常量
-const CREDIT_CHANNELS = {
-  FETCH_CREDIT: 'credit:fetch',
-  FETCH_DAILY_STATS: 'credit:fetch-daily-stats',
-  FETCH_TRANSACTIONS: 'credit:fetch-transactions',
-  LOGIN: 'credit:login',
-  LOGOUT: 'credit:logout',
-  GET_STATUS: 'credit:get-status',
-  SAVE_CONFIG: 'credit:save-config',
-  LOAD_CONFIG: 'credit:load-config',
-  GET_CACHED: 'credit:get-cached',
-  INITIATE_RECHARGE: 'credit:initiate-recharge',
-} as const;
-
-// 充值 API 请求体
-interface PayApiRequest {
-  amount: number;             // 充值金额（站点余额单位）
-}
-
-// 充值 API 响应体
-interface PayApiResponse {
-  success?: boolean;
-  message: string;
-  data: {
-    device: string;           // 设备类型
-    money: string;            // 支付金额
-    name: string;             // 订单名称
-    notify_url: string;       // 通知回调 URL
-    out_trade_no: string;     // 订单号
-    pid: string;              // 支付 ID
-    return_url: string;       // 返回 URL
-    sign: string;             // 签名
-    sign_type: string;        // 签名类型
-    type: string;             // 支付类型
-  };
-  url: string;                // 支付提交 URL
-}
-
-// 充值请求参数（前端使用）
-interface RechargeRequest {
-  siteUrl: string;            // 站点 URL
-  amount: number;             // 充值金额
-  token: string;              // 站点认证 token
-}
-
-// 充值响应（IPC 返回）
-interface RechargeResponse {
-  success: boolean;
-  paymentUrl?: string;        // 支付页面 URL
-  error?: string;
-}
-```
-**使用示例**:
-```typescript
-// 积分信息
-const creditInfo: CreditInfo = {
-  id: 139654,
-  username: 'testuser',
-  nickname: 'Test User',
-  avatarUrl: 'https://linux.do/user_avatar/...',
-  trustLevel: 3,
-  communityBalance: 1000,
-  gamificationScore: 1050,
-  difference: 50,
-  totalReceive: '66',
-  totalPayment: '25.1',
-  totalTransfer: '0',
-  totalCommunity: '16',
-  availableBalance: '40.9',
-  payScore: 25,
-  payLevel: 0,
-  isPayKey: true,
-  remainQuota: '1000',
-  dailyLimit: 1000,
-  isAdmin: false,
-  lastUpdated: Date.now()
-};
-
-// 积分配置
-const creditConfig: CreditConfig = {
-  enabled: true,
-  autoRefresh: true,
-  refreshInterval: 60
-};
-
-// 每日统计
-const dailyStats: DailyStats = {
-  items: [
-    { date: '2025-12-24', income: '10', expense: '5.1' },
-    { date: '2025-12-25', income: '0', expense: '0' }
-  ],
-  totalIncome: 10,
-  totalExpense: 5.1,
-  lastUpdated: Date.now()
-};
-
-// 交易记录
-const transactions: TransactionList = {
-  total: 2,
-  page: 1,
-  pageSize: 10,
-  orders: [...],
-  lastUpdated: Date.now()
-};
-
-// 统一响应
-const response: CreditResponse<CreditInfo> = {
-  success: true,
-  data: creditInfo
-};
-```
----
 ## 🔄 类型关系图
 
 ```
@@ -531,8 +292,6 @@ DetectionResult (检测结果)
 ├── balance?: number
 ├── usage?: number
 ├── error?: string
-├── ldcPaymentSupported?: boolean
-├── ldcExchangeRate?: string
 └── checkinStats?: CheckinStats
 
 CachedData (缓存数据扩展)
@@ -570,67 +329,6 @@ CliConfig (CLI 配置)
 ├── apiKey?: string
 └── baseUrl?: string
 
-CreditInfo (积分信息)
-├── id: number
-├── username: string
-├── nickname: string
-├── avatarUrl: string
-├── trustLevel: number
-├── communityBalance: number
-├── gamificationScore: number
-├── difference: number
-├── totalReceive: string
-├── totalPayment: string
-├── totalTransfer: string
-├── totalCommunity: string
-├── availableBalance: string
-├── payScore: number
-├── payLevel: number
-├── isPayKey: boolean
-├── remainQuota: string
-├── dailyLimit: number
-├── isAdmin: boolean
-└── lastUpdated: number
-
-CreditConfig (积分配置)
-├── enabled: boolean
-├── autoRefresh: boolean
-└── refreshInterval: number
-
-CreditState (积分状态)
-├── isLoggedIn: boolean
-├── isLoading: boolean
-├── error: string | null
-├── creditInfo: CreditInfo | null
-└── config: CreditConfig
-
-DailyStatItem (每日统计项)
-├── date: string
-├── income: string
-└── expense: string
-
-DailyStats (每日统计数据)
-├── items: DailyStatItem[]
-├── totalIncome: number
-├── totalExpense: number
-└── lastUpdated: number
-
-TransactionOrder (交易订单)
-├── id: string
-├── order_no: string
-├── order_name: string
-├── amount: string
-├── status: TransactionStatus
-├── type: TransactionType
-├── trade_time: string
-└── ... (更多字段)
-
-TransactionList (交易记录列表)
-├── total: number
-├── page: number
-├── pageSize: number
-├── orders: TransactionOrder[]
-└── lastUpdated: number
 ```
 ---
 ## 🎯 设计原则

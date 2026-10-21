@@ -1,4 +1,5 @@
 import type { DetectionResult } from '../../shared/types/site';
+import { isSameLocalDay } from '../../shared/utils/date';
 
 type DailyStatsSource =
   | Pick<
@@ -13,9 +14,7 @@ type DailyStatsSource =
   | undefined;
 
 export function getSiteDailyStats(source: DailyStatsSource, now: Date = new Date()) {
-  const isFreshToday =
-    typeof source?.lastRefresh === 'number' &&
-    new Date(source.lastRefresh).toDateString() === now.toDateString();
+  const isFreshToday = isSameLocalDay(source?.lastRefresh, now.getTime());
   const todayPromptTokens = isFreshToday ? (source?.todayPromptTokens ?? 0) : 0;
   const todayCompletionTokens = isFreshToday ? (source?.todayCompletionTokens ?? 0) : 0;
   const todayTotalTokens = isFreshToday

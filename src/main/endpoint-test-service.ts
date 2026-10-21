@@ -669,7 +669,9 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
         : '默认 API Key',
       models: uniqueStrings([
         ...apiKey.models,
-        ...(apiKey.models.length > 0 ? [] : config.models || []),
+        ...(apiKey.models.length > 0
+          ? config.manualModels || []
+          : [...(config.models || []), ...(config.manualModels || [])]),
       ]),
       ...(maskApiKeyForDisplay(value) ? { maskedApiKey: maskApiKeyForDisplay(value) } : {}),
       credentialTarget: {
@@ -721,6 +723,40 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
       },
     };
   });
+  for (const info of account.local_api_keys || []) {
+    if (
+      !isApiKeyActive({ enabled: info.status }) ||
+      !info.key.trim() ||
+      isMaskedApiKeyValue(info.key)
+    )
+      continue;
+    if (apiKeys.some(key => key.id === info.id)) continue;
+    apiKeys.push({
+      id: info.id,
+      label: info.name || '本地 API Key',
+      maskedApiKey: maskApiKeyForDisplay(info.key),
+      ...(info.group ? { group: info.group } : {}),
+      models: uniqueStrings(info.models),
+      credentialTarget: {
+        kind: 'managed',
+        siteId: site.id,
+        accountId: account.id,
+        apiKeyId: info.id,
+      },
+    });
+  }
+  const legacyKey = account.api_key || site.api_key;
+  if (legacyKey?.trim() && !isMaskedApiKeyValue(legacyKey)) {
+    const id = resolveApiKeyId({ key: legacyKey });
+    if (!apiKeys.some(key => key.id === id))
+      apiKeys.push({
+        id,
+        label: '手动 API Key',
+        maskedApiKey: maskApiKeyForDisplay(legacyKey),
+        models,
+        credentialTarget: { kind: 'managed', siteId: site.id, accountId: account.id, apiKeyId: id },
+      });
+  }
 
   return {
     target,
@@ -728,7 +764,7 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
     baseUrl: site.url,
     ...(account.routeAuthScheme ? { authScheme: account.routeAuthScheme } : {}),
     apiKeys,
-    models,
+    models: uniqueStrings([...models, ...apiKeys.flatMap(key => key.models)]),
     timeoutMs: isAnyRouterSite(site.name)
       ? ANYROUTER_TIMEOUT_MS
       : config.routing?.server.requestTimeoutMs || DEFAULT_TIMEOUT_MS,

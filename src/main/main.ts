@@ -1,7 +1,7 @@
 ﻿/**
- * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, CreditService, PowerManager, IPC handlers
+ * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, PowerManager, IPC handlers
  * 输出: BrowserWindow 实例, IPC 事件监听器, 应用生命周期管理
- * 定位: 应用入口 - 初始化 Electron 应用，管理主窗口，协调所有服务
+ * 定位: 应用入口 - 初始化 Electron 应用；显式开发 URL 加载热更新页面，其余模式加载构建产物；管理主窗口与服务
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -25,17 +25,23 @@ import { TokenService } from './token-service';
 import { backupManager } from './backup-manager';
 import { registerAllHandlers } from './handlers';
 import { unifiedConfigManager } from './unified-config-manager';
+import { routeStateManager } from './route-state-manager';
+import { cleanupStaleTempFiles } from './utils/atomic-json';
+import { flushToStorage as flushRouteStats } from './route-stats-service';
+import { flushRouteAnalytics } from './route-analytics-service';
 import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavior-manager';
-import { createCreditService } from './credit-service';
 import { powerManager } from './power-manager';
 import { initializeRouteProxy } from './route-proxy-service';
+import { loadModelMetadata } from './model-metadata-service';
+import { getModelRegistry, refreshModelRegistryMetadata } from './route-model-registry-service';
+import { broadcastRendererEvent } from './app-data-events';
 import { configureRouteApiKeyResolver } from './route-channel-resolver';
 import {
   getWindowBackgroundColor,
   normalizeThemeMode,
   type ThemeMode,
 } from '../shared/theme/themePresets';
-import { createRendererHealthMonitor } from './window-health-manager';
+import { createRendererHealthMonitor, loadApplicationRenderer } from './window-health-manager';
 import { routeSessionActivityService } from './route-session-activity-service';
 import { routeSessionBindingService } from './route-session-binding-service';
 
@@ -116,34 +122,12 @@ async function createWindow() {
   // 完全移除菜单栏
   window.setMenu(null);
 
-  const loadRenderer = async () => {
-    if (app.isPackaged) {
-      // 生产环境：加载打包后的HTML文件
-      // __dirname 在打包后是 dist/main/，需要向上两级到根目录
-      await window.loadFile(path.join(__dirname, '../../dist-renderer/index.html'));
-      return;
-    }
-
-    // 开发环境：尝试多个常用端口，避免5173被占用时出现空白
-    const ports = [5173, 5174, 5175];
-    let loaded = false;
-    for (const p of ports) {
-      const url = `http://localhost:${p}`;
-      try {
-        await window.loadURL(url);
-        loaded = true;
-        break;
-      } catch {
-        Logger.warn(`[Dev] 加载失败，尝试下一个端口: ${url}`);
-      }
-    }
-    if (!loaded) {
-      // 如果都失败，仍尝试默认端口，便于调试
-      await window.loadURL('http://localhost:5173');
-    }
-    // 开发环境可按需打开开发者工具
-    // window.webContents.openDevTools();
-  };
+  const loadRenderer = () =>
+    loadApplicationRenderer(window, {
+      isPackaged: app.isPackaged,
+      htmlPath: path.join(__dirname, '../../dist-renderer/index.html'),
+      devServerUrl: process.env.API_HUB_DEV_SERVER_URL,
+    });
 
   const rendererHealth = createRendererHealthMonitor(window.webContents, {
     loadRenderer,
@@ -162,6 +146,13 @@ app.whenReady().then(async () => {
   await unifiedConfigManager.loadConfig();
   Logger.info('✅ [Main] 统一配置管理器已初始化');
 
+  // 上次进程崩溃/断电可能在 state 目录留下孤儿临时文件（正常写入只存活数毫秒）
+  cleanupStaleTempFiles(routeStateManager.getStateDir())
+    .then(removed => {
+      if (removed > 0) Logger.info(`🧹 [Main] 清理了 ${removed} 个残留路由状态临时文件`);
+    })
+    .catch(() => undefined);
+
   // 初始化其他服务
   tokenService = new TokenService(chromeManager);
   apiService = new ApiService(tokenService);
@@ -177,11 +168,6 @@ app.whenReady().then(async () => {
     Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
   }
 
-  // 初始化 Credit 积分检测服务
-  const creditService = createCreditService(chromeManager);
-  await creditService.initialize();
-  Logger.info('✅ [Main] Credit 积分检测服务已初始化');
-
   // 注册所有 IPC 处理器
   registerAllHandlers({
     chromeManager,
@@ -193,7 +179,14 @@ app.whenReady().then(async () => {
   });
 
   // 初始化路由代理服务（如已启用则启动本地代理）
+  await loadModelMetadata();
+  getModelRegistry();
   await initializeRouteProxy();
+  void refreshModelRegistryMetadata()
+    .then(() => broadcastRendererEvent('route:model-metadata-updated', {}))
+    .catch(error =>
+      Logger.warn('Model metadata refresh failed; keeping cached metadata', String(error))
+    );
   Logger.info('✅ [Main] 路由代理服务已初始化');
 
   app.on('activate', () => {
@@ -218,12 +211,19 @@ app.on('before-quit', event => {
   if (routeActivityFlushedForQuit || routeActivityFlushInProgress) return;
   event.preventDefault();
   routeActivityFlushInProgress = true;
-  void Promise.all([
-    routeSessionActivityService.flush(),
-    routeSessionBindingService.flush(),
-  ]).finally(() => {
-    routeActivityFlushedForQuit = true;
-    routeActivityFlushInProgress = false;
-    app.quit();
-  });
+  void (async () => {
+    try {
+      await Promise.all([
+        routeSessionActivityService.flush(),
+        routeSessionBindingService.flush(),
+        flushRouteAnalytics(),
+        // stats 批量写入先入队，再等待 runtime 状态写链清空
+        flushRouteStats().then(() => unifiedConfigManager.flushRouteRuntimeState()),
+      ]);
+    } finally {
+      routeActivityFlushedForQuit = true;
+      routeActivityFlushInProgress = false;
+      app.quit();
+    }
+  })();
 });

@@ -177,7 +177,7 @@ export function AgentLogoSelect({
         aria-label={ariaLabel}
         value={value || ''}
         onChange={event => onChange((event.target.value || undefined) as AgentLogoId | undefined)}
-        className="h-9 min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-xs text-[var(--text-primary)]"
+        className="h-9 min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-xs text-[var(--text-primary)] transition-colors focus:border-[var(--accent)] focus:outline-none"
       >
         <option value="">自动匹配</option>
         {AGENT_LOGO_OPTIONS.map(option => (

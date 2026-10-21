@@ -20,6 +20,7 @@ import {
 } from '../shared/types/route-proxy';
 import { CLI_UPSTREAM_PROTOCOLS } from '../shared/types/cli-config';
 import type { UnifiedConfig } from '../shared/types/site';
+import { encryptField } from '../main/config-field-crypto';
 
 interface BackupEntry {
   filename: string;
@@ -262,6 +263,92 @@ describe('UnifiedConfigManager', () => {
     expect(restored.sites[0].name).toBe('Recovered Site');
   });
 
+  it('keeps proxy settings and distinguishes sites under the same origin', async () => {
+    const manager = await loadManager();
+    const input = createSampleConfig() as any;
+    input.sites[0].url = 'https://example.com/first';
+    input.sites[0].proxy_url = 'socks5://127.0.0.1:1080';
+    input.sites.push({
+      ...input.sites[0],
+      id: 'site-2',
+      name: 'Second',
+      url: 'https://example.com/second',
+    });
+    await manager.saveConfig(input);
+    const legacy = manager.getLegacyConfig();
+    expect(legacy.sites[0].proxy_url).toBe('socks5://127.0.0.1:1080');
+    expect(manager.getSiteByUrl('https://example.com/second/')?.id).toBe('site-2');
+    legacy.sites[0].proxy_url = '';
+    await manager.saveLegacyConfig(legacy);
+    expect(manager.getSiteById('site-1')?.proxy_url).toBe('');
+    expect(manager.getSiteById('site-2')?.url).toBe('https://example.com/second');
+  });
+
+  it('removes newly added records from memory when persistence fails', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    const save = vi.spyOn(manager, 'saveConfig').mockRejectedValue(new Error('Disk unavailable'));
+    await expect(
+      manager.addSite({
+        name: 'Failed',
+        url: 'https://failed.example.com',
+        enabled: true,
+        group: 'default',
+      })
+    ).rejects.toThrow('Disk unavailable');
+    expect(manager.getSites().map(site => site.name)).toEqual(['Recovered Site']);
+    await expect(
+      manager.addAccount({
+        site_id: 'site-1',
+        account_name: 'Failed',
+        user_id: '1',
+        access_token: 'access',
+        auth_source: 'manual',
+      })
+    ).rejects.toThrow('Disk unavailable');
+    expect(manager.getAccountsBySiteId('site-1')).toEqual([]);
+    save.mockRestore();
+  });
+
+  it('keeps separate manual accounts without user IDs', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    for (const name of ['first', 'second']) {
+      await manager.addAccount({
+        site_id: 'site-1',
+        account_name: name,
+        api_key: `${name}-key`,
+        user_id: '',
+        access_token: '',
+        auth_source: 'manual',
+      });
+    }
+    expect(manager.getAccountsBySiteId('site-1').map(account => account.api_key)).toEqual([
+      'first-key',
+      'second-key',
+    ]);
+  });
+
+  it('restores an account in memory when saving its edit fails', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    const account = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: 'Original',
+      user_id: '1',
+      access_token: 'access',
+      auth_source: 'manual',
+    });
+    const save = vi
+      .spyOn(manager, 'saveConfig')
+      .mockRejectedValueOnce(new Error('Disk unavailable'));
+    await expect(
+      manager.updateAccount(account.id, { account_name: 'Failed edit' })
+    ).rejects.toThrow('Disk unavailable');
+    expect(manager.getAccountById(account.id)?.account_name).toBe('Original');
+    save.mockRestore();
+  });
+
   it('retries transient config read failures before restoring from backup', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const recoveredConfig = { ...createSampleConfig(), version: '3.1' };
@@ -335,6 +422,19 @@ describe('UnifiedConfigManager', () => {
 
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
     expect(persisted.sites[0].name).toBe('Recovered Site');
+  });
+
+  it('defaults a missing route server switch to disabled and preserves explicit choices', async () => {
+    const manager = await loadManager();
+
+    await manager.saveConfig(createSampleConfig() as any);
+    expect(manager.getRoutingConfig().server.enabled).toBe(false);
+
+    await manager.updateRouteServerConfig({ enabled: true });
+    expect(manager.getRoutingConfig().server.enabled).toBe(true);
+
+    await manager.updateRouteServerConfig({ enabled: false });
+    expect(manager.getRoutingConfig().server.enabled).toBe(false);
   });
 
   it('drops legacy active_account_id from persisted config during normalize + save', async () => {
@@ -539,6 +639,7 @@ describe('UnifiedConfigManager', () => {
     rawConfig.sites[0] = {
       ...rawConfig.sites[0],
       access_token: 'legacy-token',
+      api_key: encryptField('sk-legacy-site-key'),
       user_id: 'legacy-user',
       cached_data: {
         balance: 66.6,
@@ -569,6 +670,7 @@ describe('UnifiedConfigManager', () => {
       user_id: 'legacy-user',
       access_token: 'legacy-token',
     });
+    expect(loadedConfig.accounts[0].api_key).toBe('sk-legacy-site-key');
     expect(loadedConfig.accounts[0].cached_data).toMatchObject({
       balance: 66.6,
       today_usage: 12.3,
@@ -579,6 +681,10 @@ describe('UnifiedConfigManager', () => {
 
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
     expect(persisted.sites[0].access_token).toBeUndefined();
+    expect(persisted.sites[0].api_key).toBeUndefined();
+    expect(persisted.accounts[0].api_key).toMatch(/^encrypted:v1:/);
+    expect(JSON.stringify(persisted)).not.toContain('sk-legacy-site-key');
+    expect((await manager.loadConfig()).accounts[0].api_key).toBe('sk-legacy-site-key');
     expect(persisted.sites[0].user_id).toBeUndefined();
     expect(persisted.sites[0].cached_data).toBeUndefined();
 

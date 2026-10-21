@@ -317,6 +317,7 @@ export type RouteOutcome = 'success' | 'failure' | 'neutral';
 
 /** 上游失败类别：决定健康度记账与聚合响应，不影响故障转移 */
 export type RouteUpstreamFailureClass =
+  | 'overflow'
   | 'request_fatal'
   | 'channel_fatal'
   | 'transient'
@@ -583,6 +584,7 @@ export interface RouteModelMappingOverride {
 
 /** canonical 模型注册项 */
 export interface RouteModelRegistryEntry {
+  metadata?: RouteModelMetadata;
   canonicalName: string;
   vendor: RouteModelVendor;
   aliases: string[];
@@ -590,6 +592,17 @@ export interface RouteModelRegistryEntry {
   hasOverride: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface RouteModelMetadata {
+  context?: number;
+  inputLimit?: number;
+  outputLimit?: number;
+  reasoning: boolean;
+  toolCall: boolean;
+  inputModalities: string[];
+  reasoningEfforts: string[];
+  cost: { input?: number; output?: number; cacheRead?: number; cacheCreation?: number };
 }
 
 /** 路由页模型重定向展示项 */
@@ -902,8 +915,8 @@ export interface RoutingConfig {
 // ============= 默认值 =============
 
 export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
-  // 默认开启：CLI 指向本地路由后，代理不自启会让请求直连上游，绕过全部路由规则
-  enabled: true,
+  // 默认关闭，只有用户显式启动后才监听本地端口并接管请求。
+  enabled: false,
   host: '127.0.0.1',
   port: 3210,
   unifiedApiKey: '',

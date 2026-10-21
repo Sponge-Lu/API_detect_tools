@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { resolveApiKeyForUse } from '../../shared/utils/apiConfig';
 import { X, Loader2, Globe, CheckCircle } from 'lucide-react';
 import { SiteConfig } from '../App';
 import { toast } from '../store/toastStore';
@@ -34,6 +35,7 @@ interface EditingAccountInfo {
   account_name?: string;
   user_id?: string;
   access_token?: string;
+  api_key?: string;
   anyRouterConfig?: AnyRouterAccountConfig;
 }
 
@@ -74,19 +76,20 @@ function buildInitialAutoInfo(site?: SiteConfig, editingAccount?: EditingAccount
   return {
     name: site?.name || '',
     accountName: editingAccount?.account_name || '',
-    apiKey: site?.api_key || '',
+    apiKey: editingAccount?.api_key || site?.api_key || '',
     systemToken: editingAccount?.access_token || site?.system_token || '',
     userId: editingAccount?.user_id || site?.user_id || '',
     balance: null as number | null,
     extraLinks: site?.extra_links || '',
     enableCheckin: site?.force_enable_checkin || false,
+    proxyUrl: site?.proxy_url || '',
   };
 }
 
 function extractDetectedApiKey(payload: any): string {
   const directApiKey = typeof payload?.api_key === 'string' ? payload.api_key.trim() : '';
   if (directApiKey) {
-    return directApiKey;
+    return resolveApiKeyForUse(directApiKey, 'remote');
   }
 
   if (!Array.isArray(payload?.api_keys)) {
@@ -98,7 +101,8 @@ function extractDetectedApiKey(payload: any): string {
       (typeof item?.key === 'string' ? item.key.trim() : '') ||
       (typeof item?.token === 'string' ? item.token.trim() : '');
     if (candidate) {
-      return candidate;
+      const key = resolveApiKeyForUse(candidate, 'remote');
+      if (key) return key;
     }
   }
 
@@ -150,9 +154,11 @@ export function SiteEditor({
       selectedGroupId !== (site?.group || defaultGroupId) ||
       (autoInfo.extraLinks || '') !== (site?.extra_links || '') ||
       Boolean(autoInfo.enableCheckin) !== Boolean(site?.force_enable_checkin) ||
+      (autoInfo.proxyUrl || '') !== (site?.proxy_url || '') ||
       (autoInfo.accountName || '') !== (editingAccount?.account_name || '') ||
       (autoInfo.systemToken || '') !== (editingAccount?.access_token || site?.system_token || '') ||
       (autoInfo.userId || '') !== (editingAccount?.user_id || site?.user_id || '') ||
+      (autoInfo.apiKey || '') !== (editingAccount?.api_key || site?.api_key || '') ||
       (userHash || '') !== (editingAccount?.anyRouterConfig?.userHash || ''));
 
   // 监听后端发送的状态更新事件
@@ -254,6 +260,7 @@ export function SiteEditor({
               balance: null,
               extraLinks: existingSite.extra_links || prev.extraLinks,
               enableCheckin: existingSite.force_enable_checkin === true,
+              proxyUrl: prev.proxyUrl,
             }));
 
             if (existingSite.site_type) {
@@ -330,6 +337,7 @@ export function SiteEditor({
         balance: null,
         extraLinks: prev.extraLinks, // 保留原有加油站链接
         enableCheckin: supportsCheckIn === true,
+        proxyUrl: prev.proxyUrl, // 保留原有刷新代理
       }));
       if (site_type) {
         setSelectedSiteType(site_type);
@@ -415,6 +423,15 @@ export function SiteEditor({
     }
 
     // 正常添加站点模式。手动模式允许保存尚未补齐的字段，后续可在详情面板继续完善。
+    const proxyUrlTrimmed = (autoInfo.proxyUrl ?? '').trim();
+    if (
+      proxyUrlTrimmed &&
+      !/^(https?|socks4|socks5):\/\//i.test(proxyUrlTrimmed) &&
+      !/^[a-z0-9.-]+:\d+$/i.test(proxyUrlTrimmed)
+    ) {
+      setError('代理地址格式不正确，请使用 http://host:port 或 socks5://host:port 形式');
+      return;
+    }
     const newSite: SiteConfig = {
       name: autoInfo.name || extractDomainName(url),
       url: url.trim(),
@@ -426,6 +443,7 @@ export function SiteEditor({
       has_checkin: site?.has_checkin ?? false,
       extra_links: autoInfo.extraLinks,
       force_enable_checkin: autoInfo.enableCheckin,
+      proxy_url: autoInfo.proxyUrl.trim(),
       group: selectedGroupId || defaultGroupId,
     };
     await onSave(newSite, {
@@ -446,7 +464,7 @@ export function SiteEditor({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[var(--overlay-mask)] backdrop-blur-sm">
+    <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center overflow-y-auto bg-[var(--overlay-mask)] backdrop-blur-[8px]">
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] md:max-w-3xl">
         {/* 头部：标题 + 添加方式切换 */}
         <div className="flex items-center justify-between border-b border-[var(--line-soft)] px-5 py-3">
@@ -496,6 +514,8 @@ export function SiteEditor({
             )}
           </div>
           <button
+            type="button"
+            aria-label="关闭"
             onClick={onCancel}
             className="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
           >
@@ -521,7 +541,7 @@ export function SiteEditor({
               <button
                 onClick={handleUrlSubmit}
                 disabled={loading || !url.trim()}
-                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--accent)] px-6 py-3 font-semibold text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[var(--accent)] px-6 py-3 font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? (
                   <>
@@ -622,7 +642,7 @@ export function SiteEditor({
                     <select
                       value={selectedGroupId}
                       onChange={e => setSelectedGroupId(e.target.value)}
-                      className="w-32 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                      className="w-32 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                     >
                       {(groups && groups.length > 0
                         ? groups
@@ -646,7 +666,7 @@ export function SiteEditor({
                         <select
                           value={selectedSiteType}
                           onChange={e => setSelectedSiteType(e.target.value as SiteType)}
-                          className="w-36 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                          className="w-36 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                         >
                           {SITE_TYPES.map(siteType => (
                             <option key={siteType} value={siteType}>
@@ -704,6 +724,28 @@ export function SiteEditor({
                     当前优先编辑账户级凭证：{editingAccount.account_name || editingAccount.id}
                   </div>
                 )}
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
+                    刷新代理
+                    <span className="ml-1 font-normal text-[var(--text-tertiary)]">(可选)</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={autoInfo.proxyUrl}
+                    onChange={e =>
+                      setAutoInfo({
+                        ...autoInfo,
+                        proxyUrl: e.target.value,
+                      })
+                    }
+                    className="flex-1 bg-transparent text-right font-mono text-sm text-[var(--text-primary)] placeholder-[var(--text-tertiary)] outline-none"
+                    placeholder="http://127.0.0.1:7890 或 socks5://..."
+                  />
+                </div>
+                <div className="rounded-[var(--radius-md)] px-3 py-1 text-xs text-[var(--text-tertiary)]">
+                  站点刷新/检测请求无法直连时（如 DNS 污染导致 connect
+                  ETIMEDOUT），可配置代理走代理转发；留空则直连。
+                </div>
                 <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
                   <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     用户ID
@@ -814,7 +856,7 @@ export function SiteEditor({
                           enableCheckin: e.target.value === 'enabled',
                         })
                       }
-                      className="w-20 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                      className="w-20 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                     >
                       <option value="disabled">禁用</option>
                       <option value="enabled">启用</option>
@@ -842,7 +884,7 @@ export function SiteEditor({
                       setStep('input-url');
                       setError('');
                     }}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-2.5 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]"
                   >
                     <Globe className="w-4 h-4" />
                     重新获取信息
@@ -856,9 +898,9 @@ export function SiteEditor({
                   }
                   data-testid="site-editor-save-button"
                   data-dirty={isEditDirty ? 'true' : 'false'}
-                  className={`flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     isEditDirty
-                      ? 'bg-[var(--danger)] text-[var(--text-on-accent)] hover:opacity-92'
+                      ? 'bg-[var(--danger)] text-[var(--text-on-accent)] hover:bg-[color-mix(in_srgb,var(--danger)_85%,var(--text-primary))]'
                       : 'bg-[var(--accent)] text-[var(--text-on-accent)] hover:bg-[var(--accent-strong)]'
                   }`}
                 >

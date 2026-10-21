@@ -219,12 +219,13 @@ describe('route instance identity boundary', () => {
       )
     ).toEqual({
       agentId: 'codex',
-      runtimeSlotId: 'child-thread',
-      sessionId: 'child-thread',
+      runtimeSlotId: 'root-session',
+      sessionId: 'root-session',
       lineage: {
         source: 'codex',
         rootSessionId: 'root-session',
         parentSessionId: 'root-thread',
+        threadId: 'child-thread',
       },
       observedAgentName: 'Codex',
       observedRuntimeSlotLabel: 'Codex 会话',
@@ -242,8 +243,8 @@ describe('route instance identity boundary', () => {
       })
     ).toMatchObject({
       agentId: 'codex',
-      runtimeSlotId: 'root-thread',
-      sessionId: 'root-thread',
+      runtimeSlotId: 'root-session',
+      sessionId: 'root-session',
       lineage: { source: 'codex', rootSessionId: 'root-session' },
     });
   });
@@ -418,7 +419,7 @@ describe('route instance identity boundary', () => {
   );
 
   it.each([null, 'gpt-5.6-sol', 'gpt-5.6-terra'])(
-    'never treats fork lineage as parent evidence or aliases with model %s',
+    'reuses the matching Codex session card for fork requests with model %s',
     requestedModel => {
       const config = baseConfig();
       const rootRequest = codexTurnRequest('root-thread', { thread_source: 'user' });
@@ -428,26 +429,41 @@ describe('route instance identity boundary', () => {
         1_000,
         'gpt-5.6-sol'
       ).instance!;
-      const before = JSON.parse(JSON.stringify(root));
-      for (const forkId of ['root-thread', 'unknown-thread']) {
+      for (const forkId of ['root-thread']) {
         const request = codexTurnRequest(`fork-${forkId}`, {
           thread_source: 'user',
           forked_from_thread_id: forkId,
         });
+        request.headers['session-id'] = 'root-thread';
         const key = extractObservedRouteInstanceKey(request, request.body);
         expect(key?.lineage?.forkedFromThreadId).toBe(forkId);
         expect(key?.lineage?.parentSessionId).toBeUndefined();
         const result = resolveObserved(config, key, 2_000, requestedModel);
         expect(result).toMatchObject({
           changed: true,
-          resolutionPath: 'created',
-          memberAppended: false,
+          resolutionPath: 'parent',
+          memberAppended: true,
         });
-        expect(result.instance?.parentInstanceId).toBeUndefined();
-        expect(result.instance?.memberSessionIds).toBeUndefined();
-        expect(root).toEqual(before);
+        expect(result.instance?.id).toBe(root.id);
+        expect(result.instance?.clientModelId).toBe('gpt-5.6-sol');
       }
-      expect(Object.values(config.instances)).toHaveLength(3);
+      const unknownFork = codexTurnRequest('unknown-fork', {
+        thread_source: 'user',
+        forked_from_thread_id: 'unknown-thread',
+      });
+      const unknownResult = resolveObserved(
+        config,
+        extractObservedRouteInstanceKey(unknownFork, unknownFork.body),
+        3_000,
+        requestedModel
+      );
+      expect(unknownResult).toMatchObject({
+        instance: null,
+        resolutionPath: 'parent-unresolved',
+        memberAppended: false,
+      });
+      expect(root.clientModelId).toBe('gpt-5.6-sol');
+      expect(Object.values(config.instances)).toHaveLength(1);
     }
   );
 
@@ -530,14 +546,15 @@ describe('route instance identity boundary', () => {
       const key = extractObservedRouteInstanceKey(request, request.body);
       expect(key?.lineage?.isUtility).toBeUndefined();
       const result = resolveObserved(config, key, 2_000, requestedModel);
-      const sameModel = requestedModel === 'gpt-5.6-sol';
       expect(result).toMatchObject({
         changed: true,
         resolutionPath: 'parent',
-        memberAppended: sameModel,
+        memberAppended: true,
       });
-      expect(result.instance?.parentInstanceId).toBe(sameModel ? undefined : parent.id);
-      expect(result.createdReason).toBe(sameModel ? undefined : 'different_model_child');
+      expect(result.instance?.id).toBe(parent.id);
+      expect(result.instance?.parentInstanceId).toBeUndefined();
+      expect(result.instance?.clientModelId).toBe('gpt-5.6-sol');
+      expect(result.createdReason).toBeUndefined();
       delete request.headers['x-openai-subagent'];
       const canonicalKey = extractObservedRouteInstanceKey(request, request.body);
       expect(canonicalKey).toEqual(key);
@@ -548,7 +565,7 @@ describe('route instance identity boundary', () => {
         memberAppended: false,
       });
       expect(repeated.createdReason).toBeUndefined();
-      expect(Object.values(config.instances)).toHaveLength(sameModel ? 1 : 2);
+      expect(Object.values(config.instances)).toHaveLength(1);
     }
   );
 
@@ -634,28 +651,219 @@ describe('route instance identity boundary', () => {
     const repeated = resolution.instance!;
 
     expect(root).toMatchObject({
-      runtimeSlotId: 'root-thread',
-      sessionId: 'root-thread',
-      lineage: { rootSessionId: 'root-session' },
+      runtimeSlotId: 'root-session',
+      sessionId: 'root-session',
+      lineage: { rootSessionId: 'root-session', threadId: 'root-thread' },
     });
     expect(nextThread).toMatchObject({
-      runtimeSlotId: 'next-thread',
-      sessionId: 'next-thread',
-      lineage: { rootSessionId: 'root-session' },
+      runtimeSlotId: 'root-session',
+      sessionId: 'root-session',
+      lineage: { rootSessionId: 'root-session', threadId: 'next-thread' },
     });
     expect(repeated.id).toBe(first.id);
     expect(resolution).toMatchObject({
       changed: true,
-      resolutionPath: 'root-alias',
+      resolutionPath: 'exact',
       memberAppended: true,
     });
     expect(resolution.createdReason).toBeUndefined();
     expect(resolveObserved(config, nextThread, 1_000, 'gpt-5.6-sol')).toMatchObject({
       changed: false,
-      resolutionPath: 'root-alias',
+      resolutionPath: 'exact',
       memberAppended: false,
     });
-    expect(first.memberSessionIds).toEqual(['root-session', 'next-thread']);
+    expect(first.memberSessionIds).toEqual(['root-thread', 'next-thread']);
+    expect(Object.values(config.instances)).toHaveLength(1);
+  });
+
+  it.each(['thread-first', 'session-first'])(
+    'reuses one Codex card across identity enrichment and rollback (%s)',
+    order => {
+      const config = baseConfig();
+      const key = (sessionId: string | undefined, threadId: string) =>
+        extractObservedRouteInstanceKey({
+          headers: {
+            'x-codex-window-id': 'window-1',
+            'session-id': sessionId,
+            'thread-id': threadId,
+          },
+        });
+      const first = resolveObserved(
+        config,
+        key(order === 'session-first' ? 'session-1' : undefined, 'thread-1'),
+        1_000,
+        'client-model'
+      ).instance!;
+      updateRouteInstance(config, first.id, {
+        modelId: 'chosen-model',
+        reasoningEffort: 'max',
+        customNote: 'Keep this route',
+      });
+      const armed = createArmedRouteInstance(config, 'next-model', 'high');
+      const requests = [
+        key(order === 'thread-first' ? 'session-1' : undefined, 'thread-1'),
+        key('session-1', 'thread-2'),
+        key(undefined, 'thread-1'),
+        key(undefined, 'thread-2'),
+      ];
+      for (const [index, request] of requests.entries()) {
+        const result = resolveObserved(config, request, 2_000 + index, 'client-model');
+        expect(result.instance?.id).toBe(first.id);
+        expect(result.createdReason).toBeUndefined();
+      }
+      expect(first).toMatchObject({
+        modelId: 'chosen-model',
+        reasoningEffort: 'max',
+        display: { customNote: 'Keep this route' },
+        createdAt: 1_000,
+        lastRequestAt: 2_003,
+      });
+      expect(armed.routingState).toBe('armed');
+      expect(listRouteInstances(config)).toHaveLength(2);
+    }
+  );
+
+  it.each(['body', 'header'] as const)(
+    'shares Codex child sessions and their later thread-only requests with the parent (%s)',
+    projection => {
+      const config = baseConfig();
+      const root = extractObservedRouteInstanceKey({
+        headers: {
+          'x-codex-window-id': 'window-1',
+          'session-id': 'root-session',
+          'thread-id': 'root-thread',
+        },
+      });
+      const first = resolveObserved(config, root, 1_000, 'root-model').instance!;
+      let parentThreadId = 'root-thread';
+      for (const threadId of ['child-thread', 'nested-thread']) {
+        const request = codexTurnRequest(
+          threadId,
+          { parent_thread_id: parentThreadId },
+          projection
+        );
+        const child = extractObservedRouteInstanceKey(request, request.body);
+        const result = resolveObserved(config, child, 2_000, 'child-model');
+        expect(result.instance?.id).toBe(first.id);
+        expect(result.resolutionPath).toBe('parent');
+        expect(first.memberSessionIds).toContain(threadId);
+        parentThreadId = threadId;
+      }
+      expect(first.clientModelId).toBe('root-model');
+      for (const threadId of ['child-thread', 'nested-thread']) {
+        const resumed = extractObservedRouteInstanceKey({
+          headers: { 'x-codex-window-id': 'window-2', 'thread-id': threadId },
+        });
+        expect(resolveObserved(config, resumed, 3_000, 'child-model').instance?.id).toBe(first.id);
+      }
+      expect(first.modelId).toBe('root-model');
+      expect(listRouteInstances(config)).toHaveLength(1);
+    }
+  );
+
+  it('reuses a Codex fork card when later requests omit session and fork metadata', () => {
+    const config = baseConfig();
+    const request = codexTurnRequest('root-thread', { thread_source: 'user' });
+    const first = resolveObserved(
+      config,
+      extractObservedRouteInstanceKey(request, request.body),
+      1_000,
+      'client-model'
+    ).instance!;
+    const fork = codexTurnRequest('fork-thread', {
+      thread_source: 'user',
+      forked_from_thread_id: 'root-thread',
+    });
+    expect(
+      resolveObserved(
+        config,
+        extractObservedRouteInstanceKey(fork, fork.body),
+        2_000,
+        'client-model'
+      ).instance?.id
+    ).toBe(first.id);
+    const resumed = extractObservedRouteInstanceKey({
+      headers: { 'x-codex-window-id': 'window-2', 'thread-id': 'fork-thread' },
+    });
+    expect(resolveObserved(config, resumed, 3_000, 'client-model').instance?.id).toBe(first.id);
+    expect(listRouteInstances(config)).toHaveLength(1);
+  });
+
+  it.each(['different-profile', 'independent-session', 'closed-route'])(
+    'keeps Codex alias lookup isolated for %s',
+    scenario => {
+      const config = baseConfig();
+      const key = (sessionId: string | undefined, threadId: string) =>
+        extractObservedRouteInstanceKey({
+          headers: {
+            'x-codex-window-id': 'same-window',
+            'session-id': sessionId,
+            'thread-id': threadId,
+          },
+        });
+      const first = resolveObserved(config, key('session-1', 'thread-1'), 1_000, 'model').instance!;
+      if (scenario === 'closed-route') closeRouteInstance(config, first.id, 1_500);
+      const next = resolveObserved(
+        config,
+        scenario === 'independent-session'
+          ? key('session-2', 'thread-2')
+          : key(undefined, 'thread-1'),
+        2_000,
+        'model',
+        scenario === 'different-profile' ? 'profile-2' : 'profile-1'
+      ).instance!;
+      expect(next.id).not.toBe(first.id);
+      expect(listRouteInstances(config)).toHaveLength(2);
+      expect(first.routingState).toBe(scenario === 'closed-route' ? 'closed' : 'active');
+    }
+  );
+
+  it('does not merge conflicting Codex aliases or consume an ARMED route', () => {
+    const config = baseConfig();
+    for (const suffix of ['1', '2']) {
+      const key = extractObservedRouteInstanceKey({
+        headers: {
+          'x-codex-window-id': 'same-window',
+          'session-id': `session-${suffix}`,
+          'thread-id': `thread-${suffix}`,
+        },
+      });
+      resolveObserved(config, key, 1_000, 'model');
+    }
+    const armed = createArmedRouteInstance(config, 'chosen-model', 'max');
+    const before = JSON.parse(JSON.stringify(config));
+    const conflict = extractObservedRouteInstanceKey({
+      headers: {
+        'x-codex-window-id': 'same-window',
+        'session-id': 'thread-1',
+        'thread-id': 'thread-2',
+      },
+    });
+    expect(resolveObserved(config, conflict, 2_000, 'model')).toMatchObject({
+      instance: null,
+      memberAppended: false,
+    });
+    expect(armed.routingState).toBe('armed');
+    expect(config).toEqual(before);
+  });
+
+  it('refreshes Codex client model for a session while keeping thread aliases on one card', () => {
+    const config = baseConfig();
+    const session = (threadId: string): ObservedRouteInstanceKey => ({
+      agentId: 'codex',
+      runtimeSlotId: 'stable-session',
+      sessionId: 'stable-session',
+      lineage: { source: 'codex', rootSessionId: 'stable-session', threadId },
+    });
+    const first = resolveObserved(config, session('thread-a'), 1_000, 'model-a').instance!;
+    const next = resolveObserved(config, session('thread-b'), 2_000, 'model-b');
+
+    expect(next.instance?.id).toBe(first.id);
+    expect(next).toMatchObject({ resolutionPath: 'exact', memberAppended: true });
+    expect(first).toMatchObject({
+      clientModelId: 'model-b',
+      memberSessionIds: ['thread-a', 'thread-b'],
+    });
     expect(Object.values(config.instances)).toHaveLength(1);
   });
 
@@ -681,15 +889,14 @@ describe('route instance identity boundary', () => {
     const first = resolveObserved(config, child, 2_000, 'gpt-5.6-terra').instance!;
     const repeated = resolveObserved(config, child, 3_000, 'gpt-5.6-terra').instance!;
 
-    expect(first.id).not.toBe(parent.id);
+    expect(first.id).toBe(parent.id);
     expect(repeated.id).toBe(first.id);
     expect(first).toMatchObject({
-      parentInstanceId: parent.id,
-      childOrdinal: 1,
-      clientModelId: 'gpt-5.6-terra',
-      routeKey: { agentId: 'codex', runtimeSlotId: 'child-thread', sessionId: 'child-thread' },
+      clientModelId: 'gpt-5.6-sol',
+      routeKey: { agentId: 'codex', runtimeSlotId: 'root-session', sessionId: 'root-session' },
+      memberSessionIds: ['root-thread', 'child-thread'],
     });
-    expect(Object.values(config.instances)).toHaveLength(2);
+    expect(Object.values(config.instances)).toHaveLength(1);
   });
 
   it('rejects malformed or conflicting Codex lineage projections', () => {
@@ -979,7 +1186,7 @@ describe('route instance lifecycle', () => {
     expect(Object.values(config.instances)).toHaveLength(1);
   });
 
-  it('creates and reuses stable different-model child cards', () => {
+  it('reuses one Codex card for child threads regardless of requested model', () => {
     const config = baseConfig();
     const parentKey: ObservedRouteInstanceKey = {
       agentId: 'codex',
@@ -1014,19 +1221,14 @@ describe('route instance lifecycle', () => {
     const second = resolveObserved(config, childKey('child-luna'), 4_000, 'gpt-5.6-luna').instance!;
 
     expect(repeated.id).toBe(first.id);
-    expect(first).toMatchObject({
-      parentInstanceId: parent.id,
-      childOrdinal: 1,
-      clientModelId: 'gpt-5.6-terra',
-      modelId: 'gpt-5.6-terra',
-      createdAt: 2_000,
-      lastRequestAt: 3_000,
+    expect(first.id).toBe(parent.id);
+    expect(second.id).toBe(parent.id);
+    expect(parent).toMatchObject({
+      clientModelId: 'gpt-5.6-sol',
+      memberSessionIds: ['root-session', 'child-terra', 'child-luna'],
+      lastRequestAt: 4_000,
     });
-    expect(second).toMatchObject({
-      parentInstanceId: parent.id,
-      childOrdinal: 2,
-      clientModelId: 'gpt-5.6-luna',
-    });
+    expect(Object.values(config.instances)).toHaveLength(1);
   });
 
   it('applies the same-model sharing rule to Claude Code and OpenCode adapters', () => {

@@ -449,6 +449,19 @@ export class UnifiedConfigManager {
   /**
    * 加载配置
    */
+  /**
+   * 返回已加载的配置，未加载则按需加载。
+   * 与 loadConfig 的区别：loadConfig 会强制从磁盘重读并替换整个内存对象
+   * （包括代理正在读写的 routing.stats 等运行态），调用方应只在
+   * WebDAV 备份恢复等确实需要重载磁盘的场景使用 loadConfig。
+   */
+  async getConfig(): Promise<UnifiedConfig> {
+    if (!this.config) {
+      return this.loadConfig();
+    }
+    return this.config;
+  }
+
   async loadConfig(): Promise<UnifiedConfig> {
     let loadError: any = null;
 
@@ -1136,6 +1149,14 @@ export class UnifiedConfigManager {
         primaryAccount.user_id = legacyUserId;
         changed = true;
       }
+      if (site.api_key && !primaryAccount.api_key) {
+        primaryAccount.api_key = site.api_key;
+        changed = true;
+      }
+      if (site.api_key !== undefined) {
+        delete site.api_key;
+        changed = true;
+      }
 
       if (site.cached_data) {
         primaryAccount.cached_data = this.mergeDefinedCache(
@@ -1217,7 +1238,13 @@ export class UnifiedConfigManager {
     let hasArmedRouteInstance = false;
     const normalizedRouteInstances = Object.fromEntries(
       Object.entries(r.sessionRouting?.instances || {}).flatMap(([id, instance]) => {
-        if (id !== instance.id || !instance.modelId?.trim() || !instance.reasoningEffort?.trim()) {
+        // armed 卡片允许模型留空（等待中选择），其余状态仍需模型+思考强度完整
+        const armed = instance.routingState === 'armed';
+        if (
+          id !== instance.id ||
+          !instance.reasoningEffort?.trim() ||
+          (!armed && !instance.modelId?.trim())
+        ) {
           return [];
         }
         if (instance.routingState === 'armed') {
@@ -1616,9 +1643,17 @@ export class UnifiedConfigManager {
     const encryptedConfig = encryptConfigFields(persistableConfig);
 
     await writeTextFileAtomically(this.configPath, JSON.stringify(encryptedConfig, null, 2));
-    await runtimeCacheManager.saveCache(runtimeCache);
+    try {
+      await runtimeCacheManager.saveCache(runtimeCache);
+    } catch (error) {
+      Logger.error('配置已保存，运行缓存写入失败:', error);
+    }
     if (this.config.routing) {
-      await routeStateManager.saveSnapshotFromRouting(this.config.routing);
+      try {
+        await routeStateManager.saveSnapshotFromRouting(this.config.routing);
+      } catch (error) {
+        Logger.error('配置已保存，路由快照写入失败:', error);
+      }
     }
     Logger.info('💾 [UnifiedConfigManager] 配置已保存');
 
@@ -1634,11 +1669,41 @@ export class UnifiedConfigManager {
     notifyAppDataChanged('site-config', debounceMs);
   }
 
+  /**
+   * runtime 状态全量写合并：并发触发的多次保存收敛为队列中的一或两次全量写。
+   * 每次写入在执行时才读取 routing，因此必然携带到调用时刻为止的全部脏状态；
+   * 调用方 await 返回时，其自身的变更已落盘。
+   */
+  private routeRuntimeStateWriteChain: Promise<void> = Promise.resolve();
+  private routeRuntimeStateWriteQueued = false;
+
   private async saveRouteRuntimeState(): Promise<void> {
     if (!this.config?.routing) {
       return;
     }
-    await routeStateManager.saveRuntimeState(this.config.routing);
+    if (this.routeRuntimeStateWriteQueued) {
+      return this.routeRuntimeStateWriteChain;
+    }
+    this.routeRuntimeStateWriteQueued = true;
+    const run = async () => {
+      this.routeRuntimeStateWriteQueued = false;
+      if (this.config?.routing) {
+        await routeStateManager.saveRuntimeState(this.config.routing);
+      }
+    };
+    const next = this.routeRuntimeStateWriteChain.then(run, run);
+    this.routeRuntimeStateWriteChain = next.catch(() => undefined);
+    return next;
+  }
+
+  /** 把内存中已就地修改的 runtime 状态（如 routePathStates）落盘。 */
+  persistRouteRuntimeState(): Promise<void> {
+    return this.saveRouteRuntimeState();
+  }
+
+  /** 等待所有排队中的 runtime 状态写完成（退出前调用）。 */
+  async flushRouteRuntimeState(): Promise<void> {
+    await this.routeRuntimeStateWriteChain;
   }
 
   private async saveRouteAnalyticsState(): Promise<void> {
@@ -1727,7 +1792,6 @@ export class UnifiedConfigManager {
     let migratedApiKeys = 0;
     let migratedLegacyTokens = 0;
     let migratedSiteCliConfig = 0;
-    let removedAccountAutoRefresh = 0;
 
     // 1. 迁移站点级敏感字段和配置到账户
     for (const site of sites) {
@@ -1787,15 +1851,6 @@ export class UnifiedConfigManager {
       delete site.cached_data; // 运行时缓存不再保存在站点级
     }
 
-    // 2. 删除账户级废弃字段（auto_refresh）
-    for (const account of accounts) {
-      if ((account as any).auto_refresh !== undefined) {
-        delete (account as any).auto_refresh;
-        delete (account as any).auto_refresh_interval;
-        removedAccountAutoRefresh++;
-      }
-    }
-
     const hydratedSiteTypes = await this.hydrateMissingSiteTypes(config as UnifiedConfig);
     if (hydratedSiteTypes > 0) {
       Logger.info(
@@ -1811,8 +1866,7 @@ export class UnifiedConfigManager {
       `✅ [UnifiedConfigManager] v3.0.6 迁移完成: ` +
         `迁移 ${migratedLegacyTokens} 个 legacy token, ` +
         `迁移 ${migratedApiKeys} 个 api_key, ` +
-        `迁移 ${migratedSiteCliConfig} 个站点 cli_config, ` +
-        `删除 ${removedAccountAutoRefresh} 个账户 auto_refresh`
+        `迁移 ${migratedSiteCliConfig} 个站点 cli_config`
     );
     return config as UnifiedConfig;
   }
@@ -1838,11 +1892,16 @@ export class UnifiedConfigManager {
    */
   getSiteByUrl(url: string): UnifiedSite | null {
     try {
-      const targetOrigin = new URL(url).origin;
+      const target = new URL(url);
+      const targetPath = target.pathname.replace(/\/+$/, '');
       return (
         this.config?.sites.find(s => {
           try {
-            return new URL(s.url).origin === targetOrigin;
+            const candidate = new URL(s.url);
+            return (
+              candidate.origin === target.origin &&
+              candidate.pathname.replace(/\/+$/, '') === targetPath
+            );
           } catch {
             return false;
           }
@@ -1870,7 +1929,12 @@ export class UnifiedConfigManager {
     };
 
     this.config!.sites.push(newSite);
-    await this.saveConfig();
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      this.config!.sites = this.config!.sites.filter(item => item !== newSite);
+      throw error;
+    }
     this.notifySiteConfigChanged();
     return newSite;
   }
@@ -1884,14 +1948,21 @@ export class UnifiedConfigManager {
     const index = this.config.sites.findIndex(s => s.id === id);
     if (index === -1) return false;
 
-    this.config.sites[index] = {
+    const previous = this.config.sites[index];
+    const next = {
       ...this.config.sites[index],
       ...updates,
       id, // 确保 ID 不变
       updated_at: Date.now(),
     };
-
-    await this.saveConfig();
+    this.config.sites[index] = next;
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      const currentIndex = this.config.sites.indexOf(next);
+      if (currentIndex !== -1) this.config.sites[currentIndex] = previous;
+      throw error;
+    }
     this.notifySiteConfigChanged();
     return true;
   }
@@ -1910,14 +1981,19 @@ export class UnifiedConfigManager {
     if (this.config.sites.length < initialLength) {
       // 删除关联的所有账户
       this.config.accounts = this.config.accounts.filter(a => a.site_id !== id);
-      await this.saveConfig();
+      const nextSites = this.config.sites;
+      const nextAccounts = this.config.accounts;
+      try {
+        await this.saveConfig();
+      } catch (error) {
+        if (this.config.sites === nextSites) this.config.sites = previousSites;
+        if (this.config.accounts === nextAccounts) this.config.accounts = previousAccounts;
+        throw error;
+      }
       try {
         await routeStateAffinityService.removeBySite(id);
       } catch (error) {
-        this.config.sites = previousSites;
-        this.config.accounts = previousAccounts;
-        await this.saveConfig();
-        throw error;
+        Logger.warn('Site removed; affinity cleanup failed:', error);
       }
       this.notifySiteConfigChanged();
       return true;
@@ -1937,7 +2013,12 @@ export class UnifiedConfigManager {
    */
   private urlMatches(url1: string, url2: string): boolean {
     try {
-      return new URL(url1).origin === new URL(url2).origin;
+      const first = new URL(url1);
+      const second = new URL(url2);
+      return (
+        first.origin === second.origin &&
+        first.pathname.replace(/\/+$/, '') === second.pathname.replace(/\/+$/, '')
+      );
     } catch {
       return false;
     }
@@ -1969,6 +2050,8 @@ export class UnifiedConfigManager {
 
     const now = Date.now();
     const site = this.config!.sites.find(s => s.id === account.site_id);
+    if (!site) throw new Error(`Site not found: ${account.site_id}`);
+    let addedLegacyAccount: AccountCredential | undefined;
     const accountInput = { ...account } as typeof account & { status?: unknown };
     delete accountInput.status;
     migrateLegacyRouteTargetProtocol(
@@ -1999,6 +2082,7 @@ export class UnifiedConfigManager {
           account_name: '默认账户',
           user_id: site.user_id || '',
           access_token: site.access_token || '',
+          api_key: site.api_key,
           auth_source: 'manual',
           routeTargetProtocol: 'native',
           routeTargetProtocolNeedsConfirmation: false,
@@ -2008,6 +2092,7 @@ export class UnifiedConfigManager {
           updated_at: now,
         };
         this.config!.accounts.push(defaultAccount);
+        addedLegacyAccount = defaultAccount;
         Logger.info(
           `🔄 [UnifiedConfigManager] 自动补建默认账户: ${defaultAccount.id} (site=${accountInput.site_id})`
         );
@@ -2021,6 +2106,7 @@ export class UnifiedConfigManager {
       siteAccounts.length === 1 &&
       !siteAccounts[0].user_id &&
       !siteAccounts[0].access_token &&
+      !siteAccounts[0].api_key &&
       (accountInput.user_id || accountInput.access_token)
         ? siteAccounts[0].id
         : undefined;
@@ -2029,7 +2115,9 @@ export class UnifiedConfigManager {
     const duplicateIndex = this.config!.accounts.findIndex(
       existing =>
         existing.id === reusablePlaceholderId ||
-        (existing.site_id === accountInput.site_id && existing.user_id === accountInput.user_id)
+        (Boolean(accountInput.user_id) &&
+          existing.site_id === accountInput.site_id &&
+          existing.user_id === accountInput.user_id)
     );
     if (duplicateIndex >= 0) {
       const mergedAccount: AccountCredential = {
@@ -2039,8 +2127,17 @@ export class UnifiedConfigManager {
         created_at: this.config!.accounts[duplicateIndex].created_at,
         updated_at: now,
       };
+      const previous = this.config!.accounts[duplicateIndex];
       this.config!.accounts[duplicateIndex] = mergedAccount;
-      await this.saveConfig();
+      try {
+        await this.saveConfig();
+      } catch (error) {
+        const currentIndex = this.config!.accounts.indexOf(mergedAccount);
+        if (currentIndex !== -1) this.config!.accounts[currentIndex] = previous;
+        if (addedLegacyAccount)
+          this.config!.accounts = this.config!.accounts.filter(item => item !== addedLegacyAccount);
+        throw error;
+      }
       this.notifySiteConfigChanged();
       Logger.info(
         `🔁 [UnifiedConfigManager] 复用已有账户记录: ${mergedAccount.id} (site=${accountInput.site_id}, user=${accountInput.user_id})`
@@ -2057,7 +2154,14 @@ export class UnifiedConfigManager {
 
     this.config!.accounts.push(newAccount);
 
-    await this.saveConfig();
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      this.config!.accounts = this.config!.accounts.filter(
+        item => item !== newAccount && item !== addedLegacyAccount
+      );
+      throw error;
+    }
     this.notifySiteConfigChanged();
     return newAccount;
   }
@@ -2073,6 +2177,7 @@ export class UnifiedConfigManager {
         | 'account_name'
         | 'username'
         | 'access_token'
+        | 'api_key'
         | 'user_id'
         | 'auto_refresh'
         | 'auto_refresh_interval'
@@ -2084,6 +2189,7 @@ export class UnifiedConfigManager {
         | 'anyRouterConfig'
         | 'auth_source'
         | 'browser_profile_path'
+        | 'automation_slot'
         | 'local_api_keys'
       >
     >
@@ -2095,13 +2201,20 @@ export class UnifiedConfigManager {
     const normalizedUpdates = { ...updates } as typeof updates & { status?: unknown };
     delete normalizedUpdates.status;
 
-    this.config.accounts[index] = {
+    const previous = this.config.accounts[index];
+    const next = {
       ...this.config.accounts[index],
       ...normalizedUpdates,
       updated_at: Date.now(),
     };
-
-    await this.saveConfig();
+    this.config.accounts[index] = next;
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      const currentIndex = this.config.accounts.indexOf(next);
+      if (currentIndex !== -1) this.config.accounts[currentIndex] = previous;
+      throw error;
+    }
     this.notifySiteConfigChanged();
     return true;
   }
@@ -2149,14 +2262,19 @@ export class UnifiedConfigManager {
       this.config.sites = this.config.sites.filter(site => site.id !== account.site_id);
     }
 
-    await this.saveConfig();
+    const nextSites = this.config.sites;
+    const nextAccounts = this.config.accounts;
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      if (this.config.sites === nextSites) this.config.sites = previousSites;
+      if (this.config.accounts === nextAccounts) this.config.accounts = previousAccounts;
+      throw error;
+    }
     try {
       await routeStateAffinityService.removeByAccount(accountId);
     } catch (error) {
-      this.config.sites = previousSites;
-      this.config.accounts = previousAccounts;
-      await this.saveConfig();
-      throw error;
+      Logger.warn('Account removed; affinity cleanup failed:', error);
     }
     this.notifySiteConfigChanged();
     return true;
@@ -2196,6 +2314,7 @@ export class UnifiedConfigManager {
       has_checkin: site.has_checkin,
       force_enable_checkin: site.force_enable_checkin,
       extra_links: site.extra_links,
+      proxy_url: site.proxy_url,
       auto_refresh: site.auto_refresh, // 站点独立的自动刷新开关
       auto_refresh_interval: site.auto_refresh_interval, // 自动刷新间隔
       cached_data: undefined, // v3.0.6: 运行时缓存不再保存在配置中
@@ -2220,6 +2339,12 @@ export class UnifiedConfigManager {
     if (!this.config) await this.loadConfig();
 
     // 更新设置和分组，保留现有的 webdav 和 browser_profile 配置（如果前端没有传递）
+    const previous = {
+      settings: this.config!.settings,
+      siteGroups: this.config!.siteGroups,
+      sites: this.config!.sites,
+      accounts: this.config!.accounts,
+    };
     const existingWebdav = this.config!.settings?.webdav;
     const existingBrowserProfile = this.config!.settings?.browser_profile;
     this.config!.settings = {
@@ -2253,6 +2378,7 @@ export class UnifiedConfigManager {
           has_checkin: oldSite.has_checkin,
           force_enable_checkin: oldSite.force_enable_checkin,
           extra_links: oldSite.extra_links,
+          proxy_url: oldSite.proxy_url,
           auto_refresh: oldSite.auto_refresh,
           auto_refresh_interval: oldSite.auto_refresh_interval,
           cached_data: (oldSite as any).cached_data || existing.cached_data,
@@ -2275,6 +2401,7 @@ export class UnifiedConfigManager {
           has_checkin: oldSite.has_checkin,
           force_enable_checkin: oldSite.force_enable_checkin,
           extra_links: oldSite.extra_links,
+          proxy_url: oldSite.proxy_url,
           auto_refresh: oldSite.auto_refresh,
           auto_refresh_interval: oldSite.auto_refresh_interval,
           cached_data: (oldSite as any).cached_data,
@@ -2290,7 +2417,22 @@ export class UnifiedConfigManager {
     );
 
     this.config!.sites = newSites;
-    await this.saveConfig();
+    const next = {
+      settings: this.config!.settings,
+      siteGroups: this.config!.siteGroups,
+      sites: this.config!.sites,
+      accounts: this.config!.accounts,
+    };
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      if (this.config!.settings === next.settings) this.config!.settings = previous.settings;
+      if (this.config!.siteGroups === next.siteGroups)
+        this.config!.siteGroups = previous.siteGroups;
+      if (this.config!.sites === next.sites) this.config!.sites = previous.sites;
+      if (this.config!.accounts === next.accounts) this.config!.accounts = previous.accounts;
+      throw error;
+    }
     this.notifySiteConfigChanged();
   }
 
@@ -2409,6 +2551,21 @@ export class UnifiedConfigManager {
     if (meta?.statusCode !== undefined) existing.lastStatusCode = meta.statusCode;
     if (meta?.latencyMs !== undefined) existing.lastLatencyMs = meta.latencyMs;
     this.config.routing!.stats[statsKey] = existing;
+    await this.saveRouteRuntimeState();
+  }
+
+  /**
+   * 批量覆写通道统计（route-stats-service flush 用）。
+   * 传入对象是内存中已聚合的最终值，直接整对象覆写，不做增量累加；
+   * 全部写入只触发一次 runtime 状态落盘。
+   */
+  async upsertRouteChannelStatsBatch(statsList: RouteChannelStats[]): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    if (statsList.length === 0) return;
+    this.normalizeRoutingConfig(this.config);
+    for (const stats of statsList) {
+      this.config.routing!.stats[buildStatsKey(stats)] = stats;
+    }
     await this.saveRouteRuntimeState();
   }
 

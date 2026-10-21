@@ -1,7 +1,7 @@
 /**
- * 输入: HTTP 请求配置 (AxiosRequestConfig 兼容)
+ * 输入: HTTP 请求配置 (AxiosRequestConfig 兼容，另支持 proxyUrl 上游代理)
  * 输出: HTTP 响应数据（JSON/文本、流式首包或 raw Buffer）
- * 定位: 工具层 - 统一 HTTP 客户端，打包环境使用 Electron net，开发环境使用 axios；支持流式首包探测、raw 透明转发和上游代理
+ * 定位: 工具层 - 开发与打包环境统一使用 Electron net；不可用时回退 axios，状态码策略保持一致；支持上游代理、流式首包探测和 raw 透明转发
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -10,7 +10,6 @@
  */
 
 import axios, { AxiosRequestConfig } from 'axios';
-import { app } from 'electron';
 import {
   electronFetch,
   electronFetchRaw,
@@ -29,6 +28,12 @@ const log = Logger.scope('HttpClient');
 interface HttpResponse<T = any> {
   data: T;
   status: number;
+}
+
+/** 标准请求配置：在 AxiosRequestConfig 基础上支持上游代理（检测/刷新等直连请求可被站点级代理接管） */
+export interface HttpRequestConfig extends AxiosRequestConfig {
+  /** 上游代理地址（http/https/socks4/socks5），为空时直连 */
+  proxyUrl?: string;
 }
 
 interface RawRequestConfig extends Omit<AxiosRequestConfig, 'data' | 'headers' | 'method'> {
@@ -55,8 +60,33 @@ export interface RawHttpResponse {
   firstByteLatencyMs?: number;
 }
 
+type ValidateStatus = (status: number) => boolean;
+
+const RESOLVE_ALL_STATUSES: ValidateStatus = () => true;
+
+function resolveValidateStatus(config?: AxiosRequestConfig): ValidateStatus {
+  return config?.validateStatus ?? RESOLVE_ALL_STATUSES;
+}
+
+/** Electron net 对所有状态码 resolve；按调用方 validateStatus 策略恢复 axios 抛错语义，保证两栈行为一致 */
+function assertStatusPolicy(
+  status: number,
+  statusText: string,
+  data: any,
+  headers: Record<string, string | string[]>,
+  validateStatus: ValidateStatus
+): void {
+  if (validateStatus(status)) return;
+  throw {
+    name: 'AxiosError',
+    message: `Request failed with status code ${status}`,
+    isAxiosError: true,
+    response: { status, statusText, data, headers },
+  };
+}
+
 function shouldUseElectronNet(preferElectronNet?: boolean): boolean {
-  return isElectronNetAvailable() && (preferElectronNet === true || Boolean(app?.isPackaged));
+  return preferElectronNet !== false && isElectronNetAvailable();
 }
 
 function compactHeaders(
@@ -136,27 +166,36 @@ function toRawHttpResponse(response: RawFetchResponse): RawHttpResponse {
  */
 export async function httpGet<T = any>(
   url: string,
-  config?: AxiosRequestConfig
+  config?: HttpRequestConfig
 ): Promise<HttpResponse<T>> {
-  const timeout = config?.timeout || 30000;
-  const headers = (config?.headers as Record<string, string>) || {};
+  const { proxyUrl, ...axiosConfig } = config || {};
+  const timeout = axiosConfig.timeout || 30000;
+  const headers = (axiosConfig.headers as Record<string, string>) || {};
 
-  if (app.isPackaged) {
+  if (shouldUseElectronNet()) {
     log.debug('Using Electron net module for GET:', url);
     const res = await electronFetch<T>(url, {
       method: 'GET',
       headers,
       timeout,
+      proxyUrl,
     });
-    return { data: res.data, status: res.status };
-  } else {
-    // 开发环境使用 axios，配置 validateStatus 以接收所有状态码
-    const res = await axios.get<T>(url, {
-      ...config,
-      validateStatus: () => true, // 接收所有状态码，不抛出异常
-    });
+    assertStatusPolicy(
+      res.status,
+      res.statusText,
+      res.data,
+      res.headers,
+      resolveValidateStatus(config)
+    );
     return { data: res.data, status: res.status };
   }
+  // 非 Electron 环境保留相同的状态码策略。
+  const res = await axios.get<T>(url, {
+    ...axiosConfig,
+    proxy: proxyUrl ? buildAxiosProxyConfig(proxyUrl) : axiosConfig.proxy,
+    validateStatus: resolveValidateStatus(config),
+  });
+  return { data: res.data, status: res.status };
 }
 
 /**
@@ -165,24 +204,36 @@ export async function httpGet<T = any>(
 export async function httpPost<T = any>(
   url: string,
   data?: any,
-  config?: AxiosRequestConfig
+  config?: HttpRequestConfig
 ): Promise<HttpResponse<T>> {
-  const timeout = config?.timeout || 30000;
-  const headers = (config?.headers as Record<string, string>) || {};
+  const { proxyUrl, ...axiosConfig } = config || {};
+  const timeout = axiosConfig.timeout || 30000;
+  const headers = (axiosConfig.headers as Record<string, string>) || {};
 
-  if (app.isPackaged) {
+  if (shouldUseElectronNet()) {
     log.debug('Using Electron net module for POST:', url);
     const res = await electronFetch<T>(url, {
       method: 'POST',
       headers,
       body: data ? JSON.stringify(data) : undefined,
       timeout,
+      proxyUrl,
     });
-    return { data: res.data, status: res.status };
-  } else {
-    const res = await axios.post<T>(url, data, config);
+    assertStatusPolicy(
+      res.status,
+      res.statusText,
+      res.data,
+      res.headers,
+      resolveValidateStatus(config)
+    );
     return { data: res.data, status: res.status };
   }
+  const res = await axios.post<T>(url, data, {
+    ...axiosConfig,
+    proxy: proxyUrl ? buildAxiosProxyConfig(proxyUrl) : axiosConfig.proxy,
+    validateStatus: resolveValidateStatus(config),
+  });
+  return { data: res.data, status: res.status };
 }
 
 /**
@@ -191,18 +242,20 @@ export async function httpPost<T = any>(
 export async function httpPostStream(
   url: string,
   data?: any,
-  config?: AxiosRequestConfig
+  config?: HttpRequestConfig
 ): Promise<StreamFetchResponse> {
-  const timeout = config?.timeout || 30000;
-  const headers = (config?.headers as Record<string, string>) || {};
+  const { proxyUrl, ...axiosConfig } = config || {};
+  const timeout = axiosConfig.timeout || 30000;
+  const headers = (axiosConfig.headers as Record<string, string>) || {};
 
-  if (app.isPackaged) {
+  if (shouldUseElectronNet()) {
     log.debug('Using Electron net module for streaming POST:', url);
     return electronFetchStream(url, {
       method: 'POST',
       headers,
       body: data ? JSON.stringify(data) : undefined,
       timeout,
+      proxyUrl,
     });
   }
 
@@ -212,10 +265,11 @@ export async function httpPostStream(
 
   try {
     const res = await axios.post<NodeJS.ReadableStream>(url, data, {
-      ...config,
+      ...axiosConfig,
       headers,
       timeout,
       signal: controller.signal,
+      proxy: proxyUrl ? buildAxiosProxyConfig(proxyUrl) : axiosConfig.proxy,
       responseType: 'stream',
       validateStatus: () => true,
     });
@@ -476,44 +530,72 @@ export async function httpRawStreamRequest(
  */
 export async function httpDelete<T = any>(
   url: string,
-  config?: AxiosRequestConfig
+  config?: HttpRequestConfig
 ): Promise<HttpResponse<T>> {
-  const timeout = config?.timeout || 30000;
-  const headers = (config?.headers as Record<string, string>) || {};
+  const { proxyUrl, ...axiosConfig } = config || {};
+  const timeout = axiosConfig.timeout || 30000;
+  const headers = (axiosConfig.headers as Record<string, string>) || {};
 
-  if (app.isPackaged) {
+  if (shouldUseElectronNet()) {
     log.debug('Using Electron net module for DELETE:', url);
     const res = await electronFetch<T>(url, {
       method: 'DELETE',
       headers,
       timeout,
+      proxyUrl,
     });
-    return { data: res.data, status: res.status };
-  } else {
-    const res = await axios.delete<T>(url, config);
+    assertStatusPolicy(
+      res.status,
+      res.statusText,
+      res.data,
+      res.headers,
+      resolveValidateStatus(config)
+    );
     return { data: res.data, status: res.status };
   }
+  const res = await axios.delete<T>(url, {
+    ...axiosConfig,
+    proxy: proxyUrl ? buildAxiosProxyConfig(proxyUrl) : axiosConfig.proxy,
+    validateStatus: resolveValidateStatus(config),
+  });
+  return { data: res.data, status: res.status };
 }
 
 /**
  * 通用请求方法
  */
 export async function httpRequest<T = any>(
-  config: AxiosRequestConfig & { url: string }
+  config: HttpRequestConfig & { url: string }
 ): Promise<HttpResponse<T>> {
-  const { method = 'GET', url, data, timeout = 30000, headers = {} } = config;
+  const { method = 'GET', url, data, timeout = 30000, headers = {}, proxyUrl, ...rest } = config;
 
-  if (app.isPackaged) {
+  if (shouldUseElectronNet()) {
     log.debug(`Using Electron net module for ${method}:`, url);
     const res = await electronFetch<T>(url, {
       method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
       headers: headers as Record<string, string>,
       body: data ? JSON.stringify(data) : undefined,
       timeout,
+      proxyUrl,
     });
-    return { data: res.data, status: res.status };
-  } else {
-    const res = await axios.request<T>(config);
+    assertStatusPolicy(
+      res.status,
+      res.statusText,
+      res.data,
+      res.headers,
+      resolveValidateStatus(config)
+    );
     return { data: res.data, status: res.status };
   }
+  const res = await axios.request<T>({
+    ...rest,
+    method,
+    url,
+    data,
+    headers,
+    timeout,
+    proxy: proxyUrl ? buildAxiosProxyConfig(proxyUrl) : rest.proxy,
+    validateStatus: resolveValidateStatus(config),
+  });
+  return { data: res.data, status: res.status };
 }

@@ -61,6 +61,8 @@ type TokenRequestContext = {
   allowBrowserFallback?: boolean;
   challengeWaitMs?: number;
   siteType?: SiteType;
+  /** 上游代理地址：站点级代理，检测类 HTTP 请求透传使用 */
+  proxyUrl?: string;
 };
 
 type BrowserProfileLaunchOptions = {
@@ -1231,7 +1233,8 @@ export class TokenService {
     userId: number,
     accessToken: string,
     page?: any,
-    explicitSiteType?: SiteType
+    explicitSiteType?: SiteType,
+    browserSlot?: number
   ): Promise<{
     success: boolean;
     message: string;
@@ -1335,13 +1338,23 @@ export class TokenService {
           const errorMsg = response.data.message || '签到失败';
           Logger.info(`ℹ️ [TokenService] 签到失败 (${endpoint.type}): ${errorMsg}`);
 
+          // 站点回复"已签到"说明账号今日已完成，属正常状态而非需要人工介入的失败
+          const alreadyCheckedIn = errorMsg.includes('已签到');
+          if (alreadyCheckedIn) {
+            return {
+              success: false,
+              message: '今日已签到',
+              needManualCheckIn: false,
+              siteType: endpoint.type as 'veloera' | 'newapi',
+            };
+          }
+
           // 检查是否需要人机验证或手动签到
           const needManual =
             errorMsg.includes('验证') ||
             errorMsg.includes('人机') ||
             errorMsg.includes('captcha') ||
             errorMsg.includes('challenge') ||
-            errorMsg.includes('已签到') ||
             errorMsg.toLowerCase().includes('turnstile');
 
           return {
@@ -1403,7 +1416,8 @@ export class TokenService {
           baseUrl,
           userId,
           accessToken,
-          explicitSiteType
+          explicitSiteType,
+          browserSlot
         );
         if (browserResult.success) {
           return browserResult;
@@ -1451,7 +1465,8 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    explicitSiteType?: SiteType
+    explicitSiteType?: SiteType,
+    browserSlot?: number
   ): Promise<{
     success: boolean;
     message: string;
@@ -1476,8 +1491,10 @@ export class TokenService {
     Logger.info('🧭 [TokenService] 浏览器模式签到...');
     Logger.info('📍 [TokenService] 站点:', cleanBaseUrl);
 
-    // 通过 ChromeManager 创建页面
-    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
+    // 通过 ChromeManager 创建页面（携带账户槽位，避免多账户浏览器回退共用 slot-0 会话造成串号）
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: browserSlot,
+    });
 
     // 用于跟踪是否需要在失败时关闭页面
     let shouldClosePage = true;
@@ -1600,12 +1617,22 @@ export class TokenService {
             const errorMsg = result.data.message || '签到失败';
             Logger.info(`ℹ️ [TokenService] 浏览器签到失败 (${endpoint.type}): ${errorMsg}`);
 
+            // 站点回复"已签到"属正常状态，不触发手动签到引导
+            const alreadyCheckedIn = errorMsg.includes('已签到');
+            if (alreadyCheckedIn) {
+              return {
+                success: false,
+                message: '今日已签到',
+                needManualCheckIn: false,
+                siteType: endpoint.type as 'veloera' | 'newapi',
+              };
+            }
+
             const needManual =
               errorMsg.includes('验证') ||
               errorMsg.includes('人机') ||
               errorMsg.includes('captcha') ||
               errorMsg.includes('challenge') ||
-              errorMsg.includes('已签到') ||
               errorMsg.toLowerCase().includes('turnstile');
 
             return {
@@ -1682,8 +1709,11 @@ export class TokenService {
     page?: any
   ): Promise<CheckinStats | undefined> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM 格式
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD 格式
+    // 使用本地时区日期：站点的 checkin_date 为站点本地日期，UTC 会在 UTC+8 的 0-8 点错位
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`; // YYYY-MM 格式
+    const today = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`; // YYYY-MM-DD 格式
     const url = `${cleanBaseUrl}/api/user/checkin?month=${currentMonth}`;
 
     Logger.info('📊 [TokenService] 获取签到统计...');
@@ -2097,6 +2127,7 @@ export class TokenService {
         const response = await httpGet(url, {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl, context?.siteType),
           timeout: 10000,
+          proxyUrl: context?.proxyUrl,
         });
 
         const rawData = response.data;
@@ -2234,6 +2265,11 @@ export class TokenService {
           throw this.buildAuthFailureError(errorPayload, 'API Key 接口');
         }
 
+        if (this.isNetworkConnectionError(error)) {
+          needBrowserFallback = true;
+          break;
+        }
+
         Logger.info(`⚠️ [TokenService] URL ${url} axios失败:`, {
           status: lastStatus,
           message: error.message,
@@ -2250,11 +2286,12 @@ export class TokenService {
     // 如果 axios 全部失败且错误看起来像 Cloudflare/403 场景，则自动回退到浏览器模式
     if (
       needBrowserFallback ||
-      (lastError && (lastStatus === 403 || this.isCloudflareError(lastError)))
+      (lastError &&
+        (lastStatus === 403 ||
+          this.isCloudflareError(lastError) ||
+          this.isNetworkConnectionError(lastError)))
     ) {
-      Logger.info(
-        '🛡️ [TokenService] axios 获取 API Keys 失败且疑似挑战页/Cloudflare，尝试使用浏览器模式重新获取...'
-      );
+      Logger.info('🛡️ [TokenService] axios 获取 API Keys 失败，尝试使用浏览器模式重新获取...');
       try {
         // 通过 ChromeManager 创建页面（自动管理引用计数与生命周期）
         const { page: browserPage, release } = await this.chromeManager.createPage(cleanBaseUrl, {
@@ -4112,7 +4149,8 @@ export class TokenService {
     userId: number,
     accessToken: string,
     page?: any,
-    explicitSiteType?: SiteType
+    explicitSiteType?: SiteType,
+    options?: { proxyUrl?: string }
   ): Promise<Record<string, { id?: number | string; desc: string; ratio: number }>> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const siteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
@@ -4137,6 +4175,7 @@ export class TokenService {
         const response = await httpGet(url, {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
           timeout: 10000,
+          proxyUrl: options?.proxyUrl,
         });
 
         if (isAuthFailureResponse(response.data, response.status)) {
@@ -4383,7 +4422,8 @@ export class TokenService {
     userId: number,
     accessToken: string,
     page?: any,
-    explicitSiteType?: SiteType
+    explicitSiteType?: SiteType,
+    options?: { proxyUrl?: string }
   ): Promise<any> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const profile = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType);
@@ -4412,6 +4452,7 @@ export class TokenService {
         const response = await httpGet(url, {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
           timeout: 10000,
+          proxyUrl: options?.proxyUrl,
         });
 
         const rawData = response.data;
@@ -4726,6 +4767,27 @@ export class TokenService {
       }
     }
     return false;
+  }
+
+  private isNetworkConnectionError(error: any): boolean {
+    const code = String(error?.code || '').toUpperCase();
+    const message = String(error?.message || '').toUpperCase();
+    const responseMessage = String(error?.response?.data?.message || '').toUpperCase();
+    return (
+      code === 'EPROTO' ||
+      code === 'ETIMEDOUT' ||
+      code === 'ECONNABORTED' ||
+      message.includes('HANDSHAKE_FAILURE') ||
+      message.includes('SSLV3_ALERT') ||
+      message.includes('TLSV1_ALERT') ||
+      message.includes('ETIMEDOUT') ||
+      message.includes('ERR_CONNECTION_TIMED_OUT') ||
+      (message.includes('TIMEOUT') &&
+        (message.includes('EXCEEDED') || message.includes('AFTER'))) ||
+      responseMessage.includes('HANDSHAKE_FAILURE') ||
+      responseMessage.includes('SSLV3_ALERT') ||
+      responseMessage.includes('TLSV1_ALERT')
+    );
   }
 
   /**

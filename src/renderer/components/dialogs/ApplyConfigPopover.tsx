@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { resolveApiKeyForUse } from '../../../shared/utils/apiConfig';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
 import {
@@ -55,7 +56,7 @@ const CLI_OPTIONS: CliOption[] = [
 
 /** 获取 API Key 的实际 key 值 */
 function getApiKeyValue(apiKey: ApiKeyInfo): string {
-  return apiKey.key || apiKey.token || '';
+  return resolveApiKeyForUse(apiKey.key || apiKey.token || '', apiKey.source ?? 'remote');
 }
 
 /** 获取 API Key 的 ID */
@@ -261,7 +262,7 @@ export function ApplyConfigPopover({
   return (
     <div
       ref={popoverRef}
-      className={`fixed z-50 min-w-[180px] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-xl)] transition-opacity duration-100 ${
+      className={`fixed z-[var(--z-popover-top)] min-w-[180px] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-xl)] transition-opacity duration-100 ${
         isPositioned ? 'opacity-100' : 'opacity-0'
       }`}
       style={{ top: position.top, left: position.left }}

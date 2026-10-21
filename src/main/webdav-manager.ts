@@ -179,7 +179,7 @@ export class WebDAVManager {
     }
 
     try {
-      const content = await createPortableAppStorageBundleContent();
+      const content = await createPortableAppStorageBundleContent(undefined, config.includeSecrets === true);
 
       // 验证 JSON 格式和 stable config 内容
       try {

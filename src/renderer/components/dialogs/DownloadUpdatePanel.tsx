@@ -118,7 +118,7 @@ export function DownloadUpdatePanel({
             </div>
             <div className="flex-1 overflow-y-auto">
               <div className="max-w-none">
-                <pre className="whitespace-pre-wrap rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] p-4 font-sans text-sm leading-relaxed text-[var(--text-secondary)]">
+                <pre className="whitespace-pre-wrap rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-4 font-sans text-sm leading-relaxed text-[var(--text-secondary)]">
                   {releaseInfo.releaseNotes || '暂无更新说明'}
                 </pre>
               </div>
@@ -271,11 +271,7 @@ export function DownloadUpdatePanel({
           <AppButton variant="tertiary" onClick={onClose}>
             稍后安装
           </AppButton>
-          <AppButton
-            variant="primary"
-            onClick={onInstall}
-            className="bg-[var(--success)] hover:opacity-90"
-          >
+          <AppButton variant="success" onClick={onInstall}>
             <CheckCircle2 className="w-4 h-4" />
             立即安装
           </AppButton>

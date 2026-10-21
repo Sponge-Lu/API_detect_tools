@@ -29,6 +29,34 @@ function createConfig(): CustomCliConfig {
 }
 
 describe('custom cli config store', () => {
+  it('restores a deleted config when persistence fails', async () => {
+    window.electronAPI.customCliConfig.save = vi.fn().mockResolvedValue({ success: false });
+    await expect(useCustomCliConfigStore.getState().deleteConfig('cfg-1')).rejects.toThrow();
+    expect(useCustomCliConfigStore.getState().configs.map(config => config.id)).toEqual(['cfg-1']);
+  });
+
+  it('keeps concurrent unsaved edits after loading fetched model metadata', async () => {
+    window.electronAPI.customCliConfig.fetchModels = vi.fn().mockImplementation(async () => {
+      useCustomCliConfigStore
+        .getState()
+        .updateConfig('cfg-1', { name: 'Unsaved name', notes: 'Draft' });
+      useCustomCliConfigStore.getState().addConfig({ id: 'new-draft', name: 'New draft' });
+      return ['fresh-model'];
+    });
+    window.electronAPI.customCliConfig.load = vi.fn().mockResolvedValue({
+      configs: [{ ...createConfig(), models: ['fresh-model'] }],
+      activeConfigId: 'cfg-1',
+    });
+    await useCustomCliConfigStore.getState().fetchModels('cfg-1');
+    const state = useCustomCliConfigStore.getState();
+    expect(state.configs.map(config => config.id)).toEqual(['cfg-1', 'new-draft']);
+    expect(state.configs[0]).toMatchObject({
+      name: 'Unsaved name',
+      notes: 'Draft',
+      models: ['fresh-model'],
+    });
+    expect(state.activeConfigId).toBeNull();
+  });
   beforeEach(() => {
     useCustomCliConfigStore.setState({
       configs: [createConfig()],

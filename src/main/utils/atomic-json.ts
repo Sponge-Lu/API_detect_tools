@@ -5,6 +5,8 @@ import * as path from 'path';
 export interface AtomicTextWriteOptions {
   encoding?: BufferEncoding;
   mode?: number;
+  /** rename 前对临时文件执行 fsync，避免断电/崩溃后 rename 已提交而数据块未落盘（默认开启）。 */
+  sync?: boolean;
 }
 
 export interface AtomicJsonWriteOptions extends AtomicTextWriteOptions {
@@ -102,6 +104,15 @@ async function runWriteForTarget(targetPath: string, write: () => Promise<void>)
   return current;
 }
 
+async function syncFileData(tempPath: string): Promise<void> {
+  const handle = await fs.open(tempPath, 'r+');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function writeTextFileAtomically(
   targetPath: string,
   content: string,
@@ -118,12 +129,51 @@ export async function writeTextFileAtomically(
         encoding: options.encoding ?? 'utf-8',
         mode: options.mode,
       });
+      if (options.sync !== false) {
+        await syncFileData(tempPath);
+      }
       await renameWithRetries(tempPath, targetPath);
     } catch (error) {
       await fs.unlink(tempPath).catch(() => undefined);
       throw error;
     }
   });
+}
+
+/**
+ * 清理残留的临时文件。正常写入流程中临时文件只会存活数毫秒（且按目标路径串行），
+ * 超过 maxAgeMs 仍未消失的 .tmp 只能是进程崩溃/断电留下的孤儿。
+ */
+export async function cleanupStaleTempFiles(
+  dirPath: string,
+  maxAgeMs: number = 60 * 60 * 1000
+): Promise<number> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dirPath);
+  } catch {
+    return 0;
+  }
+
+  const now = Date.now();
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.endsWith('.tmp')) {
+      continue;
+    }
+    const tempPath = path.join(dirPath, entry);
+    try {
+      const stat = await fs.stat(tempPath);
+      if (now - stat.mtimeMs < maxAgeMs) {
+        continue;
+      }
+      await fs.unlink(tempPath);
+      removed += 1;
+    } catch {
+      // 单个文件不可触碰不阻塞其余清理
+    }
+  }
+  return removed;
 }
 
 export async function writeJsonFileAtomically<T>(

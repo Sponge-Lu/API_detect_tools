@@ -609,7 +609,9 @@ describe('Property 7: Apply writes correct configuration files', () => {
           // Verify required fields in TOML
           expect(tomlContent).toContain(`model_provider = "${CODEX_PROVIDER_NAME}"`);
           expect(tomlContent).toContain(`model = "${model}"`);
-          expect(tomlContent).toContain(`base_url = "${normalizeUrl(siteUrl)}/v1"`);
+          const expectedUrl = new URL(siteUrl);
+          expectedUrl.pathname = expectedUrl.pathname.replace(/\/+$/, '') + '/v1';
+          expect(tomlContent).toContain(`base_url = "${expectedUrl.toString()}"`);
           expect(tomlContent).toContain(`[model_providers.${CODEX_PROVIDER_NAME}]`);
           expect(tomlContent).toContain(`name = "${CODEX_PROVIDER_NAME}"`);
 

@@ -44,6 +44,11 @@ const MAX_ROUTE_REQUEST_LOGS = 1000;
 const FAILURE_LOG_DEDUPE_MS = 5_000;
 const failureLogDedupeByKey = new Map<string, number>();
 const ROUTE_OVERVIEW_DEBOUNCE_MS = 1200;
+/**
+ * 分析桶落盘是整文件重写（可达数 MB），每次都在主进程同步序列化；
+ * 桶只是聚合计数，丢最近半分钟可接受，退出前另有强制 flush。
+ */
+const ANALYTICS_FLUSH_DELAY_MS = 30_000;
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 
 /** 内存缓冲区，延迟写磁盘 */
@@ -366,7 +371,19 @@ function scheduleFlush() {
   flushTimer = setTimeout(async () => {
     flushTimer = null;
     await flushPendingBuckets();
-  }, 5000);
+  }, ANALYTICS_FLUSH_DELAY_MS);
+}
+
+function cancelPendingFlush(): void {
+  if (!flushTimer) return;
+  clearTimeout(flushTimer);
+  flushTimer = null;
+}
+
+/** 应用退出前强制 flush：取消挂起的定时器避免重复触发，同步尽最后一搏把缓冲桶落盘。 */
+export async function flushRouteAnalytics(): Promise<void> {
+  cancelPendingFlush();
+  await flushPendingBuckets();
 }
 
 async function flushPendingBuckets(): Promise<void> {

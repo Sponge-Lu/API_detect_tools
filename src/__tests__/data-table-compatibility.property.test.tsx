@@ -222,7 +222,7 @@ describe('DataTable Compatibility - Property Tests', () => {
             if (sticky) {
               expect(classList).toContain('sticky');
               expect(classList).toContain('top-0');
-              expect(classList).toContain('z-10');
+              expect(classList).toContain('z-[var(--z-sticky)]');
               expect(classList).toContain('backdrop-blur-[12px]');
             } else {
               expect(classList).not.toContain('sticky');

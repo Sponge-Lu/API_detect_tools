@@ -62,8 +62,6 @@ export interface SiteCardHeaderProps {
   site: SiteConfig;
   siteResult?: DetectionResult;
   lastSyncDisplay: string | null;
-  errorCode: string | null;
-  timeoutSeconds: number | null;
   columnWidths: number[];
   todayTotalTokens: number;
   todayPromptTokens: number;

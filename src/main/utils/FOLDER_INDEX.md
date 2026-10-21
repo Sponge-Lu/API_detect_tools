@@ -37,7 +37,7 @@
 | **site-matcher.ts** | 站点匹配 | `normalizeUrl()`, `matchSite()`, `isOfficialUrl()`, `determineSourceType()` |
 | **page-exec-queue.ts** | 页面执行队列 | `runOnPageQueue()` - 串行化同一 Page 的 evaluate 调用 |
 | **request-manager.ts** | 请求管理 | `RequestManager` - 请求去重和缓存 |
-| **http-client.ts** | HTTP 客户端 | `httpGet()`, `httpPost()`, `httpPostStream()`, `httpRawRequest()`, `httpRawStreamRequest()` - 统一 HTTP 请求；流式首包探测、SSE 边收边转发、成功流可选关闭完整 body 留存、活跃流空闲超时与 raw 请求 `AbortSignal` 取消透传 |
+| **http-client.ts** | HTTP 客户端 | `httpGet()`, `httpPost()`, `httpPostStream()`, `httpRawRequest()`, `httpRawStreamRequest()` - 开发与打包统一使用 Electron net，不可用时回退 axios；支持上游代理、流式首包、SSE 转发、空闲超时与 raw 请求取消 |
 | **electron-fetch.ts** | Electron 网络 | `electronFetch()`, `electronFetchStream()`, `electronFetchRaw()`, `electronFetchRawStream()`, `normalizeProxyUrl()` - Electron net 模块封装；支持流式首包探测、raw SSE 边收边回调、成功流可选关闭完整 body 留存、raw 请求 `AbortSignal` 取消、首包/活跃流分段空闲超时、上游代理 session 与 Chromium 受限请求头过滤 |
 
 ---

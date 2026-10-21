@@ -57,9 +57,6 @@ function toDetectionResult(
     userGroups: cache.user_groups,
     modelPricing: cache.model_pricing,
     lastRefresh: cache.last_refresh,
-    ldcPaymentSupported: cache.ldc_payment_supported,
-    ldcExchangeRate: cache.ldc_exchange_rate,
-    ldcPaymentType: cache.ldc_payment_type,
     checkinStats: cache.checkin_stats
       ? {
           todayQuota: cache.checkin_stats.today_quota,

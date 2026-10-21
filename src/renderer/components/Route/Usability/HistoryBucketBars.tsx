@@ -1,7 +1,7 @@
 /**
  * History Bucket Bars 组件
  * 输入: siteId, accountId，以及列表头共享的实际请求端点选择
- * 输出: 48 小时 / 2 小时时间桶成功率条形图
+ * 输出: 48 小时 / 2 小时时间桶成功率条形图，右侧跟随请求数与加权成功率汇总
  * 定位: 展示层 - 站点管理页 History 列的数据可视化
  */
 
@@ -16,6 +16,7 @@ import {
 import { useUIStore } from '../../../store/uiStore';
 
 export const HISTORY_POLL_INTERVAL_MS = 60_000;
+export const HISTORY_TOTAL_ENDPOINT = '__all__';
 const BUCKET_SIZE_MS = 2 * 60 * 60 * 1000;
 const TIME_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
 const BUCKET_COUNT = Math.floor(TIME_WINDOW_MS / BUCKET_SIZE_MS);
@@ -80,6 +81,39 @@ function normalizeHistoryTracks(value: unknown): HistoryEndpointTrack[] {
     if (!targetEndpoint) return [];
     return [{ targetEndpoint, buckets: normalizeBuckets(track.buckets) }];
   });
+}
+
+function aggregateHistoryTracks(tracks: HistoryEndpointTrack[]): HistoryBucket[] {
+  const totals = new Map<
+    number,
+    { bucket: HistoryBucket; ratedCount: number; successCount: number }
+  >();
+  for (const track of tracks) {
+    for (const bucket of track.buckets) {
+      let total = totals.get(bucket.bucketStart);
+      if (!total) {
+        total = {
+          bucket: { ...bucket, routeCount: 0, successRate: null },
+          ratedCount: 0,
+          successCount: 0,
+        };
+        totals.set(bucket.bucketStart, total);
+      }
+      total.bucket.routeCount += bucket.routeCount;
+      if (
+        bucket.routeCount > 0 &&
+        bucket.successRate !== null &&
+        Number.isFinite(bucket.successRate)
+      ) {
+        total.ratedCount += bucket.routeCount;
+        total.successCount += bucket.routeCount * bucket.successRate;
+      }
+    }
+  }
+  return Array.from(totals.values(), ({ bucket, ratedCount, successCount }) => ({
+    ...bucket,
+    successRate: ratedCount > 0 ? successCount / ratedCount : null,
+  })).sort((left, right) => left.bucketStart - right.bucketStart);
 }
 
 function areHistoryBucketsEqual(left: HistoryBucket[], right: HistoryBucket[]): boolean {
@@ -220,6 +254,9 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
   }, [accountId, siteId]);
 
   const visibleTrack = useMemo<HistoryEndpointTrack>(() => {
+    if (selectedEndpoint === HISTORY_TOTAL_ENDPOINT) {
+      return { targetEndpoint: '总计', buckets: aggregateHistoryTracks(tracks) };
+    }
     if (tracks.length === 0) {
       return {
         targetEndpoint: selectedEndpoint || '暂无端点数据',
@@ -292,12 +329,41 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
     [barHeight, buckets.length, trackWidth]
   );
 
+  const aggregated = useMemo(() => {
+    let totalRoutes = 0;
+    let weightedCount = 0;
+    let weightedSum = 0;
+    for (let i = buckets.length - 1; i >= 0; i--) {
+      const bucket = buckets[i];
+      if (bucket.routeCount <= 0) continue;
+      totalRoutes += bucket.routeCount;
+      if (bucket.successRate !== null && Number.isFinite(bucket.successRate)) {
+        weightedCount += bucket.routeCount;
+        weightedSum += bucket.routeCount * bucket.successRate;
+      }
+    }
+
+    const effectiveRate =
+      weightedCount > 0 ? Math.round((weightedSum / weightedCount) * 100) : null;
+
+    return { totalRoutes, effectiveRate };
+  }, [buckets]);
+
+  const countLabel = useMemo(() => {
+    if (aggregated.totalRoutes >= 10_000) {
+      return `${(aggregated.totalRoutes / 1000).toFixed(1)}K`;
+    }
+    return aggregated.totalRoutes.toString();
+  }, [aggregated.totalRoutes]);
+
+  const rateLabel = useMemo(
+    () => (aggregated.effectiveRate !== null ? `${aggregated.effectiveRate}%` : '-'),
+    [aggregated.effectiveRate]
+  );
+
   return (
-    <div className="w-full" data-testid="history-endpoint-track">
-      <div
-        className="w-full overflow-hidden"
-        data-testid="history-bucket-bars-frame"
-      >
+    <div className="flex w-full items-center gap-2" data-testid="history-endpoint-track">
+      <div className="min-w-0 flex-1 overflow-hidden" data-testid="history-bucket-bars-frame">
         <div
           className="grid w-full items-stretch"
           data-testid="history-bucket-bars-track"
@@ -316,6 +382,15 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
             />
           ))}
         </div>
+      </div>
+      <div
+        data-testid="history-bucket-bars-summary"
+        className="flex w-[72px] items-center text-[10px] leading-none text-[var(--text-tertiary)] tabular-nums"
+        title="48 小时路由请求数 · 成功率"
+      >
+        <span className="min-w-0 flex-1 truncate text-right">{countLabel}次</span>
+        <span className="px-0.5">·</span>
+        <span className="w-[28px] text-right">{rateLabel}</span>
       </div>
     </div>
   );

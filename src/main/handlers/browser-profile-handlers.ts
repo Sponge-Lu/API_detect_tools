@@ -30,7 +30,7 @@ export function registerBrowserProfileHandlers(
       return null;
     }
 
-    await unifiedConfigManager.loadConfig();
+    await unifiedConfigManager.getConfig();
     const account = unifiedConfigManager.getAccountById(accountId);
     if (!account || account.site_id !== siteId) {
       return null;
@@ -90,6 +90,16 @@ export function registerBrowserProfileHandlers(
     }
 
     if (account.auth_source === 'main_profile') {
+      if (
+        account.automation_slot === 0 ||
+        (account.automation_slot === undefined && !account.browser_profile_path)
+      ) {
+        return {
+          success: true,
+          options: { userDataDir: chromeManager.getDefaultLoginProfilePath() },
+          requiresExternalFallback: false,
+        };
+      }
       const mainProfilePath = await browserProfileManager.detectMainChromeProfile();
       if (!mainProfilePath) {
         return {
@@ -98,11 +108,13 @@ export function registerBrowserProfileHandlers(
         };
       }
 
+      // 使用最近活跃的 Profile 目录，而非硬编码 'Default'
+      const profiles = await browserProfileManager.listMainBrowserProfiles();
       return {
         success: true,
         options: {
           userDataDir: mainProfilePath,
-          profileDirectory: 'Default',
+          profileDirectory: profiles[0]?.directory || 'Default',
         },
         requiresExternalFallback: false,
       };
@@ -132,10 +144,12 @@ export function registerBrowserProfileHandlers(
     }
   });
 
-  // 检查 Chrome 是否正在运行
+  // 检查 Chrome 是否正在运行（按当前解析到的浏览器进程名查询，兼容 Edge/便携版等）
   ipcMain.handle('browser-profile:is-chrome-running', async () => {
     try {
-      const running = await browserProfileManager.isChromeRunning();
+      const running = await browserProfileManager.isChromeRunning(
+        chromeManager.getResolvedBrowserPath() || undefined
+      );
       return { success: true, data: running };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -174,8 +188,10 @@ export function registerBrowserProfileHandlers(
         return { success: false, error: result.error };
       }
 
-      // 使用主 Profile 启动独立登录浏览器
-      const launchResult = await chromeManager.launchForLogin(siteUrl, result.options);
+      // 使用主 Profile 启动独立登录浏览器（preserveSession：绝不清理用户真实 Profile 的会话文件）
+      const launchResult = await chromeManager.launchForLogin(siteUrl, result.options, {
+        preserveSession: true,
+      });
       if (!launchResult.success) {
         return { success: false, error: launchResult.message };
       }
@@ -335,6 +351,16 @@ export function registerBrowserProfileHandlers(
           return await openExternalSite(siteUrl);
         }
 
+        // 主 Profile 被用户浏览器占用时（单实例移交会导致调试端口失效），退回系统默认浏览器打开
+        if (
+          profileTarget.options?.profileDirectory &&
+          (await browserProfileManager.isChromeRunning(
+            chromeManager.getResolvedBrowserPath() || undefined
+          ))
+        ) {
+          return await openExternalSite(siteUrl);
+        }
+
         return await chromeManager.openSiteWithProfile(siteUrl, profileTarget.options);
       } catch (error: any) {
         Logger.error('[BrowserProfileHandlers] 使用账户浏览器打开站点失败:', error.message);
@@ -382,10 +408,23 @@ export function registerBrowserProfileHandlers(
           (siteId ? unifiedConfigManager.getSiteById(siteId)?.site_type : undefined) ||
           (await detectSiteType(siteUrl)).siteType;
 
+        // 主浏览器正在运行（含后台驻留进程）时无法安全接管，给出可读错误而非莫名的"端口未就绪"
+        if (
+          profileTarget.options?.profileDirectory &&
+          (await browserProfileManager.isChromeRunning(
+            chromeManager.getResolvedBrowserPath() || undefined
+          ))
+        ) {
+          return {
+            success: false,
+            error: '主浏览器正在运行，请先退出浏览器（包括后台驻留进程）后重试',
+          };
+        }
+
         return await chromeManager.openSiteWithProfileForCheckin(siteUrl, profileTarget.options, {
           siteType,
           maxWaitTimeMs: 120000,
-          closeDelayMs: 2000,
+          closeDelayMs: 15000,
         });
       } catch (error: any) {
         Logger.error('[BrowserProfileHandlers] 账户浏览器签到失败:', error.message);

@@ -181,6 +181,8 @@ const customCliConfig: CustomCliConfig = {
 describe('sites page redesign', () => {
   beforeEach(() => {
     localStorage.removeItem('panel-active-tab');
+    window.electronAPI.openUrl = vi.fn().mockResolvedValue(undefined);
+    window.electronAPI.browserProfile.openSite = vi.fn().mockResolvedValue({ success: true });
     useConfigStore.setState({
       config: null,
       loading: false,
@@ -538,6 +540,78 @@ describe('sites page redesign', () => {
     );
   });
 
+  it.each(['managed', 'custom-cli'] as const)(
+    'opens %s names in the system browser without opening the detail panel',
+    async type => {
+      const site = { ...baseSite, url: 'https://example.com/portal/' };
+      const directConfig = { ...customCliConfig, baseUrl: 'https://direct.example.com/v1/' };
+      const directConfigs = type === 'custom-cli' ? [directConfig] : [];
+      window.electronAPI.customCliConfig.load = vi.fn().mockResolvedValue({
+        configs: directConfigs,
+        activeConfigId: null,
+      });
+      window.electronAPI.accounts.list = vi.fn().mockResolvedValue({
+        success: true,
+        data: [{ id: 'account-1', account_name: 'Primary', auth_source: 'isolated_profile' }],
+      });
+      useConfigStore.setState({
+        config: {
+          sites: type === 'managed' ? [site] : [],
+          settings: { timeout: 30, concurrent: false, show_disabled: true },
+          siteGroups: [{ id: 'default', name: '默认分组' }],
+        },
+      });
+      useCustomCliConfigStore.setState({ configs: directConfigs });
+
+      render(<SitesPage />);
+      if (type === 'managed') {
+        await screen.findByText('Primary');
+      }
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: type === 'managed' ? site.name : directConfig.name,
+        })
+      );
+
+      await waitFor(() => expect(window.electronAPI.openUrl).toHaveBeenCalledTimes(1));
+      expect(window.electronAPI.openUrl).toHaveBeenCalledWith(
+        type === 'managed' ? site.url : directConfig.baseUrl
+      );
+      expect(window.electronAPI.browserProfile.openSite).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('access-point-save-button')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('access-point-direct-save-button')).not.toBeInTheDocument();
+    }
+  );
+
+  it('includes manually added models in direct custom CLI row summaries', async () => {
+    const configWithManualModels = {
+      ...customCliConfig,
+      manualModels: ['manual-model-a', 'manual-model-b'],
+    };
+    (window.electronAPI as any).customCliConfig.load = vi.fn().mockResolvedValue({
+      configs: [configWithManualModels],
+      activeConfigId: null,
+    });
+    useConfigStore.setState({
+      config: {
+        sites: [],
+        settings: {
+          timeout: 30,
+          concurrent: false,
+          show_disabled: true,
+        },
+        siteGroups: [{ id: 'default', name: '默认分组' }],
+      },
+    });
+    useCustomCliConfigStore.setState({ configs: [configWithManualModels] });
+
+    render(<SitesPage />);
+
+    expect(await screen.findByText('Direct API')).toBeInTheDocument();
+    const row = screen.getByTestId('site-card-row');
+    expect(within(row).getByText('3')).toBeInTheDocument();
+  });
+
   it('does not make direct custom CLI rows draggable into managed site ordering', () => {
     const onDragStart = vi.fn();
 
@@ -751,6 +825,325 @@ describe('sites page redesign', () => {
     expect(within(content).getByText(/^令牌管理 \(0\/0\)$/)).toBeInTheDocument();
   });
 
+  it('lets manually added local tokens select existing user groups', async () => {
+    const addLocalApiKey = vi.fn().mockResolvedValue({ success: true, data: [] });
+    (window.electronAPI as any).token = {
+      ...(window.electronAPI as any).token,
+      listLocalApiKeys: vi.fn().mockResolvedValue({ success: true, data: [] }),
+      addLocalApiKey,
+    };
+
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary Account',
+            user_id: 'user-1',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+        userGroups={{
+          default: { desc: '默认分组', ratio: 1 },
+          vip: { desc: 'VIP 分组', ratio: 2 },
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    const content = screen.getByTestId('managed-tab2-content');
+    fireEvent.click(within(content).getByRole('button', { name: '手动添加' }));
+
+    const groupSelect = within(content).getByLabelText('本地 API Key 分组') as HTMLSelectElement;
+    expect(groupSelect.tagName).toBe('SELECT');
+    expect(
+      within(groupSelect).getByRole('option', { name: 'default - 默认分组 (1x)' })
+    ).toBeInTheDocument();
+    expect(
+      within(groupSelect).getByRole('option', { name: 'vip - VIP 分组 (2x)' })
+    ).toBeInTheDocument();
+
+    fireEvent.change(groupSelect, { target: { value: 'vip' } });
+    fireEvent.change(within(content).getByLabelText('本地 API Key 名称'), {
+      target: { value: '本地令牌' },
+    });
+    fireEvent.change(within(content).getByLabelText('本地 API Key'), {
+      target: { value: 'sk-local' },
+    });
+
+    await act(async () => {
+      fireEvent.click(within(content).getByRole('button', { name: '保存' }));
+    });
+
+    expect(addLocalApiKey).toHaveBeenCalledWith(
+      'account-1',
+      expect.objectContaining({ name: '本地令牌', group: 'vip', groupMultiplier: 1 })
+    );
+  });
+
+  it('copies a hidden local API key using its actual value', async () => {
+    const key = {
+      id: 'local-1',
+      name: 'Manual',
+      maskedKey: 'us****ey',
+      group: '',
+      groupMultiplier: 1,
+      models: [],
+    };
+    const onCopyToClipboard = vi.fn();
+    (window.electronAPI as any).token = {
+      ...(window.electronAPI as any).token,
+      listLocalApiKeys: vi.fn().mockResolvedValue({ success: true, data: [key] }),
+      revealLocalApiKey: vi.fn().mockResolvedValue({ success: true, data: 'user-supplied-key' }),
+    };
+    render(
+      <AccessPointDetailPanel
+        open
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary',
+            user_id: '',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+        onCopyToClipboard={onCopyToClipboard}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    fireEvent.click(await screen.findByRole('button', { name: '复制本地 API Key' }));
+    await waitFor(() =>
+      expect(onCopyToClipboard).toHaveBeenCalledWith('user-supplied-key', 'API Key: Manual')
+    );
+    expect(screen.queryByText('user-supplied-key')).not.toBeInTheDocument();
+  });
+
+  it('retains a local API key draft when persistence fails and allows retry', async () => {
+    const addLocalApiKey = vi
+      .fn()
+      .mockResolvedValueOnce({ success: false, error: 'disk full' })
+      .mockResolvedValueOnce({ success: true, data: [] });
+    const onConfigChanged = vi.fn();
+    (window.electronAPI as any).token = {
+      ...(window.electronAPI as any).token,
+      listLocalApiKeys: vi.fn().mockResolvedValue({ success: true, data: [] }),
+      addLocalApiKey,
+    };
+    render(
+      <AccessPointDetailPanel
+        open
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary',
+            user_id: '',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+        onConfigChanged={onConfigChanged}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    fireEvent.click(screen.getByRole('button', { name: '手动添加' }));
+    fireEvent.change(screen.getByLabelText('本地 API Key'), { target: { value: 'manual-key' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.some(item => item.message === 'disk full')).toBe(true)
+    );
+    expect(screen.getByLabelText('本地 API Key')).toHaveValue('manual-key');
+    expect(onConfigChanged).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(onConfigChanged).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText('本地 API Key')).not.toBeInTheDocument();
+  });
+
+  it('reports local key operation failures without removing a key or opening an empty editor', async () => {
+    const key = {
+      id: 'local-1',
+      name: 'Manual',
+      maskedKey: 'us****ey',
+      group: '',
+      groupMultiplier: 1,
+      models: ['existing-model'],
+    };
+    (window.electronAPI as any).token = {
+      ...(window.electronAPI as any).token,
+      listLocalApiKeys: vi.fn().mockResolvedValue({ success: true, data: [key] }),
+      revealLocalApiKey: vi.fn().mockRejectedValue(new Error('read failed')),
+      deleteLocalApiKey: vi.fn().mockResolvedValue({ success: false, error: 'delete failed' }),
+      refreshLocalApiKeys: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          keys: [key],
+          results: [{ keyId: key.id, success: false, models: key.models, error: 'HTTP 401' }],
+        },
+      }),
+    };
+    render(
+      <AccessPointDetailPanel
+        open
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary',
+            user_id: '',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑本地 API Key' }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.some(item => item.message === 'read failed')).toBe(
+        true
+      )
+    );
+    expect(screen.queryByLabelText('本地 API Key')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除本地 API Key' }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.some(item => item.message === 'delete failed')).toBe(
+        true
+      )
+    );
+    expect(screen.getByTestId('managed-local-api-key-row')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '刷新本地 API Key 模型' }));
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts.some(item => item.message === 'HTTP 401')).toBe(true)
+    );
+    expect(screen.getByTestId('managed-local-api-key-row')).toHaveTextContent('1 模型');
+  });
+
+  it('discards a local key list response after switching accounts', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    (window.electronAPI as any).token = {
+      ...(window.electronAPI as any).token,
+      listLocalApiKeys: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveFirst = resolve;
+            })
+        )
+        .mockResolvedValueOnce({ success: true, data: [] }),
+    };
+    const account = {
+      id: 'account-1',
+      account_name: 'Primary',
+      user_id: '',
+      status: 'active',
+      auth_source: 'manual' as const,
+    };
+    const { rerender } = render(
+      <AccessPointDetailPanel
+        open
+        onClose={vi.fn()}
+        data={{ type: 'managed', site: baseSite, account }}
+      />
+    );
+    rerender(
+      <AccessPointDetailPanel
+        open
+        onClose={vi.fn()}
+        data={{ type: 'managed', site: baseSite, account: { ...account, id: 'account-2' } }}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    await act(async () => {
+      resolveFirst({
+        success: true,
+        data: [
+          {
+            id: 'old-key',
+            name: 'Old account',
+            maskedKey: 'old****',
+            group: '',
+            groupMultiplier: 1,
+            models: [],
+          },
+        ],
+      });
+    });
+    expect(screen.queryByTestId('managed-local-api-key-row')).not.toBeInTheDocument();
+  });
+
+  it('keeps account edits available for retry after the save callback rejects', async () => {
+    const onSaveAccount = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk unavailable'))
+      .mockResolvedValueOnce(undefined);
+    render(
+      <AccessPointDetailPanel
+        open
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary',
+            user_id: 'user-1',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+        onSaveAccount={onSaveAccount}
+      />
+    );
+    fireEvent.change(screen.getByDisplayValue('Primary'), { target: { value: 'Edited' } });
+    fireEvent.click(screen.getByTestId('access-point-save-button'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('disk unavailable');
+    expect(screen.getByDisplayValue('Edited')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('access-point-save-button'));
+    await waitFor(() => expect(onSaveAccount).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps a free-text group input for local tokens when no user groups exist', () => {
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary Account',
+            user_id: 'user-1',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    const content = screen.getByTestId('managed-tab2-content');
+    fireEvent.click(within(content).getByRole('button', { name: '手动添加' }));
+
+    const groupInput = within(content).getByLabelText('本地 API Key 分组');
+    expect(groupInput.tagName).toBe('INPUT');
+    expect(groupInput).toHaveAttribute('placeholder', '① 默认分组');
+  });
+
   it('uses shared resource-shell chrome across all detail tabs for managed and direct access points', async () => {
     const expectSharedShell = (testId: string) => {
       expect(screen.getByTestId(testId)).toHaveClass(
@@ -896,13 +1289,13 @@ describe('sites page redesign', () => {
         account_name: 'Primary Account Edited',
         user_id: 'user-1',
         access_token: 'sk-managed-access-token',
-        auto_refresh: true,
-        auto_refresh_interval: 30,
         routeTargetProtocol: 'openai-responses',
         routeTargetProtocolNeedsConfirmation: false,
         routeAuthScheme: 'bearer',
       })
     );
+    expect(onSaveAccount.mock.calls[0][1]).not.toHaveProperty('auto_refresh');
+    expect(onSaveAccount.mock.calls[0][1]).not.toHaveProperty('auto_refresh_interval');
 
     fireEvent.click(screen.getByRole('button', { name: '重新获取站点账户信息' }));
     await waitFor(() => expect(onRefreshAccountInfo).toHaveBeenCalledTimes(1));
@@ -1331,6 +1724,32 @@ describe('sites page redesign', () => {
     });
     expect(await screen.findAllByLabelText(/OpenAI · \/v1\/responses/)).toHaveLength(24);
     expect(screen.getByTestId('history-bucket-bars-track')).toHaveStyle({ height: '13px' });
+    expect(await screen.findByTestId('history-bucket-bars-summary')).toHaveTextContent('0次');
+    expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('-');
+  });
+
+  it('shows request count and weighted success rate beside the history bars', async () => {
+    const getHistoryBuckets = vi.fn().mockResolvedValue({
+      success: true,
+      data: [
+        {
+          targetEndpoint: '/v1/messages',
+          buckets: Array.from({ length: 24 }, (_, index) => ({
+            bucketStart: index * 2 * 60 * 60 * 1000,
+            bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
+            successRate: index === 22 ? 1 : index === 23 ? 0.5 : null,
+            routeCount: index === 22 ? 4 : index === 23 ? 8 : 0,
+          })),
+        },
+      ],
+    });
+    (window.electronAPI as any).route.getHistoryBuckets = getHistoryBuckets;
+
+    render(<HistoryBucketBars siteId="site-1" accountId="account-1" />);
+
+    const summary = await screen.findByTestId('history-bucket-bars-summary');
+    expect(summary).toHaveTextContent('12次');
+    expect(summary).toHaveTextContent('67%');
   });
 
   it('renders separate target endpoint tracks without CLI probing', async () => {
@@ -1431,6 +1850,83 @@ describe('sites page redesign', () => {
     expect((track.children[23] as HTMLElement).style.backgroundColor).not.toBe(firstColor);
   });
 
+  it('totals all History endpoints by time bucket and preserves the selection across remounts', async () => {
+    const makeBucket = (bucketStart: number, routeCount: number, successRate: number | null) => ({
+      bucketStart,
+      bucketEnd: bucketStart + 2 * 60 * 60 * 1000,
+      routeCount,
+      successRate,
+    });
+    window.electronAPI.route.getHistoryBuckets = vi.fn().mockResolvedValue({
+      success: true,
+      data: [
+        {
+          targetEndpoint: '/v1/messages',
+          buckets: [makeBucket(0, 2, 1), makeBucket(7200000, 0, null)],
+        },
+        {
+          targetEndpoint: '/v1/responses',
+          buckets: [makeBucket(7200000, 4, 0.5), makeBucket(0, 6, 0)],
+        },
+        { targetEndpoint: '/custom', buckets: [makeBucket(0, 2, 1)] },
+      ],
+    });
+    const view = (
+      <>
+        <SiteListHeader columnWidths={[...DEFAULT_COLUMN_WIDTHS]} onColumnWidthChange={vi.fn()} />
+        <HistoryBucketBars siteId="site-1" accountId="account-1" />
+      </>
+    );
+    const { unmount } = render(view);
+    fireEvent.click(await screen.findByRole('button', { name: '选择端点 总计' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('14次');
+      expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('43%');
+    });
+    expect(screen.getByLabelText(/总计\s+路由请求 10 次 40%/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/总计\s+路由请求 4 次 50%/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择端点 总计' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '选择端点 OpenAI' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('10次');
+      expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('20%');
+    });
+    fireEvent.click(screen.getByRole('button', { name: '选择端点 总计' }));
+    unmount();
+    render(view);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '选择端点 总计' })).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      );
+      expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('14次');
+    });
+  });
+
+  it('shows empty History buckets for the total when no endpoints have data', async () => {
+    window.electronAPI.route.getHistoryBuckets = vi.fn().mockResolvedValue({
+      success: true,
+      data: [],
+    });
+    render(
+      <>
+        <SiteListHeader columnWidths={[...DEFAULT_COLUMN_WIDTHS]} onColumnWidthChange={vi.fn()} />
+        <HistoryBucketBars siteId="site-1" accountId="account-1" />
+      </>
+    );
+    fireEvent.click(await screen.findByRole('button', { name: '选择端点 总计' }));
+    await waitFor(() =>
+      expect(screen.getAllByLabelText(/总计\s+路由请求 0 次 --/)).toHaveLength(24)
+    );
+    expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('0次');
+    expect(screen.getByTestId('history-bucket-bars-summary')).toHaveTextContent('-');
+  });
+
   it('shows the check-in spinner only for the targeted account card key', () => {
     render(
       <>
@@ -1491,8 +1987,8 @@ describe('sites page redesign', () => {
   });
 
   it('renders only the visible folded-row columns inside the sticky header', () => {
-    // 站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型 / LDC / 请求端点
-    expect(DEFAULT_COLUMN_WIDTHS).toEqual([180, 112, 84, 84, 70, 50, 64, 320]);
+    // 站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型 / 请求端点
+    expect(DEFAULT_COLUMN_WIDTHS).toEqual([180, 112, 84, 84, 70, 50, 400]);
 
     const { container } = render(
       <SiteListHeader
@@ -1512,7 +2008,6 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
     expect(screen.getByText('目标端点')).toBeInTheDocument();
     expect(screen.queryByText('History')).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'CLI 类型选择' })).not.toBeInTheDocument();
@@ -1541,7 +2036,7 @@ describe('sites page redesign', () => {
     fireEvent.mouseMove(document, { clientX: 180 });
     fireEvent.mouseUp(document);
 
-    expect(onColumnWidthChange).toHaveBeenCalledWith(7, 400);
+    expect(onColumnWidthChange).toHaveBeenCalledWith(6, 480);
   });
 
   it('supports keyboard resizing on the request endpoint column handle', () => {
@@ -1555,14 +2050,14 @@ describe('sites page redesign', () => {
     );
 
     const endpointHandle = screen.getByRole('separator', { name: '调整请求端点列宽' });
-    expect(endpointHandle).toHaveAttribute('aria-valuenow', '320');
+    expect(endpointHandle).toHaveAttribute('aria-valuenow', '400');
     expect(endpointHandle).toHaveAttribute('aria-valuemax', '480');
 
     fireEvent.keyDown(endpointHandle, { key: 'ArrowRight' });
     fireEvent.keyDown(endpointHandle, { key: 'End' });
 
-    expect(onColumnWidthChange).toHaveBeenCalledWith(7, 330);
-    expect(onColumnWidthChange).toHaveBeenCalledWith(7, 480);
+    expect(onColumnWidthChange).toHaveBeenCalledWith(6, 410);
+    expect(onColumnWidthChange).toHaveBeenCalledWith(6, 480);
   });
 
   it('renders token and request statistics as stacked two-line cells', () => {
@@ -1573,8 +2068,6 @@ describe('sites page redesign', () => {
         site={baseSite}
         siteResult={undefined}
         lastSyncDisplay="12:34"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
@@ -1605,8 +2098,6 @@ describe('sites page redesign', () => {
         site={baseSite}
         siteResult={undefined}
         lastSyncDisplay="12:34"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
@@ -1634,8 +2125,6 @@ describe('sites page redesign', () => {
         site={baseSite}
         siteResult={{ status: '成功', balance: 1234.56, models: [] } as any}
         lastSyncDisplay="7天"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={0}
         todayPromptTokens={0}
@@ -1672,26 +2161,14 @@ describe('sites page redesign', () => {
     expect(screen.queryByRole('button', { name: 'CLI配置' })).not.toBeInTheDocument();
   });
 
-  it('renders LDC exchange rates for managed sites only', () => {
-    const supportedResult: DetectionResult = {
-      name: baseSite.name,
-      url: baseSite.url,
-      status: '成功',
-      models: [],
-      has_checkin: false,
-      ldcPaymentSupported: true,
-      ldcExchangeRate: '10.00',
-    };
-    const buildHeader = (
-      siteResult: DetectionResult | undefined,
-      accessPointType: 'managed' | 'custom-cli' = 'managed'
-    ) => (
+  it('shows refresh issues beside the site name with their full details on hover', () => {
+    const issue = 'API Key「key-a」所属分组「vip」不在当前用户分组列表中';
+
+    render(
       <SiteCardHeader
         site={baseSite}
-        siteResult={siteResult}
+        siteResult={{ status: '成功', balance: 12, models: [], issues: [issue] } as any}
         lastSyncDisplay="12:34"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={0}
         todayPromptTokens={0}
@@ -1700,29 +2177,17 @@ describe('sites page redesign', () => {
         rpm={0}
         tpm={0}
         modelCount={0}
-        accessPointType={accessPointType}
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
+        cliConfig={null}
+        onOpenCliConfig={vi.fn()}
+        onApply={vi.fn()}
       />
     );
 
-    const { rerender } = render(buildHeader(supportedResult));
-
-    expect(screen.getByTitle('LDC 兑换比例: 10.00')).toHaveTextContent('10.00');
-
-    rerender(
-      buildHeader({
-        ...supportedResult,
-        ldcPaymentSupported: false,
-        ldcExchangeRate: undefined,
-      })
-    );
-    expect(screen.getByTitle('不支持 LDC')).toHaveTextContent('--');
-
-    rerender(buildHeader(supportedResult, 'custom-cli'));
-    expect(screen.getByTitle('不支持 LDC')).toHaveTextContent('--');
-    expect(screen.queryByTitle('LDC 兑换比例: 10.00')).not.toBeInTheDocument();
+    const alert = screen.getByRole('img', { name: `站点异常：${issue}` });
+    expect(alert).toHaveAttribute('title', issue);
   });
 
   it('formats balances below and above the 100000 threshold differently', () => {
@@ -1731,8 +2196,6 @@ describe('sites page redesign', () => {
         site={baseSite}
         siteResult={{ status: '成功', balance: 99999.99, models: [] } as any}
         lastSyncDisplay="12:34"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
@@ -1757,8 +2220,6 @@ describe('sites page redesign', () => {
         site={baseSite}
         siteResult={{ status: '成功', balance: 123456.78, models: [] } as any}
         lastSyncDisplay="12:34"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
@@ -1845,7 +2306,7 @@ describe('sites page redesign', () => {
   it('renders a compact column header row with inline sorting and an actions slot', () => {
     const { container } = render(
       <SiteListHeader
-        columnWidths={[260, 120, 90, 100, 86, 66, 64, 360]}
+        columnWidths={[260, 120, 90, 100, 86, 66, 360]}
         onColumnWidthChange={vi.fn()}
         sortField="balance"
         sortOrder="desc"
@@ -1861,14 +2322,11 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
     expect(screen.getByText('目标端点')).toBeInTheDocument();
     expect(screen.queryByText('History')).not.toBeInTheDocument();
     expect(screen.getByText('批量检测')).toBeInTheDocument();
     const header = container.firstElementChild as HTMLDivElement;
-    expect(header.style.gridTemplateColumns).toBe(
-      '260px 120px 90px 100px 86px 66px 64px 360px 1fr'
-    );
+    expect(header.style.gridTemplateColumns).toBe('260px 120px 90px 100px 86px 66px 360px 1fr');
     expect(header).toHaveClass('px-3');
     expect(header.lastElementChild).toHaveClass('items-center', 'justify-end', 'gap-0.5');
   });
@@ -1907,19 +2365,17 @@ describe('sites page redesign', () => {
       />
     );
 
-    // Phase 5/6: 仅保留 5 个可排序列（站点、余额、今日消费、模型数、LDC）
+    // Phase 5/6: 仅保留 4 个可排序列（站点、余额、今日消费、模型数）
     fireEvent.click(screen.getByRole('button', { name: '余额' }));
     fireEvent.click(screen.getByRole('button', { name: '今日消费' }));
     fireEvent.click(screen.getByRole('button', { name: '模型数' }));
-    fireEvent.click(screen.getByRole('button', { name: 'LDC' }));
     expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Token统计' })).not.toBeInTheDocument();
 
     expect(onToggleSort).toHaveBeenCalledWith('balance');
     expect(onToggleSort).toHaveBeenCalledWith('todayUsage');
     expect(onToggleSort).toHaveBeenCalledWith('modelCount');
-    expect(onToggleSort).toHaveBeenCalledWith('ldcRatio');
-    expect(onToggleSort).toHaveBeenCalledTimes(4);
+    expect(onToggleSort).toHaveBeenCalledTimes(3);
   });
 
   it('keeps only high-frequency actions visible in the row action cell', () => {
@@ -1958,8 +2414,6 @@ describe('sites page redesign', () => {
         site={baseSite}
         siteResult={undefined}
         lastSyncDisplay="12:34"
-        errorCode={null}
-        timeoutSeconds={null}
         columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={0}
@@ -1993,7 +2447,7 @@ describe('sites page redesign', () => {
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
-    expect(grid.style.gridTemplateColumns).toBe('180px 112px 84px 84px 70px 50px 64px 320px');
+    expect(grid.style.gridTemplateColumns).toBe('180px 112px 84px 84px 70px 50px 400px');
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
     expect(screen.getByText('12:34')).toBeInTheDocument();
     // Phase 5/6: 站点类型列已移除

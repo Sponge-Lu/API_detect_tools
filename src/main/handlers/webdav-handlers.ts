@@ -19,7 +19,7 @@ export function registerWebDAVHandlers() {
 
   // 上传备份到 WebDAV
   ipcMain.handle('webdav:upload-backup', async () => {
-    const config = await unifiedConfigManager.loadConfig();
+    const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
     if (!webdavConfig?.enabled) {
@@ -31,7 +31,7 @@ export function registerWebDAVHandlers() {
 
   // 列出 WebDAV 备份
   ipcMain.handle('webdav:list-backups', async () => {
-    const config = await unifiedConfigManager.loadConfig();
+    const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
     if (!webdavConfig?.enabled) {
@@ -43,7 +43,7 @@ export function registerWebDAVHandlers() {
 
   // 删除 WebDAV 备份
   ipcMain.handle('webdav:delete-backup', async (_, filename: string) => {
-    const config = await unifiedConfigManager.loadConfig();
+    const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
     if (!webdavConfig?.enabled) {
@@ -55,7 +55,7 @@ export function registerWebDAVHandlers() {
 
   // 恢复 WebDAV 备份
   ipcMain.handle('webdav:restore-backup', async (_, filename: string) => {
-    const config = await unifiedConfigManager.loadConfig();
+    const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
     if (!webdavConfig?.enabled) {
@@ -69,7 +69,7 @@ export function registerWebDAVHandlers() {
   ipcMain.handle('webdav:save-config', async (_, webdavConfig: WebDAVConfig) => {
     try {
       Logger.info('💾 [WebDAV] 保存配置:', JSON.stringify({ ...webdavConfig, password: '***' }));
-      const config = await unifiedConfigManager.loadConfig();
+      const config = await unifiedConfigManager.getConfig();
       config.settings = {
         ...config.settings,
         webdav: webdavConfig,
@@ -86,7 +86,7 @@ export function registerWebDAVHandlers() {
   // 获取 WebDAV 配置
   ipcMain.handle('webdav:get-config', async () => {
     try {
-      const config = await unifiedConfigManager.loadConfig();
+      const config = await unifiedConfigManager.getConfig();
       const webdavConfig = config.settings?.webdav || null;
       Logger.info(
         '📖 [WebDAV] 加载配置:',

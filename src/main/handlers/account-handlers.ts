@@ -38,6 +38,7 @@ export function registerAccountHandlers(): void {
       updates: {
         account_name?: string;
         access_token?: string;
+        api_key?: string;
         user_id?: string;
         auto_refresh?: boolean;
         auto_refresh_interval?: number;
@@ -83,10 +84,12 @@ export function registerAccountHandlers(): void {
         username?: string;
 
         access_token: string;
+        api_key?: string;
 
         auth_source: string;
 
         browser_profile_path?: string;
+        automation_slot?: number;
 
         anyRouterConfig?: { userHash?: string };
       }
@@ -102,10 +105,12 @@ export function registerAccountHandlers(): void {
           username: data.username,
 
           access_token: data.access_token,
+          api_key: data.api_key,
 
           auth_source: data.auth_source as any,
 
           browser_profile_path: data.browser_profile_path,
+          automation_slot: data.automation_slot,
 
           anyRouterConfig: data.anyRouterConfig,
         });

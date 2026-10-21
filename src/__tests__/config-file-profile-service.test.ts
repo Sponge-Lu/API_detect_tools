@@ -4,16 +4,22 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigFileProfile } from '../shared/types/config-file-profile';
+import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
+import { getBuiltinClientConfigTemplates } from '../shared/config/builtin-client-configs';
 import * as atomicJson from '../main/utils/atomic-json';
+import { backupConfigFile } from '../main/config-file-backups';
 
 import {
   applyConfigFileProfile,
   commitConfigFileProfile,
+  listSavedConfigFileBackups,
+  previewConfigFileBackupRestore,
   createDefaultConfigFileProfiles,
   deleteConfigFileProfile,
   findConfigFileProfileByRouteApiKey,
   generateConfigFileProfileRouteKey,
   getConfigFileTargetCatalog,
+  resolveConfigFileProfileValues,
   getSessionRecordCacheStats,
   loadConfigFileProfiles,
   previewConfigFileProfile,
@@ -21,6 +27,8 @@ import {
   previewConfigFileDirectEdit,
   readConfigFiles,
   restoreBuiltinConfigFileProfile,
+  restoreMissingBuiltinConfigFileProfiles,
+  switchBuiltinConfigFileProfileAuthMode,
   saveConfigFile,
   saveConfigFileProfiles,
   scanSavedSessionRecords,
@@ -114,6 +122,97 @@ afterEach(async () => {
 });
 
 describe('config file profile service', () => {
+  it('restores only the selected saved file through preview and commit with CAS checks', async () => {
+    mocks.userData = await createTempDirectory();
+    const target = path.join(mocks.userData, 'settings.json');
+    await fs.writeFile(target, 'current', 'utf8');
+    const saved = await upsertConfigFileProfile({ profile: profile([target]) });
+    await backupConfigFile(target, 'historical');
+    const [backup] = await listSavedConfigFileBackups({ profileId: saved.id, fileId: 'file-1' });
+    const input = {
+      profileId: saved.id,
+      fileId: 'file-1',
+      backupId: backup.id,
+      expectedHash: backup.sha256,
+      expectedRevision: saved.revision,
+    };
+    const preview = await previewConfigFileBackupRestore(input);
+    expect(await fs.readFile(target, 'utf8')).toBe('current');
+    expect(preview.files).toHaveLength(1);
+    expect(preview.files[0].nextContent).toBe('historical');
+    await fs.writeFile(target, 'external', 'utf8');
+    await expect(commitConfigFileProfile({ transactionId: preview.transactionId })).rejects.toThrow(
+      '外部修改'
+    );
+    expect(await fs.readFile(target, 'utf8')).toBe('external');
+    const retry = await previewConfigFileBackupRestore(input);
+    await commitConfigFileProfile({ transactionId: retry.transactionId });
+    expect(await fs.readFile(target, 'utf8')).toBe('historical');
+    await expect(previewConfigFileBackupRestore({ ...input, fileId: 'missing' })).rejects.toThrow(
+      '不存在'
+    );
+    await expect(
+      previewConfigFileBackupRestore({ ...input, expectedHash: 'changed' })
+    ).rejects.toThrow('已变化');
+  });
+
+  it('uses a local key and its own models for managed configuration targets', async () => {
+    mocks.userData = await createTempDirectory();
+    mocks.sites = [
+      { id: 'site-1', name: 'Managed', url: 'https://example.com/prefix/v1', enabled: true },
+    ];
+    mocks.accounts = [
+      {
+        id: 'account-1',
+        site_id: 'site-1',
+        account_name: 'Local',
+        local_api_keys: [
+          {
+            id: 'local-key',
+            name: 'Manual',
+            key: 'plain-secret',
+            group: 'custom',
+            groupMultiplier: 2,
+            source: 'local',
+            models: ['local-model'],
+          },
+        ],
+      },
+    ];
+    const catalog = await getConfigFileTargetCatalog();
+    expect(catalog.find(entry => entry.accountId === 'account-1')).toMatchObject({
+      available: true,
+      models: ['local-model'],
+      apiKeys: [{ id: 'local-key', scopedModels: ['local-model'] }],
+    });
+    const input = profile([]);
+    input.target = {
+      kind: 'managed',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'local-key',
+      model: 'local-model',
+    };
+    await expect(resolveConfigFileProfileValues({ profile: input })).resolves.toMatchObject({
+      apiKey: 'plain-secret',
+      model: 'local-model',
+      baseUrl: 'https://example.com/prefix/v1',
+    });
+  });
+
+  it('renders versioned template URLs without adding v1 twice', async () => {
+    const directory = await createTempDirectory();
+    const file = path.join(directory, 'config.conf');
+    await applyConfigFileProfile({
+      profile: profile([file], 'url={{BASE_URL}}/v1'),
+      values: {
+        baseUrl: 'https://example.com/prefix/v1/',
+        apiKey: 'plain-secret',
+        model: 'model-a',
+      },
+    });
+    expect(await fs.readFile(file, 'utf8')).toBe('url=https://example.com/prefix/v1');
+  });
   it('caches unknown route credentials until the profile index is rebuilt', async () => {
     const directory = await createTempDirectory();
     mocks.userData = directory;
@@ -237,13 +336,15 @@ describe('config file profile service', () => {
 
   it('saves direct edits atomically and creates a recoverable backup', async () => {
     const directory = await createTempDirectory();
+    mocks.userData = directory;
     const pathname = path.join(directory, 'config.json');
     await fs.writeFile(pathname, 'before', 'utf-8');
     await saveConfigFile(pathname, 'after');
     expect(await fs.readFile(pathname, 'utf-8')).toBe('after');
-    const backup = (await fs.readdir(directory)).find(item => item.startsWith('config.json.bak.'));
-    expect(backup).toBeTruthy();
-    expect(await fs.readFile(path.join(directory, backup!), 'utf-8')).toBe('before');
+    const [backupId] = await fs.readdir(path.join(directory, 'backups', 'cli-config'));
+    expect(
+      await fs.readFile(path.join(directory, 'backups', 'cli-config', backupId, 'original'), 'utf8')
+    ).toBe('before');
   });
 
   it('applies one rendered template to all files after validating the full batch', async () => {
@@ -300,16 +401,19 @@ describe('config file profile service', () => {
       ])
     );
     expect(defaults.map(item => item.files.length)).toEqual([2, 2, 2, 1]);
-    expect(defaults.find(item => item.name === 'Codex')?.files[0].template).toContain(
-      'wire_api = "responses"'
-    );
-    expect(defaults.find(item => item.name === 'OpenCode')?.files[0].template).toContain(
-      'api-detect-anthropic'
-    );
+    const codexTemplate = defaults.find(item => item.name === 'Codex')?.files[0].template;
+    expect(codexTemplate).toContain('wire_api = "responses"');
+    expect(codexTemplate).toContain('web_search = "disabled"');
+    expect(codexTemplate).not.toContain('disable_response_storage');
+    expect(codexTemplate).not.toContain('network_access');
+    const openCodeTemplate = defaults.find(item => item.name === 'OpenCode')?.files[0].template;
+    expect(openCodeTemplate).toContain('api-detect-anthropic');
+    expect(openCodeTemplate).toContain('"apiKey": "{{API_KEY}}"');
     const grokTemplate = defaults.find(item => item.name === 'Grok Build')?.files[0].template;
     expect(grokTemplate).toContain('api_backend = "responses"');
     expect(grokTemplate).toContain('api_backend = "chat_completions"');
     expect(grokTemplate).toContain('api_backend = "messages"');
+    expect(grokTemplate).toContain('"anthropic-version" = "2023-06-01"');
     expect(defaults.every(item => item.builtin?.fingerprint)).toBe(true);
     expect(
       defaults
@@ -347,7 +451,7 @@ describe('config file profile service', () => {
 
     const [upgraded] = await loadConfigFileProfiles();
 
-    expect(upgraded.builtin?.version).toBe(3);
+    expect(upgraded.builtin?.version).toBe(6);
     expect(upgraded.files.every(file => !file.template.includes('x-api-detect-cli'))).toBe(true);
     expect(upgraded.agentLogoId).toBe('cursor');
     expect(upgraded.localRouteCredential?.apiKey).toBe('sk-route-preserved');
@@ -397,6 +501,106 @@ describe('config file profile service', () => {
     expect(restored.files).toHaveLength(2);
     expect(restored.files[0].template).not.toBe('user modified');
     expect(restored.target).toEqual({ kind: 'local-route', model: 'selected-model' });
+  });
+
+  it('restores built-in examples deleted from the UI', async () => {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    const defaults = createDefaultConfigFileProfiles(1);
+    await saveConfigFileProfiles(defaults);
+    await deleteConfigFileProfile({ profileId: defaults[1].id });
+
+    expect((await loadConfigFileProfiles()).map(profile => profile.id)).not.toContain(
+      defaults[1].id
+    );
+
+    const restored = await restoreMissingBuiltinConfigFileProfiles();
+    expect(restored.map(profile => profile.id)).toEqual(
+      expect.arrayContaining(defaults.map(profile => profile.id))
+    );
+    expect(restored.find(profile => profile.id === defaults[1].id)?.isExample).toBe(true);
+  });
+
+  it('provides official login templates without third-party placeholders', () => {
+    for (const clientType of BUILTIN_CLI_TYPES) {
+      const files = getBuiltinClientConfigTemplates(clientType, 'official');
+      expect(files.length).toBeGreaterThan(0);
+      expect(files.every(file => !file.content.includes('{{API_KEY}}'))).toBe(true);
+      expect(files.every(file => !file.content.includes('{{BASE_URL}}'))).toBe(true);
+    }
+  });
+
+  it('switches a built-in profile between third-party and official templates', async () => {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    const defaults = createDefaultConfigFileProfiles(1);
+    const codex = defaults.find(profile => profile.builtin?.clientType === 'codex')!;
+    await saveConfigFileProfiles(defaults);
+
+    const official = await switchBuiltinConfigFileProfileAuthMode({
+      profileId: codex.id,
+      authMode: 'official',
+      expectedRevision: codex.revision,
+    });
+    expect(official.authMode).toBe('official');
+    expect(official.files).toHaveLength(1);
+    expect(official.files[0].template).toContain('model_provider = "openai"');
+    expect(official.files[0].template).toContain('gpt-6-sol');
+    expect(official.files[0].template).not.toContain('{{BASE_URL}}');
+
+    const thirdParty = await switchBuiltinConfigFileProfileAuthMode({
+      profileId: codex.id,
+      authMode: 'third-party',
+      expectedRevision: official.revision,
+    });
+    expect(thirdParty.authMode).toBe('third-party');
+    expect(thirdParty.files).toHaveLength(2);
+    expect(thirdParty.files[0].template).toContain('experimental_bearer_token');
+  });
+
+  it('merges official Codex templates over the third-party provider', async () => {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    const pathname = path.join(directory, 'config.toml');
+    await fs.writeFile(
+      pathname,
+      'model_provider = "AnyAPI"\nmodel = "old-model"\n\n[model_providers.AnyAPI]\nname = "AnyAPI"\n',
+      'utf-8'
+    );
+    const input = profile([pathname], 'model_provider = "openai"\nmodel = "gpt-6-sol"');
+    input.files[0].format = 'toml';
+    input.authMode = 'official';
+    await saveConfigFileProfiles([input]);
+
+    const preview = await previewConfigFileProfile({ profileId: input.id, applyMode: 'merge' });
+    expect(preview.files[0].nextContent).toContain('model_provider = "openai"');
+    expect(preview.files[0].nextContent).toContain('model = "gpt-6-sol"');
+  });
+
+  it('merges official Claude settings with an empty env block', async () => {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    const pathname = path.join(directory, 'settings.json');
+    await fs.writeFile(
+      pathname,
+      JSON.stringify({
+        model: 'old-model',
+        env: { ANTHROPIC_BASE_URL: 'https://relay.example', ANTHROPIC_AUTH_TOKEN: 'sk-old' },
+      }),
+      'utf-8'
+    );
+    const input = profile(
+      [pathname],
+      JSON.stringify({ model: 'opus[1m]', language: 'zh-CN', env: {} })
+    );
+    input.files[0].format = 'json';
+    input.authMode = 'official';
+    await saveConfigFileProfiles([input]);
+
+    const preview = await previewConfigFileProfile({ profileId: input.id, applyMode: 'merge' });
+    const parsed = JSON.parse(preview.files[0].nextContent);
+    expect(parsed.model).toBe('opus[1m]');
+    expect(parsed.env).toEqual({});
   });
 
   it('keeps local, managed scoped, and managed all-model domains isolated', async () => {
@@ -970,8 +1174,12 @@ extra_headers = { "x-api-key" = "{{API_KEY}}" }`
       'url=http://127.0.0.1:3210\nkey=sk-route-profile-1\nmodel='
     );
     expect((await fs.readdir(directory)).some(item => item.startsWith('config.json.bak.'))).toBe(
-      true
+      false
     );
+    const [backupId] = await fs.readdir(path.join(directory, 'backups', 'cli-config'));
+    expect(
+      await fs.readFile(path.join(directory, 'backups', 'cli-config', backupId, 'original'), 'utf8')
+    ).toBe('before');
   });
 
   it('does not write any target file when creating a backup fails', async () => {
@@ -987,7 +1195,7 @@ extra_headers = { "x-api-key" = "{{API_KEY}}" }`
     const writeAtomically = atomicJson.writeTextFileAtomically;
     vi.spyOn(atomicJson, 'writeTextFileAtomically').mockImplementation(
       async (targetPath, content, options) => {
-        if (targetPath.includes('.bak.')) throw new Error('backup failed');
+        if (targetPath.endsWith('.bak')) throw new Error('backup failed');
         await writeAtomically(targetPath, content, options);
       }
     );

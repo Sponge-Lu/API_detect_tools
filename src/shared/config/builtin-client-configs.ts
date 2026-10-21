@@ -1,3 +1,8 @@
+import { buildVersionedApiUrl } from '../utils/apiConfig';
+import {
+  DEFAULT_CONFIG_FILE_AUTH_MODE,
+  type ConfigFileAuthMode,
+} from '../types/config-file-profile';
 import {
   normalizeCodexFeatureFlagsToml,
   type BuiltinCliType,
@@ -32,15 +37,21 @@ export const GROK_BUILD_MANAGED_MODEL_IDS = {
   messages: 'api-detect-grok-messages',
 } as const;
 
+export type BuiltinClientConfigTemplateSet = Record<
+  ConfigFileAuthMode,
+  readonly BuiltinClientConfigFile[]
+>;
+
 /** Fixed examples shown in the configuration-file editor. These are not runtime builders. */
 export const BUILTIN_CLIENT_CONFIG_TEMPLATES: Record<
   BuiltinCliType,
-  readonly BuiltinClientConfigFile[]
+  BuiltinClientConfigTemplateSet
 > = {
-  claudeCode: [
-    {
-      path: '~/.claude/settings.json',
-      content: `{
+  claudeCode: {
+    'third-party': [
+      {
+        path: '~/.claude/settings.json',
+        content: `{
   "model": "{{MODEL}}",
   "language": "zh-CN",
   "env": {
@@ -54,90 +65,128 @@ export const BUILTIN_CLIENT_CONFIG_TEMPLATES: Record<
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   }
 }`,
-      format: 'json',
-      containsSecrets: true,
-    },
-    {
-      path: '~/.claude/config.json',
-      content: `{
+        format: 'json',
+        containsSecrets: true,
+      },
+      {
+        path: '~/.claude/config.json',
+        content: `{
   "primaryApiKey": "any"
 }`,
-      format: 'json',
-    },
-  ],
-  codex: [
-    {
-      path: '~/.codex/config.toml',
-      content: `model_provider = "AnyAPI"
+        format: 'json',
+      },
+    ],
+    official: [
+      {
+        path: '~/.claude/settings.json',
+        content: `{
+  "model": "opus[1m]",
+  "language": "zh-CN",
+  "env": {}
+}`,
+        format: 'json',
+      },
+    ],
+  },
+  codex: {
+    'third-party': [
+      {
+        path: '~/.codex/config.toml',
+        content: `model_provider = "AnyAPI"
 model = "{{MODEL}}"
 model_reasoning_effort = "xhigh"
-disable_response_storage = true
-network_access = "enabled"
+# web_search 选项："disabled", "cached", "indexed", "live"；第三方中转建议 disabled
+web_search = "disabled"
 
 [model_providers.AnyAPI]
 name = "AnyAPI"
 base_url = "{{BASE_URL}}/v1"
-env_key = "OPENAI_API_KEY"
+experimental_bearer_token = "{{API_KEY}}"
 # wire_api 固定使用 "responses" (Responses API，chat 模式已废弃)
-wire_api = "responses"
-
-# web_search 选项："cached", "live", "disabled"
-web_search = "cached"`,
-      format: 'toml',
-    },
-    {
-      path: '~/.codex/auth.json',
-      content: `{
+wire_api = "responses"`,
+        format: 'toml',
+        containsSecrets: true,
+      },
+      {
+        path: '~/.codex/auth.json',
+        content: `{
   "OPENAI_API_KEY": "{{API_KEY}}"
 }`,
-      format: 'json',
-      containsSecrets: true,
-    },
-  ],
-  openCode: [
-    {
-      path: '~/.config/opencode/opencode.json',
-      content: `{
+        format: 'json',
+        containsSecrets: true,
+      },
+    ],
+    official: [
+      {
+        path: '~/.codex/config.toml',
+        content: `# 官方账号登录：运行 codex login；本文件不包含第三方 provider
+model_provider = "openai"
+model = "gpt-6-sol"
+model_reasoning_effort = "xhigh"
+web_search = "cached"`,
+        format: 'toml',
+      },
+    ],
+  },
+  openCode: {
+    'third-party': [
+      {
+        path: '~/.config/opencode/opencode.json',
+        content: `{
   "$schema": "https://opencode.ai/config.json",
   "model": "api-detect-responses/{{MODEL}}",
   "provider": {
     "api-detect-anthropic": {
       "npm": "@ai-sdk/anthropic",
       "name": "AnyAPI Anthropic",
-      "options": { "baseURL": "{{BASE_URL}}/v1" },
+      "options": { "baseURL": "{{BASE_URL}}/v1", "apiKey": "{{API_KEY}}" },
       "models": { "{{MODEL}}": { "name": "{{MODEL}}" } }
     },
     "api-detect-responses": {
       "npm": "@ai-sdk/openai",
       "name": "AnyAPI Responses",
-      "options": { "baseURL": "{{BASE_URL}}/v1" },
+      "options": { "baseURL": "{{BASE_URL}}/v1", "apiKey": "{{API_KEY}}" },
       "models": { "{{MODEL}}": { "name": "{{MODEL}}" } }
     },
     "api-detect-chat": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "AnyAPI Chat Completions",
-      "options": { "baseURL": "{{BASE_URL}}/v1" },
+      "options": { "baseURL": "{{BASE_URL}}/v1", "apiKey": "{{API_KEY}}" },
       "models": { "{{MODEL}}": { "name": "{{MODEL}}" } }
     }
   }
 }`,
-      format: 'json',
-    },
-    {
-      path: '~/.local/share/opencode/auth.json',
-      content: `{
+        format: 'json',
+        containsSecrets: true,
+      },
+      {
+        path: '~/.local/share/opencode/auth.json',
+        content: `{
   "api-detect-anthropic": { "type": "api", "key": "{{API_KEY}}" },
   "api-detect-responses": { "type": "api", "key": "{{API_KEY}}" },
   "api-detect-chat": { "type": "api", "key": "{{API_KEY}}" }
 }`,
-      format: 'json',
-      containsSecrets: true,
-    },
-  ],
-  grokBuild: [
-    {
-      path: '~/.grok/config.toml',
-      content: `[models]
+        format: 'json',
+        containsSecrets: true,
+      },
+    ],
+    official: [
+      {
+        path: '~/.config/opencode/opencode.json',
+        content: `{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-4-5",
+  "provider": {}
+}`,
+        format: 'json',
+      },
+    ],
+  },
+  grokBuild: {
+    'third-party': [
+      {
+        path: '~/.grok/config.toml',
+        content: `[models]
 default = "api-detect-grok-responses"
 
 [model.api-detect-grok-responses]
@@ -163,17 +212,28 @@ model = "{{MODEL}}"
 base_url = "{{BASE_URL}}/v1"
 name = "API Detect · Anthropic Messages"
 api_backend = "messages"
-extra_headers = { "x-api-key" = "{{API_KEY}}" }`,
-      format: 'toml',
-      containsSecrets: true,
-    },
-  ],
+extra_headers = { "x-api-key" = "{{API_KEY}}", "anthropic-version" = "2023-06-01" }`,
+        format: 'toml',
+        containsSecrets: true,
+      },
+    ],
+    official: [
+      {
+        path: '~/.grok/config.toml',
+        content: `# 官方账号登录：运行 grok login
+[models]
+default = "grok-4.6"`,
+        format: 'toml',
+      },
+    ],
+  },
 };
 
 export function getBuiltinClientConfigTemplates(
-  clientType: BuiltinCliType
+  clientType: BuiltinCliType,
+  authMode: ConfigFileAuthMode = DEFAULT_CONFIG_FILE_AUTH_MODE
 ): BuiltinClientConfigFile[] {
-  return BUILTIN_CLIENT_CONFIG_TEMPLATES[clientType].map(file => ({ ...file }));
+  return BUILTIN_CLIENT_CONFIG_TEMPLATES[clientType][authMode].map(file => ({ ...file }));
 }
 
 function normalizeUrl(url: string): string {
@@ -257,19 +317,16 @@ export function buildCodexConfigFiles(
   const config = normalizeCodexFeatureFlagsToml(`model_provider = "${CODEX_PROVIDER_NAME}"
 model = "${values.model}"
 model_reasoning_effort = "xhigh"
-disable_response_storage = true
-network_access = "enabled"
+web_search = "disabled"
 
 [model_providers.${CODEX_PROVIDER_NAME}]
 name = "${CODEX_PROVIDER_NAME}"
-base_url = "${normalizeUrl(values.baseUrl)}/v1"
-env_key = "OPENAI_API_KEY"
+base_url = "${buildVersionedApiUrl(values.baseUrl)}"
+experimental_bearer_token = "${escapeTomlString(values.apiKey)}"
 ${wireApiComment}
-wire_api = "responses"
-
-web_search = "cached"`);
+wire_api = "responses"`);
   return [
-    { path: '~/.codex/config.toml', content: config, format: 'toml' },
+    { path: '~/.codex/config.toml', content: config, format: 'toml', containsSecrets: true },
     {
       path: '~/.codex/auth.json',
       content: JSON.stringify({ OPENAI_API_KEY: values.apiKey }, null, 2),
@@ -282,7 +339,7 @@ web_search = "cached"`);
 export function buildOpenCodeRouteConfigFiles(
   values: BuiltinClientConfigValues
 ): BuiltinClientConfigFile[] {
-  const baseURL = `${normalizeUrl(values.baseUrl)}/v1`;
+  const baseURL = buildVersionedApiUrl(values.baseUrl);
   const { anthropic, responses, chat } = OPENCODE_ROUTE_PROVIDER_IDS;
   const routeModel = { name: values.model };
   const config = {
@@ -292,19 +349,19 @@ export function buildOpenCodeRouteConfigFiles(
       [anthropic]: {
         npm: '@ai-sdk/anthropic',
         name: `${OPENCODE_PROVIDER_NAME} Anthropic`,
-        options: { baseURL },
+        options: { baseURL, apiKey: values.apiKey },
         models: { [values.model]: routeModel },
       },
       [responses]: {
         npm: '@ai-sdk/openai',
         name: `${OPENCODE_PROVIDER_NAME} Responses`,
-        options: { baseURL },
+        options: { baseURL, apiKey: values.apiKey },
         models: { [values.model]: routeModel },
       },
       [chat]: {
         npm: '@ai-sdk/openai-compatible',
         name: `${OPENCODE_PROVIDER_NAME} Chat Completions`,
-        options: { baseURL },
+        options: { baseURL, apiKey: values.apiKey },
         models: { [values.model]: routeModel },
       },
     },
@@ -320,6 +377,7 @@ export function buildOpenCodeRouteConfigFiles(
       path: '~/.config/opencode/opencode.json',
       content: JSON.stringify(config, null, 2),
       format: 'json',
+      containsSecrets: true,
     },
     {
       path: '~/.local/share/opencode/auth.json',
@@ -341,11 +399,11 @@ export function buildGrokBuildConfigFiles(
   _routeManaged = false,
   targetProtocol?: CliTargetProtocol
 ): BuiltinClientConfigFile[] {
-  const baseUrl = escapeTomlString(`${normalizeUrl(values.baseUrl)}/v1`);
+  const baseUrl = escapeTomlString(buildVersionedApiUrl(values.baseUrl));
   const apiKey = escapeTomlString(values.apiKey);
   const model = escapeTomlString(values.model);
   const siteName = escapeTomlString(values.siteName || 'API Detect');
-  const messagesHeaders = `\nextra_headers = { "x-api-key" = "${apiKey}" }`;
+  const messagesHeaders = `\nextra_headers = { "x-api-key" = "${apiKey}", "anthropic-version" = "2023-06-01" }`;
   const { responses, chat, messages } = GROK_BUILD_MANAGED_MODEL_IDS;
   const content = `[models]
 default = "${getGrokDefaultModelId(targetProtocol)}"

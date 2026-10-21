@@ -71,6 +71,117 @@ describe('cli-protocol-adapter request adapt', () => {
     expect(body.messages[1]).toEqual({ role: 'user', content: 'hello' });
   });
 
+  it('accepts real Claude Code requests carrying metadata/thinking/cache_control without throwing', () => {
+    // 此前 validateAnthropicRequest 的白名单过严，真实 Claude Code 请求里的
+    // metadata/thinking/cache_control 会触发 unsupported_field，让转换通道对真实流量失效。
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'claude-opus-4-6',
+        stream: true,
+        max_tokens: 1024,
+        metadata: { user_id: 'account-123' },
+        thinking: { type: 'enabled', budget_tokens: 512 },
+        tools: [
+          {
+            name: 'Read',
+            description: 'read a file',
+            input_schema: { type: 'object' },
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+        system: [{ type: 'text', text: 'sys' }],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } },
+              { type: 'thinking', thinking: 'reasoning...', signature: 'sig' },
+              { type: 'redacted_thinking', data: 'opaque' },
+            ],
+            cache_control: { type: 'ephemeral' },
+          },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 't1',
+                name: 'Read',
+                input: { path: '/a' },
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 't1',
+                content: 'file body',
+                is_error: false,
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+          },
+        ],
+        top_k: 40,
+        top_p: 0.95,
+        temperature: 0.7,
+      }),
+      'claudeCode',
+      'openai-responses',
+      '/v1/messages',
+      'gpt-4.1-mini'
+    );
+
+    expect(result.upstreamPath).toBe('/v1/responses');
+    const body = JSON.parse(result.body.toString('utf-8'));
+    expect(body.model).toBe('gpt-4.1-mini');
+    // 无害字段被丢弃，但语义内容保留
+    expect(body.instructions).toBe('sys');
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools[0]).toMatchObject({ name: 'Read' });
+    expect(body.input.length).toBeGreaterThan(0);
+  });
+
+  it('drops storage/telemetry-only Responses fields instead of rejecting the request', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'gpt-5',
+        stream: true,
+        input: 'hello',
+        store: false,
+        metadata: { trace: 'abc' },
+        prompt_cache_key: 'session-1',
+        safety_identifier: 'user-hash',
+        service_tier: 'default',
+      }),
+      'codex',
+      'openai-chat-completions',
+      '/v1/responses',
+      'gpt-5'
+    );
+
+    const body = JSON.parse(result.body.toString('utf-8'));
+    expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
+    for (const key of ['metadata', 'prompt_cache_key', 'safety_identifier', 'service_tier']) {
+      expect(body).not.toHaveProperty(key);
+    }
+  });
+
+  it('still rejects Responses fields that change the generated output', () => {
+    expect(() =>
+      adaptRequestToTargetProtocol(
+        toBuffer({ model: 'gpt-5', input: 'hello', include: ['reasoning.encrypted_content'] }),
+        'codex',
+        'openai-chat-completions',
+        '/v1/responses',
+        'gpt-5'
+      )
+    ).toThrow(/unsupported_field:request\.include/);
+  });
+
   it('adapts Grok Build according to its actual Messages source endpoint', () => {
     const result = adaptRequestToTargetProtocol(
       toBuffer({

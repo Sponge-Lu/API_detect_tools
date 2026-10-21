@@ -334,15 +334,18 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     set({ saving: true, configs: normalizedConfigs });
     try {
       const customCliConfig = getCustomCliConfigBridge();
-      if (customCliConfig?.save) {
-        await customCliConfig.save({ configs: normalizedConfigs, activeConfigId });
-        Logger.info('✅ [CustomCliConfigStore] 保存配置成功');
-        sessionEventLog.success('custom-cli', '自定义 CLI 配置已保存');
+      if (!customCliConfig?.save) throw new Error('当前环境不支持保存配置');
+      const result = await customCliConfig.save({ configs: normalizedConfigs, activeConfigId });
+      if (result && typeof result === 'object' && 'success' in result && !result.success) {
+        throw new Error('保存自定义CLI配置失败');
       }
+      Logger.info('✅ [CustomCliConfigStore] 保存配置成功');
+      sessionEventLog.success('custom-cli', '自定义 CLI 配置已保存');
     } catch (error) {
       Logger.error('❌ [CustomCliConfigStore] 保存配置失败:', getErrorMessage(error));
       toast.error('保存自定义CLI配置失败');
       sessionEventLog.error('custom-cli', '自定义 CLI 配置保存失败');
+      throw error;
     } finally {
       set({ saving: false });
     }
@@ -377,7 +380,23 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       // 如果删除的是活跃配置，清除活跃状态
       activeConfigId: activeConfigId === id ? null : activeConfigId,
     }));
-    await saveConfigs();
+    try {
+      await saveConfigs();
+    } catch (error) {
+      set(state => ({
+        configs:
+          deletedConfig && !state.configs.some(config => config.id === id)
+            ? [
+                ...state.configs.slice(0, configs.indexOf(deletedConfig)),
+                deletedConfig,
+                ...state.configs.slice(configs.indexOf(deletedConfig)),
+              ]
+            : state.configs,
+        activeConfigId:
+          activeConfigId === id && state.activeConfigId === null ? id : state.activeConfigId,
+      }));
+      throw error;
+    }
     toast.success('已删除自定义配置');
     sessionEventLog.success(
       'custom-cli',
@@ -387,23 +406,33 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
 
   // 应用配置
   applyConfig: async (id: string) => {
-    const { configs, saveConfigs } = get();
+    const { configs, saveConfigs, activeConfigId } = get();
     const config = configs.find(c => c.id === id);
     if (!config) {
       toast.error('配置不存在');
       return;
     }
     set({ activeConfigId: id });
-    await saveConfigs();
+    try {
+      await saveConfigs();
+    } catch (error) {
+      if (get().activeConfigId === id) set({ activeConfigId });
+      throw error;
+    }
     toast.success(`已应用配置: ${config.name}`);
     sessionEventLog.success('custom-cli', `已应用自定义 CLI 配置：${config.name}`);
   },
 
   // 取消应用配置
   clearActiveConfig: async () => {
-    const { saveConfigs } = get();
+    const { saveConfigs, activeConfigId } = get();
     set({ activeConfigId: null });
-    await saveConfigs();
+    try {
+      await saveConfigs();
+    } catch (error) {
+      if (get().activeConfigId === null) set({ activeConfigId });
+      throw error;
+    }
     toast.success('已取消应用自定义配置');
     sessionEventLog.info('custom-cli', '已取消应用自定义 CLI 配置');
   },
@@ -434,13 +463,54 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
         const models = await customCliConfig.fetchModels(configId);
         const persisted = await customCliConfig.load?.();
         if (persisted) {
-          set({
-            configs: normalizeCustomCliConfigs(persisted.configs || []),
-            activeConfigId: persisted.activeConfigId || null,
-          });
+          const fetchedConfig = persisted.configs?.find(item => item.id === configId);
+          const fetched = fetchedConfig
+            ? normalizeCustomCliConfigModelBoundary(fetchedConfig)
+            : undefined;
+          set(state => ({
+            configs: state.configs.map(current => {
+              if (
+                current.id !== configId ||
+                !fetched ||
+                current.baseUrl !== fetched.baseUrl ||
+                current.modelUrl !== fetched.modelUrl ||
+                current.routeAuthScheme !== fetched.routeAuthScheme
+              ) {
+                return current;
+              }
+              const mergedKeys = current.apiKeys?.map(key => {
+                const result = fetched.apiKeys?.find(
+                  item => item.id === key.id && item.key === key.key
+                );
+                return result
+                  ? {
+                      ...key,
+                      models:
+                        result.models.length === 0 && result.id === 'key_legacy'
+                          ? fetched.models
+                          : result.models,
+                      lastModelFetch: result.lastModelFetch,
+                    }
+                  : key;
+              });
+              return normalizeCustomCliConfigModelBoundary({
+                ...current,
+                apiKeys: mergedKeys,
+                models: mergedKeys
+                  ? Array.from(new Set(mergedKeys.flatMap(key => key.models)))
+                  : current.apiKey === fetched.apiKey
+                    ? fetched.models
+                    : current.models,
+                lastModelFetch: fetched.lastModelFetch,
+              });
+            }),
+          }));
         } else {
-          updateConfig(configId, filterCustomCliConfigModels(config, models, Date.now()));
-          await saveConfigs();
+          const current = get().configs.find(item => item.id === configId);
+          if (current && current.baseUrl === config.baseUrl && current.apiKey === config.apiKey) {
+            updateConfig(configId, filterCustomCliConfigModels(current, models, Date.now()));
+            await saveConfigs();
+          }
         }
 
         toast.success(`成功获取 ${models.length} 个模型`);

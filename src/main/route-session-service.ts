@@ -57,6 +57,7 @@ export interface ObservedRouteLineage {
   source: 'codex' | 'claudeCode' | 'openCode';
   rootSessionId?: string;
   parentSessionId?: string;
+  threadId?: string;
   requestKind?: string;
   forkedFromThreadId?: string;
   threadSource?: string;
@@ -641,13 +642,11 @@ export function extractObservedRouteInstanceKey(
     if (hasChildEvidence && (!nativeThread.value || !parentThread.value)) return null;
     const isUtility = threadSource.value === 'system' && !hasChildEvidence;
 
-    // The current thread is the request-level identity. The session id is only a
-    // root-session alias, so it must not collapse distinct verified child threads
-    // into one route key. A session-only request is accepted as a root request;
-    // a subagent marker without a complete parent chain is rejected above.
-    const sessionId = nativeThread.value || (!hasChildEvidence ? nativeSession.value : null);
+    // When both identifiers are present, the session owns the card and the
+    // thread identifies a history node or spawned task within that session.
+    const sessionId = nativeSession.value || nativeThread.value;
     if (!sessionId) return null;
-    if (parentThread.value === sessionId) return null;
+    if (parentThread.value && parentThread.value === nativeThread.value) return null;
     const rootSessionId = nativeSession.value;
     const hasLineage = Boolean(
       rootSessionId ||
@@ -660,12 +659,15 @@ export function extractObservedRouteInstanceKey(
       agentId: 'codex',
       runtimeSlotId: sessionId,
       sessionId,
-      ...(hasLineage
+      ...(hasLineage || (nativeThread.value && nativeThread.value !== sessionId)
         ? {
             lineage: {
               source: 'codex' as const,
               ...(rootSessionId ? { rootSessionId } : {}),
               ...(parentThread.value ? { parentSessionId: parentThread.value } : {}),
+              ...(nativeThread.value && nativeThread.value !== sessionId
+                ? { threadId: nativeThread.value }
+                : {}),
               ...(requestKind.value ? { requestKind: requestKind.value } : {}),
               ...(forkedFromThread.value ? { forkedFromThreadId: forkedFromThread.value } : {}),
               ...(threadSource.value ? { threadSource: threadSource.value } : {}),
@@ -766,13 +768,16 @@ export function listRouteInstances(config: RouteSessionRoutingConfig): RouteInst
 
 export function createArmedRouteInstance(
   config: RouteSessionRoutingConfig,
-  modelId: string,
-  reasoningEffort: string
+  modelId?: string,
+  reasoningEffort?: string
 ): RouteInstance {
   ensureRouteInstanceCollections(config);
-  const normalizedModel = modelId.trim();
-  const normalizedEffort = normalizeRouteThinkingEffort(reasoningEffort);
-  if (!normalizedModel || !normalizedEffort) throw new Error('模型和思考强度不能为空');
+  const normalizedModel = (modelId ?? '').trim();
+  // 模型可留空（等待中在卡片上选择），思考强度缺省 medium
+  const normalizedEffort = (reasoningEffort ?? '').trim()
+    ? normalizeRouteThinkingEffort((reasoningEffort ?? '').trim())
+    : 'medium';
+  if (!normalizedEffort) throw new Error('思考强度不能为空');
   if (Object.values(config.instances || {}).some(item => item.routingState === 'armed')) {
     throw new Error('已有一个路由正在等待下一个新会话');
   }
@@ -972,7 +977,7 @@ function resolveObservedParentInstance(
   const explicitRoot = rootSessionId
     ? findActiveTopLevelBySessionAlias(config, profileId, observedKey.agentId, rootSessionId)
     : null;
-  if (rootSessionId && !explicitRoot) return null;
+  if (rootSessionId && !explicitRoot && observedKey.agentId !== 'codex') return null;
 
   const immediateRoot = findActiveTopLevelBySessionAlias(
     config,
@@ -1111,24 +1116,145 @@ export function resolveRouteInstanceForRequest(params: {
   );
   let resolutionPath: RouteInstanceResolution['resolutionPath'] = 'exact';
   let createdReason: string | undefined;
+  const isChildRequest = Boolean(
+    observedKey.lineage?.parentSessionId || observedKey.lineage?.forkedFromThreadId
+  );
 
   if (observedKey.lineage?.parentSessionId) {
-    const parent = resolveObservedParentInstance(config, profileId, observedKey);
-    const parentClientModel = normalizeIdentityPart(parent?.clientModelId);
-    if (!parent || !requestedModel || !parentClientModel) {
+    if (observedKey.agentId === 'codex') {
+      const parent = resolveObservedParentInstance(config, profileId, observedKey);
+      if (parent) {
+        let memberAppended = appendMemberSessionId(parent, observedKey.lineage.rootSessionId);
+        memberAppended =
+          appendMemberSessionId(parent, observedKey.lineage.threadId) || memberAppended;
+        memberAppended = appendMemberSessionId(parent, observedKey.sessionId) || memberAppended;
+        changed = memberAppended || changed;
+        changed =
+          applyObservedInstanceState({
+            config,
+            profileId,
+            observedKey,
+            instance: parent,
+            requestAt: params.requestAt,
+            manageSlot: false,
+          }) || changed;
+        return { instance: parent, changed, resolutionPath: 'parent', memberAppended };
+      }
+      if (!instance) {
+        return {
+          instance: null,
+          changed,
+          resolutionPath: 'parent-unresolved',
+          memberAppended: false,
+        };
+      }
+    } else {
+      const parent = resolveObservedParentInstance(config, profileId, observedKey);
+      const parentClientModel = normalizeIdentityPart(parent?.clientModelId);
+      if (!parent || !requestedModel || !parentClientModel) {
+        return {
+          instance: null,
+          changed,
+          resolutionPath: 'parent-unresolved',
+          memberAppended: false,
+        };
+      }
+
+      if (requestedModel === parentClientModel) {
+        const memberAppended = appendMemberSessionId(parent, observedKey.sessionId);
+        changed = memberAppended || changed;
+        changed =
+          closeActiveChildForSession(config, parent, observedKey, params.requestAt) || changed;
+        changed =
+          applyObservedInstanceState({
+            config,
+            profileId,
+            observedKey,
+            instance: parent,
+            requestAt: params.requestAt,
+            manageSlot: false,
+          }) || changed;
+        return { instance: parent, changed, resolutionPath: 'parent', memberAppended };
+      }
+
+      instance = Object.values(config.instances).find(
+        item =>
+          item.routingState === 'active' &&
+          item.profileId === profileId &&
+          item.parentInstanceId === parent.id &&
+          item.clientModelId === requestedModel &&
+          item.routeKey &&
+          buildRouteInstanceKey(item.profileId, item.routeKey) === routeKey
+      );
+      if (!instance) {
+        const reasoningEffort =
+          normalizeRouteThinkingEffort(params.requestedReasoningEffort) ||
+          normalizeRouteThinkingEffort(params.defaultReasoningEffort);
+        if (!reasoningEffort) {
+          return {
+            instance: null,
+            changed,
+            resolutionPath: 'parent-unresolved',
+            memberAppended: false,
+          };
+        }
+        instance = {
+          id: randomUUID(),
+          profileId,
+          routeKey: normalizeRouteInstanceKey({
+            agentId: observedKey.agentId,
+            runtimeSlotId: observedKey.runtimeSlotId,
+            sessionId: observedKey.sessionId,
+          }),
+          clientModelId: requestedModel,
+          parentInstanceId: parent.id,
+          childOrdinal: allocateChildOrdinal(config, parent.id),
+          display: {},
+          modelId: requestedModel,
+          reasoningEffort,
+          routingState: 'active',
+          presenceState: 'unknown',
+          createdAt: params.requestAt,
+        };
+        config.instances[instance.id] = instance;
+        createdReason = 'different_model_child';
+        changed = true;
+      } else if (!instance.childOrdinal) {
+        instance.childOrdinal = allocateChildOrdinal(config, parent.id);
+        changed = true;
+      }
+      changed =
+        applyObservedInstanceState({
+          config,
+          profileId,
+          observedKey,
+          instance,
+          requestAt: params.requestAt,
+          manageSlot: true,
+        }) || changed;
       return {
-        instance: null,
+        instance,
         changed,
-        resolutionPath: 'parent-unresolved',
+        resolutionPath: 'parent',
+        ...(createdReason ? { createdReason } : {}),
         memberAppended: false,
       };
     }
+  }
 
-    if (requestedModel === parentClientModel) {
-      const memberAppended = appendMemberSessionId(parent, observedKey.sessionId);
+  if (observedKey.agentId === 'codex' && observedKey.lineage?.forkedFromThreadId) {
+    const parent = findActiveTopLevelBySessionAlias(
+      config,
+      profileId,
+      observedKey.agentId,
+      observedKey.lineage.forkedFromThreadId
+    );
+    if (parent) {
+      let memberAppended = appendMemberSessionId(parent, observedKey.lineage.rootSessionId);
+      memberAppended =
+        appendMemberSessionId(parent, observedKey.lineage.threadId) || memberAppended;
+      memberAppended = appendMemberSessionId(parent, observedKey.sessionId) || memberAppended;
       changed = memberAppended || changed;
-      changed =
-        closeActiveChildForSession(config, parent, observedKey, params.requestAt) || changed;
       changed =
         applyObservedInstanceState({
           config,
@@ -1140,79 +1266,50 @@ export function resolveRouteInstanceForRequest(params: {
         }) || changed;
       return { instance: parent, changed, resolutionPath: 'parent', memberAppended };
     }
-
-    instance = Object.values(config.instances).find(
-      item =>
-        item.routingState === 'active' &&
-        item.profileId === profileId &&
-        item.parentInstanceId === parent.id &&
-        item.clientModelId === requestedModel &&
-        item.routeKey &&
-        buildRouteInstanceKey(item.profileId, item.routeKey) === routeKey
-    );
     if (!instance) {
-      const reasoningEffort =
-        normalizeRouteThinkingEffort(params.requestedReasoningEffort) ||
-        normalizeRouteThinkingEffort(params.defaultReasoningEffort);
-      if (!reasoningEffort) {
-        return {
-          instance: null,
-          changed,
-          resolutionPath: 'parent-unresolved',
-          memberAppended: false,
-        };
-      }
-      instance = {
-        id: randomUUID(),
-        profileId,
-        routeKey: normalizeRouteInstanceKey({
-          agentId: observedKey.agentId,
-          runtimeSlotId: observedKey.runtimeSlotId,
-          sessionId: observedKey.sessionId,
-        }),
-        clientModelId: requestedModel,
-        parentInstanceId: parent.id,
-        childOrdinal: allocateChildOrdinal(config, parent.id),
-        display: {},
-        modelId: requestedModel,
-        reasoningEffort,
-        routingState: 'active',
-        presenceState: 'unknown',
-        createdAt: params.requestAt,
+      return {
+        instance: null,
+        changed,
+        resolutionPath: 'parent-unresolved',
+        memberAppended: false,
       };
-      config.instances[instance.id] = instance;
-      createdReason = 'different_model_child';
-      changed = true;
-    } else if (!instance.childOrdinal) {
-      instance.childOrdinal = allocateChildOrdinal(config, parent.id);
-      changed = true;
     }
-    changed =
-      applyObservedInstanceState({
-        config,
-        profileId,
-        observedKey,
-        instance,
-        requestAt: params.requestAt,
-        manageSlot: true,
-      }) || changed;
+  }
+
+  if (observedKey.lineage?.parentSessionId && !instance) {
     return {
-      instance,
+      instance: null,
       changed,
-      resolutionPath: 'parent',
-      ...(createdReason ? { createdReason } : {}),
+      resolutionPath: 'parent-unresolved',
       memberAppended: false,
     };
   }
 
-  if (!instance && observedKey.lineage?.rootSessionId) {
-    instance =
-      findActiveTopLevelBySessionAlias(
+  if (!instance) {
+    const sessionAliases =
+      observedKey.agentId === 'codex'
+        ? [observedKey.lineage?.rootSessionId, observedKey.lineage?.threadId, observedKey.sessionId]
+        : [observedKey.lineage?.rootSessionId];
+    const roots = new Map<string, RouteInstance>();
+    for (const sessionId of new Set(sessionAliases)) {
+      if (!sessionId) continue;
+      const root = findActiveTopLevelBySessionAlias(
         config,
         profileId,
         observedKey.agentId,
-        observedKey.lineage.rootSessionId
-      ) || undefined;
+        sessionId
+      );
+      if (root) roots.set(root.id, root);
+    }
+    if (roots.size > 1) {
+      return {
+        instance: null,
+        changed,
+        resolutionPath: 'parent-unresolved',
+        memberAppended: false,
+      };
+    }
+    instance = roots.values().next().value;
     if (instance) resolutionPath = 'root-alias';
   }
   if (!instance) {
@@ -1246,11 +1343,12 @@ export function resolveRouteInstanceForRequest(params: {
     instance.createdAt = params.requestAt;
     changed = true;
   }
-  if (requestedModel && instance.clientModelId !== requestedModel) {
+  if (requestedModel && !isChildRequest && instance.clientModelId !== requestedModel) {
     instance.clientModelId = requestedModel;
     changed = true;
   }
   let memberAppended = appendMemberSessionId(instance, observedKey.lineage?.rootSessionId);
+  memberAppended = appendMemberSessionId(instance, observedKey.lineage?.threadId) || memberAppended;
   memberAppended = appendMemberSessionId(instance, observedKey.sessionId) || memberAppended;
   changed = memberAppended || changed;
   const manageSlot =

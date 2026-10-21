@@ -31,6 +31,10 @@ vi.mock('../main/route-state-affinity-service', () => ({
 }));
 
 import { fetchModels } from '../main/custom-cli-model-service';
+import {
+  loadCustomCliConfigStorage,
+  saveCustomCliConfigStorage,
+} from '../main/custom-cli-config-service';
 
 const baseConfig = {
   id: 'direct-1',
@@ -65,6 +69,57 @@ afterEach(async () => {
 });
 
 describe('custom CLI model URL selection', () => {
+  it('does not resurrect a deleted config or drop a concurrently added config', async () => {
+    await writeConfig(baseConfig);
+    let finish!: (value: unknown) => void;
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => {
+      started = resolve;
+    });
+    mocks.httpGet.mockImplementationOnce(() => {
+      started();
+      return new Promise(resolve => {
+        finish = resolve;
+      });
+    });
+    const pending = fetchModels(baseConfig.id);
+    await ready;
+    const replacement = { ...baseConfig, id: 'direct-2', name: 'New config' };
+    await saveCustomCliConfigStorage({ configs: [replacement], activeConfigId: replacement.id });
+    finish({ status: 200, data: { data: [{ id: 'stale-model' }] } });
+    expect((await pending).success).toBe(false);
+    const storage = await loadCustomCliConfigStorage();
+    expect(storage.configs.map(config => config.id)).toEqual(['direct-2']);
+    expect(storage.activeConfigId).toBe('direct-2');
+  });
+
+  it('preserves edits made while fetching models and uses x-api-key without adding a prefix', async () => {
+    await writeConfig({ ...baseConfig, apiKey: 'manual-secret', routeAuthScheme: 'x-api-key' });
+    mocks.httpGet.mockImplementationOnce(async () => {
+      const storage = await loadCustomCliConfigStorage();
+      storage.configs[0].notes = 'Concurrent edit';
+      await saveCustomCliConfigStorage(storage);
+      return { status: 200, data: { data: [{ id: 'model-a' }] } };
+    });
+    expect((await fetchModels(baseConfig.id)).success).toBe(true);
+    expect(mocks.httpGet.mock.calls[0][1].headers).toEqual({
+      'Content-Type': 'application/json',
+      'x-api-key': 'manual-secret',
+    });
+    expect((await loadCustomCliConfigStorage()).configs[0].notes).toBe('Concurrent edit');
+  });
+
+  it('discards results when the API key changes during the request', async () => {
+    await writeConfig(baseConfig);
+    mocks.httpGet.mockImplementationOnce(async () => {
+      const storage = await loadCustomCliConfigStorage();
+      storage.configs[0].apiKeys![0].key = 'rotated-secret';
+      await saveCustomCliConfigStorage(storage);
+      return { status: 200, data: { data: [{ id: 'stale-model' }] } };
+    });
+    expect((await fetchModels(baseConfig.id)).success).toBe(false);
+    expect((await loadCustomCliConfigStorage()).configs[0].apiKeys![0].models).toEqual([]);
+  });
   it('uses Base URL when model URL is empty', async () => {
     await writeConfig(baseConfig);
 

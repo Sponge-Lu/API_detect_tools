@@ -15,7 +15,9 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
+| **apiConfig.ts** | 按来源处理 API Key、认证请求头与版本化 API URL | `resolveApiKeyForUse()`, `buildApiKeyHeaders()`, `buildVersionedApiUrl()` |
 | **customCliRouteId.ts** | 自定义 CLI 配置及其真实 API Key 的路由通道合成 ID 跨进程命名约定 | `buildCustomCliRouteSiteId()`, `buildCustomCliRouteAccountId()`, `buildCustomCliRouteApiKeyId()`, `parseCustomCliRouteApiKeyId()`, `parseCustomCliRouteConfigId()`, `isCustomCliRouteChannel()` |
+| **date.ts** | 本地时区"同一天"判断，"今日已签/今日已刷新"类判断的单一收敛点 | `isSameLocalDay()` |
 | **groupLabel.ts** | 将分组开头的 1–50 数字规范化为圆圈数字标签 | `normalizeCircledGroupLabel()` |
 | **headers.ts** | 生成兼容不同中转站大小写习惯的用户 ID 请求头 | `getAllUserIdHeaders()` |
 | **log-filter.ts** | 判断模型调用日志并聚合 usage / quota 指标 | `isModelLog()`, `aggregateUsageData()`, `filterAndAggregateUsageData()` |
@@ -63,6 +65,10 @@ filterAndAggregateUsageData([
 - `custom-cli-key-{encodedConfigId}:{encodedKeyId}`（真实多 Key 通道）
 
 所有跨进程代码必须通过本文件的 helper 生成或解析这些 ID，不要手写前缀。
+
+### date.ts
+
+`isSameLocalDay(timestamp?, reference?)` 按运行环境的本地时区判断两个 epoch 毫秒时间戳是否属于同一个日历日；`reference` 缺省为当前时刻，`undefined`/`null`/非有限值一律返回 `false`。跨时区语义以当地日历日为准（跨时区后昨日的签到不再视作"今天"，属有意行为）。所有"今日已签/今日已刷新"判断必须收敛到本函数，不要再散写 `toDateString()` 比较。
 
 ---
 

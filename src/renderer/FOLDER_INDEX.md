@@ -25,7 +25,7 @@
 ### 子文件夹
 | 文件夹 | 职责 | 关键文件 |
 |--------|------|--------|
-| **pages/** | 页面容器 | DataOverviewPage, SitesPage, RoutePage, ModelMappingPage, ConfigFilesPage, LogsPage |
+| **pages/** | 页面容器 | DataOverviewPage, SitesPage, RoutePage, RouteSettingsPage, LogsPage |
 | **components/** | UI 组件库 | 表格、表单、对话框等 |
 | **hooks/** | 自定义 Hooks | 业务逻辑、状态管理 |
 | **services/** | 前端服务 | IPC 通信、API 调用 |
@@ -58,9 +58,8 @@
 |------|------|--------|
 | **DataOverviewPage** | 数据总览首页 | 左侧 `站点数据 / 路由数据` 子页对应内容、路由健康 KPI、站点余额/消费榜单、每日快照趋势、规则洞察、异常请求；路由运行趋势在 `24h` / `7d` 下补齐完整 X 轴，双纵轴（左侧请求量 0–max / 右侧成功率 0–100%）与 0/50/100 参考线对齐 |
 | **SitesPage** | 站点管理主页面 | 托管账户与直连接入点；侧滑面板提供信息、资源和原生三端点测试，顶部上游协议选择只影响真实路由 |
-| **CreditPage** | Linux Do Credit 页面 | 积分余额、每日统计、交易记录、充值入口 |
 | **RoutePage** | 本地路由页 | 通用网关服务、鉴权、运行统计与会话级模型/思考强度 |
-| **ModelMappingPage** | 模型映射页 | 重定向模型、原始来源、候选站点/API Key 和优先级 |
+| **RouteSettingsPage** | 路由设置页 | mini 会话路由卡片列 + 模型映射工作区（重定向模型行内编辑/图标删除，原始模型列已移除） |
 | **ConfigFilesPage** | 配置文件页 | 摘要卡片（整卡点击编辑）与详情弹窗、正确模型域、合并/覆盖应用与本地文件保存、行级 diff 预览和对话记录路径 |
 | **LogsPage** | 日志页内容容器 | 直接展示路由日志；通过逐条 push 追加并使用无卡片、带表头的横向滚动单行表格，展示 CLI 图标、原始模型、实际请求思考强度、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与失败第二行 |
 | **SettingsPage** | 设置页 | 外观与行为、软件更新、导入导出和备份入口；站点刷新设置已迁移到 SitesPage |

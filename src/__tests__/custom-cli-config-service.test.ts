@@ -51,6 +51,15 @@ afterEach(async () => {
 });
 
 describe('custom CLI route target protocol migration', () => {
+  it('refuses to overwrite a malformed configuration file', async () => {
+    const file = path.join(mocks.userData, 'custom-cli-configs.json');
+    await fs.writeFile(file, '{broken', 'utf8');
+    await expect(loadCustomCliConfigStorage()).rejects.toThrow();
+    await expect(
+      saveCustomCliConfigStorage({ configs: [], activeConfigId: null })
+    ).rejects.toThrow();
+    expect(await fs.readFile(file, 'utf8')).toBe('{broken');
+  });
   it('migrates one unique legacy protocol before filling missing CLI settings', async () => {
     const config = createLegacyConfig({
       claudeCode: 'openai-responses',

@@ -105,6 +105,12 @@ export const siteConfigSchema = z.object({
   has_checkin: z.boolean().optional().default(false),
   force_enable_checkin: z.boolean().optional().default(false),
   extra_links: z.string().optional().default(''),
+  proxy_url: z
+    .string()
+    .optional()
+    .refine(val => !val || val.trim() === '' || /^(https?|socks4|socks5):\/\//i.test(val.trim()), {
+      message: '代理地址需以 http://、https://、socks4:// 或 socks5:// 开头',
+    }),
 });
 
 /**

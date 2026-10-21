@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Eraser, Network } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Eraser } from 'lucide-react';
 import {
   type RouteInstance,
   type RouteModelRegistryConfig,
@@ -605,7 +605,11 @@ function prependRouteLogItem(
   );
 }
 
-export function LogsPage() {
+export function LogsPage({
+  setPageHeaderActions,
+}: {
+  setPageHeaderActions?: (actions: ReactNode | null) => void;
+}) {
   const appConfig = useConfigStore(state => state.config);
   const liveRouteConfig = useRouteStore(state => state.config);
   const [routeAgentFilter, setRouteAgentFilter] = useState<RouteAgentFilter>('all');
@@ -772,27 +776,16 @@ export function LogsPage() {
   const routeSuccessCount = routeLogRows.successCount;
   const routeFailureCount = routeLogRows.failureCount;
 
-  const content = (
-    <>
-      <header
-        data-testid="logs-page-header"
-        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-[var(--line-soft)] px-5 py-3"
-      >
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-            <Network className="h-4 w-4 text-[var(--accent)]" />
-            路由日志
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <EventCount label="总尝试" value={filteredRouteLogs.length} />
-            <EventCount label="成功" value={routeSuccessCount} />
-            <EventCount label="失败" value={routeFailureCount} />
-            <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)]">
-              {filteredRouteLogs.length} 条
-            </span>
-          </div>
+  // 工具栏（统计 + 筛选 + 清空）：有 setPageHeaderActions 时注入全局页头，否则内联渲染（测试/独立场景）
+  const headerActions = useMemo(
+    () => (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          <EventCount label="总尝试" value={filteredRouteLogs.length} />
+          <EventCount label="成功" value={routeSuccessCount} />
+          <EventCount label="失败" value={routeFailureCount} />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {routeAgentFilterOptions.map(option => {
             const selected = routeAgentFilter === option.id;
 
@@ -812,13 +805,42 @@ export function LogsPage() {
             variant="secondary"
             size="sm"
             disabled={routeLogs.length === 0}
+            aria-label="清空路由日志"
+            title="清空路由日志"
             onClick={() => void clearRouteLogs()}
           >
             <Eraser className="h-4 w-4" />
-            清空路由日志
           </AppButton>
         </div>
-      </header>
+      </div>
+    ),
+    [
+      filteredRouteLogs.length,
+      routeSuccessCount,
+      routeFailureCount,
+      routeAgentFilter,
+      routeAgentFilterOptions,
+      routeLogs.length,
+      clearRouteLogs,
+    ]
+  );
+
+  useEffect(() => {
+    if (!setPageHeaderActions) return;
+    setPageHeaderActions(headerActions);
+    return () => setPageHeaderActions(null);
+  }, [headerActions, setPageHeaderActions]);
+
+  const content = (
+    <>
+      {!setPageHeaderActions && (
+        <header
+          data-testid="logs-page-header"
+          className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-[var(--line-soft)] px-4 py-2"
+        >
+          {headerActions}
+        </header>
+      )}
 
       {routeLogsLoading ? (
         <LoadingState message="正在加载路由日志..." />
@@ -827,7 +849,7 @@ export function LogsPage() {
           <div className="w-full" style={ROUTE_LOG_TABLE_STYLE}>
             <div
               data-testid="route-request-log-header"
-              className={`sticky top-0 z-10 grid ${ROUTE_LOG_GRID_GAP} items-center border-b border-[var(--line-muted)] bg-[var(--surface-1)] px-4 py-2 text-[11px] font-semibold text-[var(--text-tertiary)]`}
+              className={`sticky top-0 z-[var(--z-sticky)] grid ${ROUTE_LOG_GRID_GAP} items-center border-b border-[var(--line-muted)] bg-[var(--surface-1)] px-4 py-2 text-[11px] font-semibold text-[var(--text-tertiary)]`}
               style={ROUTE_LOG_GRID_STYLE}
             >
               {ROUTE_LOG_HEADER_LABELS.map(label => (
@@ -955,7 +977,7 @@ export function LogsPage() {
   );
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-4">
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-6 pb-4 pt-2">
       <div className="flex min-h-0 flex-1 flex-col">
         <div
           data-testid="logs-page-surface"

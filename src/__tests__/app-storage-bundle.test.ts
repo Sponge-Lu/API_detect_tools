@@ -88,6 +88,52 @@ describe('app storage bundle', () => {
     expect(content).not.toContain('credit-settings');
   });
 
+  it('omits route keys and proxy credentials only from secret-free portable bundles', async () => {
+    const { createPortableAppStorageBundleContent, extractStableConfigFromBackupContent } =
+      await import('../main/app-storage-bundle');
+    const config = {
+      version: '3.1',
+      sites: [{ id: 'site-1', proxy_url: 'https://site-user:site-password@proxy.test:8443' }],
+      accounts: [{ api_key: 'encrypted:v1:account-key' }],
+      siteGroups: [],
+      settings: {},
+      routing: {
+        server: {
+          unifiedApiKey: 'sk-routing-secret',
+          upstreamProxyUrl: 'socks5://route-user:route-password@proxy.test:1080',
+        },
+      },
+    };
+    const configPath = path.join(userDataDir, 'config.json');
+    await fs.writeFile(configPath, JSON.stringify(config), 'utf8');
+    const roots = { userData: userDataDir, home: homeDir, temp: tempRoot };
+
+    const portable = extractStableConfigFromBackupContent(
+      await createPortableAppStorageBundleContent(roots)
+    ) as typeof config;
+    expect(portable.routing.server.unifiedApiKey).toBe('');
+    expect(portable.accounts[0].api_key).toBe('');
+    expect(portable.sites[0].proxy_url).toBe('https://proxy.test:8443/');
+    expect(portable.routing.server.upstreamProxyUrl).toBe('socks5://proxy.test:1080');
+    expect(
+      extractStableConfigFromBackupContent(await createPortableAppStorageBundleContent(roots, true))
+    ).toEqual(config);
+    expect(JSON.parse(await fs.readFile(configPath, 'utf8'))).toEqual(config);
+  });
+
+  it.each([
+    ['proxy-user:proxy-password@proxy.test:8080', 'proxy.test:8080/'],
+    ['  proxy-user:proxy-password@proxy.test:8080  ', 'proxy.test:8080/'],
+    ['socks5://proxy-user:p%40ss@[::1]:1080', 'socks5://[::1]:1080'],
+    ['http://proxy-user:proxy-password@', ''],
+    ['http://proxy.test:8080', 'http://proxy.test:8080'],
+  ])('sanitizes proxy authentication in %s', async (proxyUrl, sanitized) => {
+    const { omitBackupSecrets } = await import('../main/app-storage-bundle');
+    expect(omitBackupSecrets({ settings: { upstreamProxyUrl: proxyUrl } })).toEqual({
+      settings: { upstreamProxyUrl: sanitized },
+    });
+  });
+
   it('bundles full-manifest files when explicitly requested and excludes protected browser state', async () => {
     const { createAppStorageBundle } = await import('../main/app-storage-bundle');
 
@@ -223,7 +269,7 @@ describe('app storage bundle', () => {
       'utf-8'
     );
 
-    const content = await createPortableAppStorageBundleContent(roots);
+    const content = await createPortableAppStorageBundleContent(roots, true);
     expect(content).toContain('custom-cli-configs');
     expect(content).toContain('encrypted:v1:iv:tag:cipher');
     expect(content).not.toContain('credit-settings');

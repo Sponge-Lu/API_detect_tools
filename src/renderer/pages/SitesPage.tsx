@@ -85,6 +85,7 @@ interface AccountInfo {
   user_id: string;
   username?: string;
   access_token?: string;
+  api_key?: string;
   status: string;
   auth_source: AccountAuthSource | 'browser' | 'custom-cli';
   browser_profile_path?: string;
@@ -108,6 +109,7 @@ interface EditingAccountInfo {
   account_name?: string;
   user_id?: string;
   access_token?: string;
+  api_key?: string;
   anyRouterConfig?: AnyRouterAccountConfig;
 }
 
@@ -156,7 +158,13 @@ function buildCustomCliVirtualResult(config: CustomCliConfig): DetectionResult {
     name: getCustomCliDisplayName(config),
     url: config.baseUrl || '',
     status: config.baseUrl && config.apiKey ? '成功' : '未配置',
-    models: config.models || [],
+    models: Array.from(
+      new Set(
+        [...(config.models || []), ...(config.manualModels || [])]
+          .map(model => model.trim())
+          .filter(model => model.length > 0)
+      )
+    ),
     has_checkin: false,
     accountId: buildCustomCliRouteAccountId(config.id),
     lastRefresh: config.lastModelFetch,
@@ -480,6 +488,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     } catch (error) {
       Logger.error('保存配置失败:', error);
       toast.error('保存配置失败: ' + error);
+      throw error;
     } finally {
       setSaving(false);
     }
@@ -619,10 +628,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       site_type: site.site_type,
       enabled: site.enabled,
       group: site.group || defaultGroupId,
-      api_key: site.api_key,
+      api_key: '',
       extra_links: site.extra_links,
       has_checkin: site.has_checkin,
       force_enable_checkin: site.force_enable_checkin,
+      proxy_url: site.proxy_url,
       auto_refresh: site.auto_refresh,
       auto_refresh_interval: site.auto_refresh_interval,
     }),
@@ -649,18 +659,31 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       const createdSite = siteResult.data as SiteConfig;
 
       // 始终创建默认账户容器，即使凭证为空；否则站点会退化为“无账户”卡片，无法进行删除或本地 Key 管理。
-      const accountResult = await window.electronAPI.accounts?.add({
-        site_id: createdSiteId,
-        account_name: auth.accountName?.trim() || '默认账户',
-        user_id: auth.userId?.trim() || '',
-        access_token: auth.systemToken?.trim() || '',
-        auth_source: auth.authSource,
-        ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),
-      });
-
-      if (!accountResult?.success || !accountResult.data?.id) {
-        throw new Error(accountResult?.error || '创建默认账户失败');
-      }
+      const accountResult = await (async () => {
+        try {
+          const result = await window.electronAPI.accounts?.add({
+            site_id: createdSiteId,
+            account_name: auth.accountName?.trim() || '默认账户',
+            user_id: auth.userId?.trim() || '',
+            access_token: auth.systemToken?.trim() || '',
+            api_key: site.api_key,
+            auth_source: auth.authSource,
+            ...(auth.authSource === 'main_profile' ? { automation_slot: 0 } : {}),
+            ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),
+          });
+          if (!result?.success || !result.data?.id)
+            throw new Error(result?.error || '创建默认账户失败');
+          return result;
+        } catch (error) {
+          try {
+            const rollback = await window.electronAPI.sites?.delete(createdSiteId);
+            if (!rollback?.success) Logger.error('Failed to roll back the newly created site');
+          } catch (rollbackError) {
+            Logger.error('Failed to roll back the newly created site', rollbackError);
+          }
+          throw error;
+        }
+      })();
 
       const refreshedConfig = await window.electronAPI.loadConfig();
       setConfig(refreshedConfig);
@@ -701,7 +724,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       if (!confirmed) return false;
 
       try {
-        await window.electronAPI.accounts?.delete(account.id);
+        const result = await window.electronAPI.accounts?.delete(account.id);
+        if (!result?.success) throw new Error(result?.error || '删除账户失败');
         const cfg = await window.electronAPI.loadConfig();
         setConfig(cfg);
         await loadAllAccounts(cfg?.sites);
@@ -984,26 +1008,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     }
   };
 
-  const handleOpenSite = async (site: SiteConfig, accountId?: string) => {
-    const siteUrl = site.url.replace(/\/$/, '');
-
+  const handleOpenSite = async (site: SiteConfig) => {
     try {
-      const openResult = await window.electronAPI.browserProfile?.openSite(
-        site.id,
-        siteUrl,
-        accountId
-      );
-
-      if (openResult?.success) {
-        return;
-      }
-
-      if (openResult?.error) {
-        showAlert(`打开站点失败：${openResult.error}`, 'error');
-        return;
-      }
-
-      await window.electronAPI.openUrl(siteUrl);
+      await window.electronAPI.openUrl(site.url);
     } catch (error: any) {
       Logger.error('打开站点失败:', error);
       showAlert(`打开站点失败：${error?.message || error}`, 'error');
@@ -1119,12 +1126,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           return modelCount;
         case 'lastUpdate':
           return lastSyncTime ? new Date(lastSyncTime).getTime() : 0;
-        case 'ldcRatio': {
-          const rate = siteResult?.ldcExchangeRate;
-          if (!rate || !siteResult?.ldcPaymentSupported) return -Infinity;
-          const ratio = parseFloat(rate);
-          return isNaN(ratio) ? -Infinity : ratio;
-        }
         default:
           return 0;
       }
@@ -1718,7 +1719,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                           openEditGroupDialog(group);
                         }}
                         aria-label={`编辑分组 ${group.name}`}
-                        className={`hidden rounded p-0.5 transition-colors group-hover/tag:block group-focus-within/tag:block focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isActive ? 'text-[var(--text-on-accent)] opacity-80 hover:bg-white/20 hover:opacity-100' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'}`}
+                        className={`hidden rounded-[var(--radius-sm)] p-0.5 transition-colors group-hover/tag:block group-focus-within/tag:block focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isActive ? 'text-[var(--text-on-accent)] opacity-80 hover:bg-[color-mix(in_srgb,var(--text-on-accent)_20%,transparent)] hover:opacity-100' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'}`}
                         title="编辑分组名称"
                       >
                         <Pencil className="w-3 h-3" aria-hidden="true" />
@@ -1730,7 +1731,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                             deleteSiteGroup(groupId);
                           }}
                           aria-label={`删除分组 ${group.name}`}
-                          className={`hidden rounded p-0.5 transition-colors group-hover/tag:block group-focus-within/tag:block focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isActive ? 'text-[var(--text-on-accent)] opacity-80 hover:bg-white/20 hover:opacity-100' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--danger)]'}`}
+                          className={`hidden rounded-[var(--radius-sm)] p-0.5 transition-colors group-hover/tag:block group-focus-within/tag:block focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isActive ? 'text-[var(--text-on-accent)] opacity-80 hover:bg-[color-mix(in_srgb,var(--text-on-accent)_20%,transparent)] hover:opacity-100' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--danger)]'}`}
                           title="删除分组"
                         >
                           <Trash2 className="w-3 h-3" aria-hidden="true" />
@@ -1874,11 +1875,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                               handleCheckIn(s, aid || account?.id);
                             }
                           }}
-                          onOpenSite={(s, aid) => {
-                            if (cardItem.type === 'managed') {
-                              handleOpenSite(s, aid || account?.id);
-                            }
-                          }}
+                          onOpenSite={handleOpenSite}
                           onOpenExtraLink={openExtraLink}
                           onDragStart={handleDragStart}
                           onDragEnd={handleDragEnd}
@@ -1926,6 +1923,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                     ? currentSite.system_token
                     : site.system_token,
                   user_id: resolvedEditingAccount ? currentSite.user_id : site.user_id,
+                  api_key: resolvedEditingAccount ? currentSite.api_key : site.api_key,
                 });
 
                 if (resolvedEditingAccount) {
@@ -1937,6 +1935,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                         resolvedEditingAccount.account_name ||
                         '默认账户',
                       access_token: auth.systemToken,
+                      api_key: site.api_key,
                       user_id: auth.userId,
                       // AnyRouter 配置
                       ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),

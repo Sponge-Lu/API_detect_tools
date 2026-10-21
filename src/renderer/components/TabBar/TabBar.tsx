@@ -1,7 +1,6 @@
 import { useRef, useLayoutEffect, useState, useCallback } from 'react';
-import { Server, Coins, Settings } from 'lucide-react';
+import { Server, Settings } from 'lucide-react';
 import type { TabId } from '../../store/uiStore';
-import { LDC_UI_VISIBILITY } from '../../../shared/constants';
 
 interface TabBarProps {
   activeTab: TabId;
@@ -10,14 +9,13 @@ interface TabBarProps {
 
 const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
   { id: 'sites', label: '站点管理', icon: Server },
-  { id: 'credit', label: 'LDC 积分', icon: Coins },
   { id: 'settings', label: '设置', icon: Settings },
 ];
 
 export function TabBar({ activeTab, onTabChange }: TabBarProps) {
-  const visibleTabs = tabs.filter(tab => LDC_UI_VISIBILITY.showCreditTab || tab.id !== 'credit');
-  const visibleActiveTab =
-    !LDC_UI_VISIBILITY.showCreditTab && activeTab === 'credit' ? 'sites' : activeTab;
+  const visibleTabs = tabs;
+  // 旧版本持久化的 'credit' 标签页回退到站点管理
+  const visibleActiveTab: TabId = (activeTab as string) === 'credit' ? 'sites' : activeTab;
   const navRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Map<TabId, HTMLButtonElement>>(new Map());
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });

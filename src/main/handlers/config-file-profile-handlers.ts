@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron';
 import type {
+  ConfigFileBackupInput,
+  PreviewConfigFileBackupRestoreInput,
   CommitConfigFileProfileInput,
   DeleteConfigFileProfileInput,
   GenerateConfigFileProfileRouteKeyInput,
@@ -8,10 +10,13 @@ import type {
   PreviewConfigFileProfileRouteKeyRotationInput,
   RestoreBuiltinConfigFileProfileInput,
   ResolveConfigFileProfileValuesInput,
+  SwitchBuiltinConfigFileProfileAuthModeInput,
   UpsertConfigFileProfileInput,
   ValidateSessionRecordConnectorInput,
 } from '../../shared/types/config-file-profile';
 import {
+  listSavedConfigFileBackups,
+  previewConfigFileBackupRestore,
   commitConfigFileProfile,
   deleteConfigFileProfile,
   generateConfigFileProfileRouteKey,
@@ -22,6 +27,8 @@ import {
   previewConfigFileDirectEdit,
   readSavedConfigFiles,
   restoreBuiltinConfigFileProfile,
+  restoreMissingBuiltinConfigFileProfiles,
+  switchBuiltinConfigFileProfileAuthMode,
   resolveConfigFileProfileValues,
   upsertConfigFileProfile,
   validateSessionRecordConnector,
@@ -57,8 +64,23 @@ export function registerConfigFileProfileHandlers(): void {
     (_, input: RestoreBuiltinConfigFileProfileInput) =>
       mutateConfigFileProfiles(() => restoreBuiltinConfigFileProfile(input))
   );
+  ipcMain.handle('config-file-profile:restore-missing-builtins', () =>
+    mutateConfigFileProfiles(() => restoreMissingBuiltinConfigFileProfiles())
+  );
+  ipcMain.handle(
+    'config-file-profile:switch-auth-mode',
+    (_, input: SwitchBuiltinConfigFileProfileAuthModeInput) =>
+      mutateConfigFileProfiles(() => switchBuiltinConfigFileProfileAuthMode(input))
+  );
   ipcMain.handle('config-file-profile:read-files', (_, profileId: string) =>
     readSavedConfigFiles(profileId)
+  );
+  ipcMain.handle('config-file-profile:list-backups', (_, input: ConfigFileBackupInput) =>
+    listSavedConfigFileBackups(input)
+  );
+  ipcMain.handle(
+    'config-file-profile:preview-backup-restore',
+    (_, input: PreviewConfigFileBackupRestoreInput) => previewConfigFileBackupRestore(input)
   );
   ipcMain.handle('config-file-profile:preview', (_, input: PreviewConfigFileProfileInput) =>
     previewConfigFileProfile(input)

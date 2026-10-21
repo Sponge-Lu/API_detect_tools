@@ -11,7 +11,7 @@ import { isMaskedApiKeyValue, mergeApiKeysPreservingRawValue } from '../token-se
 import type { ChromeManager } from '../chrome-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
 import { browserProfileManager } from '../browser-profile-manager';
-import type { AccountAuthSource, AccountCredential } from '../../shared/types/site';
+import type { AccountCredential } from '../../shared/types/site';
 import {
   addLocalApiKey,
   deleteLocalApiKey,
@@ -196,21 +196,21 @@ export function registerTokenHandlers(
       return undefined;
     }
 
-    await unifiedConfigManager.loadConfig();
+    await unifiedConfigManager.getConfig();
     const account = unifiedConfigManager.getAccountById(accountId);
     if (!account) {
       throw new Error(`Account not found: ${accountId}`);
     }
 
-    const siteAccounts = unifiedConfigManager.getAccountsBySiteId(account.site_id);
-    const slotIndex = siteAccounts.findIndex(item => item.id === accountId);
-    return slotIndex >= 0 ? slotIndex : 0;
+    return (
+      (await browserProfileManager.ensureAutomationSlot(account.site_id, accountId)) ?? undefined
+    );
   };
 
   const resolveAccountProfileLaunchOptions = async (
     account: Pick<
       AccountCredential,
-      'id' | 'site_id' | 'account_name' | 'auth_source' | 'browser_profile_path'
+      'id' | 'site_id' | 'account_name' | 'auth_source' | 'browser_profile_path' | 'automation_slot'
     >
   ): Promise<
     | {
@@ -243,20 +243,26 @@ export function registerTokenHandlers(
     }
 
     if (account.auth_source === 'main_profile') {
-      const mainProfilePath = await browserProfileManager.detectMainChromeProfile();
-      if (!mainProfilePath) {
+      if (
+        account.automation_slot === 0 ||
+        (account.automation_slot === undefined && !account.browser_profile_path)
+      ) {
+        return {
+          success: true,
+          options: { userDataDir: chromeManager.getDefaultLoginProfilePath() },
+        };
+      }
+      const mainOptions = await browserProfileManager.getMainProfileLaunchOptions();
+      if (!mainOptions.success || !mainOptions.options) {
         return {
           success: false,
-          error: '未检测到主浏览器 Profile',
+          error: mainOptions.error || '未检测到主浏览器 Profile',
         };
       }
 
       return {
         success: true,
-        options: {
-          userDataDir: mainProfilePath,
-          profileDirectory: 'Default',
-        },
+        options: mainOptions.options,
       };
     }
 
@@ -277,6 +283,7 @@ export function registerTokenHandlers(
         (status: string) => sendSiteInitStatus(mainWindow, status),
         { loginMode: true }
       );
+      chromeManager.completeLogin();
       // 站点初始化完成后，不立即关闭浏览器
       // 让浏览器保持打开状态，以便后续的 API 调用（如获取模型列表）可以复用同一个浏览器会话
       // 浏览器会在引用计数为0后延迟60秒自动关闭
@@ -308,7 +315,7 @@ export function registerTokenHandlers(
   // 从浏览器登录态刷新账户基础信息（user_id / username / access_token）
   ipcMain.handle('token:refresh-account-basic-info', async (_, accountId: string) => {
     try {
-      await unifiedConfigManager.loadConfig();
+      await unifiedConfigManager.getConfig();
       const account = unifiedConfigManager.getAccountById(accountId);
       if (!account) {
         return { success: false, error: `Account not found: ${accountId}` };
@@ -597,62 +604,6 @@ export function registerTokenHandlers(
       } catch (error: any) {
         Logger.error('❌ [IPC] 签到失败:', error);
         return { success: false, message: error.message };
-      }
-    }
-  );
-
-  // 初始化并保存为 AccountCredential（多账户流程）
-  ipcMain.handle(
-    'token:initialize-account',
-    async (
-      _,
-      params: {
-        siteId: string;
-        baseUrl: string;
-        accountName?: string;
-        authSource: AccountAuthSource;
-        profilePath?: string;
-      }
-    ) => {
-      try {
-        const mainWindow = getMainWindow();
-        const site = unifiedConfigManager.getSiteById(params.siteId);
-        const siteAccount = await tokenService.initializeSiteAccount(
-          params.baseUrl,
-          true,
-          600000,
-          (status: string) => sendSiteInitStatus(mainWindow, status),
-          { siteType: site?.site_type }
-        );
-
-        if (!siteAccount.user_id || !siteAccount.access_token) {
-          return { success: false, error: '未能获取有效凭证' };
-        }
-
-        // 直接创建 AccountCredential 并保存
-        const account = await unifiedConfigManager.addAccount({
-          site_id: params.siteId,
-          account_name: params.accountName || siteAccount.username || `账户${siteAccount.user_id}`,
-          user_id: String(siteAccount.user_id),
-          username: siteAccount.username || undefined,
-          access_token: siteAccount.access_token,
-          auth_source: params.authSource,
-          browser_profile_path: params.profilePath,
-          metadata: {
-            supports_checkin: (siteAccount as any).supportsCheckIn,
-          },
-        });
-
-        Logger.info(`✅ [TokenHandlers] 账户已创建并保存: ${account.id} (${account.account_name})`);
-        return { success: true, data: account };
-      } catch (error: any) {
-        Logger.error('❌ [TokenHandlers] 初始化账户失败:', error);
-        try {
-          await chromeManager.forceCleanup();
-        } catch {
-          // ignore
-        }
-        return { success: false, error: error.message };
       }
     }
   );

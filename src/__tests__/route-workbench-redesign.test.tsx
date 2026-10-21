@@ -10,6 +10,7 @@ import {
 import { RoutePage } from '../renderer/pages/RoutePage';
 import { ConfigProfilesSection } from '../renderer/components/Route/ConfigProfilesSection';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
+import { toast } from '../renderer/store/toastStore';
 import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
@@ -928,6 +929,9 @@ beforeEach(() => {
     delete: vi.fn().mockResolvedValue(undefined),
     getTargetCatalog: vi.fn().mockResolvedValue([]),
     restoreBuiltin: vi.fn(),
+    restoreMissingBuiltins: vi.fn().mockResolvedValue([]),
+    switchAuthMode: vi.fn(),
+
     readFiles: vi.fn().mockResolvedValue([]),
     preview: vi.fn().mockResolvedValue({ files: [] }),
     previewDirectEdit: vi.fn().mockResolvedValue({ files: [] }),
@@ -948,6 +952,19 @@ beforeEach(() => {
 });
 
 describe('route workbench redesign', () => {
+  it('reports a failed stop without claiming the proxy stopped', async () => {
+    mockStopServer.mockResolvedValue(false);
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
+    render(<RoutePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: '停止' }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('停止失败'));
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '停止' })).toBeEnabled();
+  });
+
   it('renders the combined route page without the legacy route workbench shell', async () => {
     render(<RoutePage />);
 
@@ -1424,7 +1441,7 @@ describe('route workbench redesign', () => {
       render(<ConfigProfilesSection />);
       for (const name of ['Claude Code', 'Codex', 'OpenCode', 'Grok Build']) {
         expect(await screen.findByText(name)).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: `${name} 编辑` })).toBeInTheDocument();
+        expect(screen.getByLabelText(`${name} 配置卡片`)).toBeInTheDocument();
       }
       expect(screen.queryByLabelText('配置卡片名称')).not.toBeInTheDocument();
       expect(screen.queryByText('Route Only Client')).not.toBeInTheDocument();
@@ -1432,19 +1449,20 @@ describe('route workbench redesign', () => {
       expect(screen.getByText('4 个方案 · 4 个文件')).toBeInTheDocument();
       expect(screen.getAllByText('内置')).toHaveLength(4);
       expect(screen.getByLabelText('Claude Code 配置卡片').parentElement).toHaveClass(
-        'lg:grid-cols-2'
+        'grid-cols-4'
       );
-      expect(screen.getByRole('button', { name: 'Claude Code 更多操作' })).toHaveAttribute(
-        'aria-expanded',
-        'false'
-      );
-      fireEvent.click(screen.getByRole('button', { name: 'Claude Code 编辑' }));
+      expect(screen.getByRole('button', { name: 'Claude Code 复制配置' })).toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText('Claude Code 配置卡片'));
       expect(await screen.findByText('基本信息')).toBeInTheDocument();
       expect(screen.getByLabelText('Claude Code Logo')).toBeInTheDocument();
       expect(screen.getByText('文件规则')).toBeInTheDocument();
-      expect(screen.getByText('会话关联')).toBeInTheDocument();
+      expect(screen.queryByText('会话关联')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: '预览写入' })).toBeInTheDocument();
-      expect(await screen.findByRole('button', { name: '恢复最新示例' })).toBeInTheDocument();
+      const modeGroup = screen.getByRole('group', { name: '预览写入模式' });
+      const restoreButton = await screen.findByRole('button', { name: '恢复最新示例' });
+      expect(
+        modeGroup.compareDocumentPosition(restoreButton) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
     }
   );
 
@@ -1514,11 +1532,9 @@ describe('route workbench redesign', () => {
       render(<ConfigProfilesSection />);
       expect(await screen.findByText('我的编辑器')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '预览套用' })).not.toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: '我的编辑器 编辑' }));
+      fireEvent.click(screen.getByLabelText('我的编辑器 配置卡片'));
       expect(await screen.findByDisplayValue('我的编辑器')).toBeInTheDocument();
-      expect(screen.getByText('窗口打开状态路径')).toBeInTheDocument();
-      expect(screen.getByText('窗口当前 Session ID 路径')).toBeInTheDocument();
-      expect(screen.getByText(/只有窗口状态明确为打开时/)).toBeInTheDocument();
+      expect(screen.queryByText('会话关联')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '预览写入' }));
       await waitFor(() =>
         expect(api.preview).toHaveBeenCalledWith({
@@ -1583,7 +1599,7 @@ describe('route workbench redesign', () => {
     ]);
     render(<ConfigProfilesSection />);
     expect(await screen.findByText('真实文件卡片')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '真实文件卡片 编辑' }));
+    fireEvent.click(screen.getByLabelText('真实文件卡片 配置卡片'));
     expect(await screen.findByDisplayValue('真实文件卡片')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '读取' }));
     expect(await screen.findByDisplayValue('{"model":"old"}')).toBeInTheDocument();
@@ -1609,7 +1625,7 @@ describe('route workbench redesign', () => {
     expect(screen.queryByTestId('redirect-card-header')).not.toBeInTheDocument();
     expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
       'grid',
-      'grid-cols-[minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
+      'grid-cols-[minmax(210px,245px)_minmax(0,1fr)]'
     );
     const toolbar = screen.getByTestId('redirect-list-toolbar');
     const redirectToolbarTitle = within(toolbar).getByText('重定向模型');
@@ -1647,26 +1663,18 @@ describe('route workbench redesign', () => {
     expect(
       within(detailActions).queryByRole('button', { name: '删除 claude-opus-4-6' })
     ).not.toBeInTheDocument();
-    const originalPane = screen.getByTestId('redirect-original-pane');
-    const editButton = within(originalPane).getByRole('button', {
+    const redirectRow = getRedirectRowByName('claude-opus-4-6');
+    const editButton = within(redirectRow).getByRole('button', {
       name: '编辑 claude-opus-4-6',
     });
     expect(editButton).toHaveTextContent('编辑');
-    expect(editButton.className).toMatch(/!h-6/);
-    expect(editButton).not.toHaveClass('w-6');
+    expect(editButton.querySelector('svg')).toBeNull();
+    const deleteButton = within(redirectRow).getByRole('button', {
+      name: '删除 claude-opus-4-6',
+    });
+    expect(deleteButton.querySelector('svg')).not.toBeNull();
     expect(within(detailActions).queryByText(/\d+ 站点/)).not.toBeInTheDocument();
     expect(within(detailActions).getByText('优先级排序')).toBeInTheDocument();
-    expect(screen.getByTestId('redirect-original-pane')).toBeInTheDocument();
-
-    const originalModelFrame = screen.getByText('claude-opus-4.6-20260201').parentElement;
-    expect(originalModelFrame).not.toBeNull();
-    const originalModelsList = screen.getByTestId('redirect-detail-original-models');
-    const renderedOriginalModels = Array.from(originalModelsList.querySelectorAll('code'));
-    expect(renderedOriginalModels.length).toBeGreaterThan(1);
-    expect(within(originalModelsList).queryByText(',')).not.toBeInTheDocument();
-    expect(within(originalModelsList).queryByText(/暂停/)).not.toBeInTheDocument();
-    expect(originalModelFrame).toHaveClass('border', 'bg-[var(--surface-2)]', 'px-2', 'py-1');
-    expect(screen.getByText('claude-opus-4.6-20260201')).toHaveClass('leading-4');
     expect(screen.queryByText('手工新增')).not.toBeInTheDocument();
     expect(screen.queryByText('示例')).not.toBeInTheDocument();
     expect(
@@ -2051,8 +2059,9 @@ describe('route workbench redesign', () => {
     render(<ModelRedirectionTab />);
 
     selectRedirectRow('gpt-5.4');
-    const originalPane = screen.getByTestId('redirect-original-pane');
-    fireEvent.click(within(originalPane).getByRole('button', { name: '编辑 gpt-5.4' }));
+    fireEvent.click(
+      within(getRedirectRowByName('gpt-5.4')).getByRole('button', { name: '编辑 gpt-5.4' })
+    );
 
     const dialog = await screen.findByRole('dialog', { name: '编辑模型重定向' });
     expect(
@@ -2114,8 +2123,9 @@ describe('route workbench redesign', () => {
     render(<ModelRedirectionTab />);
 
     selectRedirectRow('gpt-5.4');
-    const originalPane = screen.getByTestId('redirect-original-pane');
-    fireEvent.click(within(originalPane).getByRole('button', { name: '编辑 gpt-5.4' }));
+    fireEvent.click(
+      within(getRedirectRowByName('gpt-5.4')).getByRole('button', { name: '编辑 gpt-5.4' })
+    );
 
     const dialog = await screen.findByRole('dialog', { name: '编辑模型重定向' });
     const bubbleSpy = vi.fn();
@@ -3777,8 +3787,9 @@ describe('route workbench redesign', () => {
     render(<ModelRedirectionTab />);
 
     selectRedirectRow('gpt-5.4');
-    const originalPane = screen.getByTestId('redirect-original-pane');
-    fireEvent.click(within(originalPane).getByRole('button', { name: '编辑 gpt-5.4' }));
+    fireEvent.click(
+      within(getRedirectRowByName('gpt-5.4')).getByRole('button', { name: '编辑 gpt-5.4' })
+    );
 
     const dialog = await screen.findByRole('dialog', { name: '编辑模型重定向' });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }));
@@ -3813,8 +3824,9 @@ describe('route workbench redesign', () => {
     render(<ModelRedirectionTab />);
 
     selectRedirectRow('gpt-5.4');
-    const originalPane = screen.getByTestId('redirect-original-pane');
-    fireEvent.click(within(originalPane).getByRole('button', { name: '编辑 gpt-5.4' }));
+    fireEvent.click(
+      within(getRedirectRowByName('gpt-5.4')).getByRole('button', { name: '编辑 gpt-5.4' })
+    );
 
     const dialog = await screen.findByRole('dialog', { name: '编辑模型重定向' });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存修改' }));

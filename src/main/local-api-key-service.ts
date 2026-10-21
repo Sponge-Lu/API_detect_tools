@@ -3,8 +3,37 @@ import type { LocalApiKeyRecord } from '../shared/types/site';
 import { normalizeCircledGroupLabel } from '../shared/utils/groupLabel';
 import { unifiedConfigManager } from './unified-config-manager';
 import { httpGet } from './utils/http-client';
+import {
+  buildApiKeyHeaders,
+  buildVersionedApiUrl,
+  resolveApiKeyForUse,
+} from '../shared/utils/apiConfig';
+import type { RouteAuthScheme } from '../shared/types/site';
 
 const MODEL_FETCH_TIMEOUT_MS = 10000;
+const accountMutationQueues = new Map<string, Promise<unknown>>();
+
+async function serializeAccountMutation<T>(
+  accountId: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const task = (accountMutationQueues.get(accountId) || Promise.resolve()).then(
+    operation,
+    operation
+  );
+  accountMutationQueues.set(accountId, task);
+  try {
+    return await task;
+  } finally {
+    if (accountMutationQueues.get(accountId) === task) accountMutationQueues.delete(accountId);
+  }
+}
+
+async function saveAccountKeys(accountId: string, records: LocalApiKeyRecord[]): Promise<void> {
+  if (!(await unifiedConfigManager.updateAccount(accountId, { local_api_keys: records }))) {
+    throw new Error(`Account not found: ${accountId}`);
+  }
+}
 
 export type LocalApiKeyInput = Pick<
   LocalApiKeyRecord,
@@ -45,7 +74,7 @@ function normalizeInput(input: LocalApiKeyInput): LocalApiKeyInput {
 }
 
 async function requireAccount(accountId: string) {
-  await unifiedConfigManager.loadConfig();
+  await unifiedConfigManager.getConfig();
   const account = unifiedConfigManager.getAccountById(accountId);
   if (!account) throw new Error(`Account not found: ${accountId}`);
   return account;
@@ -91,21 +120,21 @@ export async function addLocalApiKey(
   accountId: string,
   input: LocalApiKeyInput
 ): Promise<LocalApiKeyView[]> {
-  const account = await requireAccount(accountId);
-  const normalized = normalizeInput(input);
-  const now = Date.now();
-  const record: LocalApiKeyRecord = {
-    id: `local_${randomUUID()}`,
-    ...normalized,
-    models: [],
-    source: 'local',
-    createdAt: now,
-    updatedAt: now,
-  };
-  await unifiedConfigManager.updateAccount(accountId, {
-    local_api_keys: [...(account.local_api_keys || []), record],
+  return serializeAccountMutation(accountId, async () => {
+    const account = await requireAccount(accountId);
+    const normalized = normalizeInput(input);
+    const now = Date.now();
+    const record: LocalApiKeyRecord = {
+      id: `local_${randomUUID()}`,
+      ...normalized,
+      models: [],
+      source: 'local',
+      createdAt: now,
+      updatedAt: now,
+    };
+    await saveAccountKeys(accountId, [...(account.local_api_keys || []), record]);
+    return listLocalApiKeys(accountId);
   });
-  return listLocalApiKeys(accountId);
 }
 
 export async function updateLocalApiKey(
@@ -113,36 +142,52 @@ export async function updateLocalApiKey(
   keyId: string,
   input: LocalApiKeyInput
 ): Promise<LocalApiKeyView[]> {
-  const account = await requireAccount(accountId);
-  const normalized = normalizeInput(input);
-  let found = false;
-  const records = (account.local_api_keys || []).map(item => {
-    if (item.id !== keyId) return item;
-    found = true;
-    return { ...item, ...normalized, updatedAt: Date.now() };
+  return serializeAccountMutation(accountId, async () => {
+    const account = await requireAccount(accountId);
+    const normalized = normalizeInput(input);
+    let found = false;
+    const records = (account.local_api_keys || []).map(item => {
+      if (item.id !== keyId) return item;
+      found = true;
+      return {
+        ...item,
+        ...normalized,
+        source: 'local' as const,
+        updatedAt: Date.now(),
+        ...(item.key !== normalized.key ? { models: [], modelsFetchedAt: undefined } : {}),
+      };
+    });
+    if (!found) throw new Error(`API key not found: ${keyId}`);
+    await saveAccountKeys(accountId, records);
+    return listLocalApiKeys(accountId);
   });
-  if (!found) throw new Error(`API key not found: ${keyId}`);
-  await unifiedConfigManager.updateAccount(accountId, { local_api_keys: records });
-  return listLocalApiKeys(accountId);
 }
 
 export async function deleteLocalApiKey(
   accountId: string,
   keyId: string
 ): Promise<LocalApiKeyView[]> {
-  const account = await requireAccount(accountId);
-  const records = (account.local_api_keys || []).filter(item => item.id !== keyId);
-  if (records.length === (account.local_api_keys || []).length) {
-    throw new Error(`API key not found: ${keyId}`);
-  }
-  await unifiedConfigManager.updateAccount(accountId, { local_api_keys: records });
-  return listLocalApiKeys(accountId);
+  return serializeAccountMutation(accountId, async () => {
+    const account = await requireAccount(accountId);
+    const records = (account.local_api_keys || []).filter(item => item.id !== keyId);
+    if (records.length === (account.local_api_keys || []).length) {
+      throw new Error(`API key not found: ${keyId}`);
+    }
+    await saveAccountKeys(accountId, records);
+    return listLocalApiKeys(accountId);
+  });
 }
 
-async function fetchModels(baseUrl: string, record: LocalApiKeyRecord): Promise<string[]> {
-  const response = await httpGet(`${baseUrl.replace(/\/$/, '')}/v1/models`, {
+async function fetchModels(
+  baseUrl: string,
+  record: LocalApiKeyRecord,
+  authScheme?: RouteAuthScheme
+): Promise<string[]> {
+  const apiKey = resolveApiKeyForUse(record.key, record.source);
+  if (!apiKey) throw new Error('API Key 为空或被掩码隐藏');
+  const response = await httpGet(buildVersionedApiUrl(baseUrl, 'models'), {
     timeout: MODEL_FETCH_TIMEOUT_MS,
-    headers: { Authorization: `Bearer ${record.key}`, 'Content-Type': 'application/json' },
+    headers: { ...buildApiKeyHeaders(apiKey, authScheme), 'Content-Type': 'application/json' },
   });
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`HTTP ${response.status}`);
@@ -163,10 +208,11 @@ export async function refreshLocalApiKeys(
   if (keyId && targets.length === 0) throw new Error(`API key not found: ${keyId}`);
   const results: LocalApiKeyRefreshResult[] = [];
   for (const record of targets) {
+    const requestStartedAt = Date.now();
     try {
-      const models = await fetchModels(baseUrl, record);
+      const models = await fetchModels(baseUrl, record, account.routeAuthScheme);
       record.models = models;
-      record.modelsFetchedAt = Date.now();
+      record.modelsFetchedAt = requestStartedAt;
       record.updatedAt = Date.now();
       results.push({ keyId: record.id, success: true, models });
     } catch (error) {
@@ -179,11 +225,29 @@ export async function refreshLocalApiKeys(
     }
   }
   if (results.some(result => result.success)) {
-    await unifiedConfigManager.updateAccount(accountId, { local_api_keys: records });
+    await serializeAccountMutation(accountId, async () => {
+      const latest = unifiedConfigManager.getAccountById(accountId);
+      const site = unifiedConfigManager
+        .exportConfigSync()
+        ?.sites.find(item => item.id === latest?.site_id);
+      if (!latest || site?.url !== baseUrl || latest.routeAuthScheme !== account.routeAuthScheme) {
+        throw new Error('配置已变更，请重新刷新模型');
+      }
+      const merged = (latest.local_api_keys || []).map(key => {
+        const fetched = records.find(item => item.id === key.id && item.key === key.key);
+        if (!fetched || !results.some(result => result.keyId === key.id && result.success))
+          return key;
+        if ((key.modelsFetchedAt || 0) > (fetched.modelsFetchedAt || 0)) return key;
+        return { ...key, models: fetched.models, modelsFetchedAt: fetched.modelsFetchedAt };
+      });
+      await saveAccountKeys(accountId, merged);
+      records.splice(0, records.length, ...merged);
+    });
   }
+  const latestRecords = (await requireAccount(accountId)).local_api_keys || [];
   return {
-    keys: records.map(toView),
-    models: Array.from(new Set(records.flatMap(record => record.models))),
+    keys: latestRecords.map(toView),
+    models: Array.from(new Set(latestRecords.flatMap(record => record.models))),
     results,
   };
 }

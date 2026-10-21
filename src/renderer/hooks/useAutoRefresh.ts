@@ -55,13 +55,13 @@ const DEFAULT_INTERVAL = 30;
 const MIN_INTERVAL = 15;
 
 /**
- * 获取有效的刷新间隔（分钟）
+ * 获取有效的刷新间隔（分钟）：低于下限时钳制到 MIN_INTERVAL，而非跳到默认值
  */
 function getValidInterval(interval?: number): number {
-  if (interval === undefined || interval < MIN_INTERVAL) {
+  if (interval === undefined || !Number.isFinite(interval)) {
     return DEFAULT_INTERVAL;
   }
-  return interval;
+  return Math.max(interval, MIN_INTERVAL);
 }
 
 interface AutoRefreshTarget {
@@ -77,13 +77,12 @@ function getSiteKey(site: SiteConfig): string {
   return site.id || site.name;
 }
 
-// v3.0.6: auto_refresh 只在站点级，不再支持账户级覆盖
-function getResolvedAccountAutoRefresh(site: SiteConfig): boolean {
-  return site.auto_refresh ?? false;
+function getResolvedAccountAutoRefresh(site: SiteConfig, account: AccountCredential): boolean {
+  return account.auto_refresh ?? site.auto_refresh ?? false;
 }
 
-function getResolvedAccountInterval(site: SiteConfig): number {
-  return getValidInterval(site.auto_refresh_interval);
+function getResolvedAccountInterval(site: SiteConfig, account: AccountCredential): number {
+  return getValidInterval(account.auto_refresh_interval ?? site.auto_refresh_interval);
 }
 
 function buildRefreshTargets(
@@ -99,7 +98,7 @@ function buildRefreshTargets(
 
     if (siteAccounts.length > 0) {
       siteAccounts.forEach(account => {
-        if (!getResolvedAccountAutoRefresh(site)) {
+        if (!getResolvedAccountAutoRefresh(site, account)) {
           return;
         }
         targets.set(`${siteKey}::${account.id}`, {
@@ -108,7 +107,7 @@ function buildRefreshTargets(
           siteName: site.name,
           accountId: account.id,
           accountName: account.account_name,
-          interval: getResolvedAccountInterval(site),
+          interval: getResolvedAccountInterval(site, account),
         });
       });
       return;
@@ -206,8 +205,8 @@ export function useAutoRefresh(options: UseAutoRefreshOptions): UseAutoRefreshRe
             if (!resolvedAccount || resolvedAccount.site_id !== currentSite.id) {
               return;
             }
-            autoRefreshEnabled = getResolvedAccountAutoRefresh(currentSite);
-            resolvedInterval = getResolvedAccountInterval(currentSite);
+            autoRefreshEnabled = getResolvedAccountAutoRefresh(currentSite, resolvedAccount);
+            resolvedInterval = getResolvedAccountInterval(currentSite, resolvedAccount);
           }
 
           if (!autoRefreshEnabled || resolvedInterval !== config.interval) {

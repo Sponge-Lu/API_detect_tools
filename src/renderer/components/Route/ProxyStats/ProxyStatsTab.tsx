@@ -125,7 +125,6 @@ function ThinkingEffortSelect({
         width,
         top: openUpward ? undefined : rect.bottom + 4,
         bottom: openUpward ? window.innerHeight - rect.top + 4 : undefined,
-        zIndex: 260,
       });
     };
 
@@ -193,7 +192,7 @@ function ThinkingEffortSelect({
         aria-haspopup="menu"
         aria-controls={isOpen ? menuId : undefined}
         onClick={() => setIsOpen(current => !current)}
-        className="flex h-7 w-full items-center justify-between gap-2 rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-left text-xs text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+        className="flex h-7 w-full items-center justify-between gap-2 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-left text-xs text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
       >
         <span className="min-w-0 flex-1 truncate">{displayValue}</span>
         <ChevronDown
@@ -212,7 +211,7 @@ function ThinkingEffortSelect({
               aria-label={`${CLI_LABELS[cliType]} 思考强度选项`}
               onKeyDown={handleMenuKeyDown}
               style={menuStyle}
-              className="overflow-hidden rounded-md border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-lg)]"
+              className="z-[var(--z-popover-top)] overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-lg)]"
             >
               <button
                 type="button"
@@ -395,7 +394,7 @@ function RouteConfigPreviewModal({
       JSON.stringify(baselineConfig?.files ?? null);
 
   return (
-    <div className="fixed inset-0 z-[var(--z-overlay-top)] flex items-center justify-center bg-black/45 p-6">
+    <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-[var(--overlay-mask)] p-6">
       <div
         role="dialog"
         aria-label={title}
@@ -403,7 +402,7 @@ function RouteConfigPreviewModal({
       >
         <div className="flex items-center justify-between border-b border-[var(--line-soft)] px-5 py-4">
           <div>
-            <h3 className="text-base font-semibold text-[var(--text-primary)]">{title}</h3>
+            <h3 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h3>
             <p className="mt-1 text-xs text-[var(--text-secondary)]">{ROUTE_PROXY_DISPLAY_NAME}</p>
           </div>
           <div className="flex items-center gap-2">
@@ -685,8 +684,9 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
     setToggling(true);
     try {
       if (serverRunning) {
-        await stopServer();
-        toast.success('代理服务器已停止');
+        const ok = await stopServer();
+        if (ok) toast.success('代理服务器已停止');
+        else toast.error('停止失败');
       } else {
         const ok = await startServer();
         if (ok) toast.success(`代理服务器已启动 ${server.host}:${server.port}`);
@@ -1102,7 +1102,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
                           <button
                             type="button"
                             disabled={busy}
-                            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2 text-xs font-medium text-white transition-colors hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2 text-xs font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
                             onClick={() => void generateProfileKey(profile)}
                           >
                             {busy ? (
@@ -1161,7 +1161,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               onChange={event =>
                 setCredentialDraft(current => ({ ...current, name: event.target.value }))
               }
-              className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm"
+              className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 text-sm focus:border-[var(--accent)] focus:outline-none"
             />
           </label>
           <label className="block space-y-1 text-xs">
@@ -1587,7 +1587,7 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                 <select
                   value={normalizedCliSelections[cli]}
                   onChange={e => handleChange(cli, e.target.value)}
-                  className="h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+                  className="h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                 >
                   <option value="">未选择</option>
                   {modelOptions.map(entry => (

@@ -11,6 +11,7 @@ import Logger from '../utils/logger';
 import { unifiedConfigManager } from '../unified-config-manager';
 import { routeSessionBindingService } from '../route-session-binding-service';
 import { startProxyServer, stopProxyServer, getProxyStatus } from '../route-proxy-service';
+import { resetRouteSiteBreakers } from '../route-stats-service';
 import * as modelRegistry from '../route-model-registry-service';
 import * as analytics from '../route-analytics-service';
 import {
@@ -18,7 +19,6 @@ import {
   runEndpointTest,
   saveEndpointTestSelection,
 } from '../endpoint-test-service';
-import { runHealthCheck } from '../route-health-service';
 import { getHistoryBuckets } from '../route-history-service';
 import {
   archiveRouteInstance,
@@ -53,6 +53,7 @@ import type {
 } from '../../shared/types/endpoint-test';
 import { scanSavedSessionRecordsWithDiagnostics } from '../config-file-profile-service';
 import { routeStateAffinityService } from '../route-state-affinity-service';
+import { broadcastRendererEvent } from '../app-data-events';
 
 const log = Logger.scope('RouteHandlers');
 
@@ -76,7 +77,7 @@ export function registerRouteHandlers() {
         routePathStates: routing.routePathStates,
         health: routing.health,
         sessionChannelBindings: routeSessionBindingService.listActive(),
-        modelRegistry: routing.modelRegistry,
+        modelRegistry: modelRegistry.getModelRegistry(),
         analytics: {
           config: routing.analytics.config,
         },
@@ -89,6 +90,13 @@ export function registerRouteHandlers() {
   ipcMain.handle('route:save-server-config', async (_, updates) => {
     try {
       await unifiedConfigManager.updateRouteServerConfig(updates);
+      if (typeof updates.enabled === 'boolean') {
+        if (updates.enabled) {
+          await startProxyServer();
+        } else {
+          await stopProxyServer();
+        }
+      }
       return ok();
     } catch (e: any) {
       return err(e.message);
@@ -105,8 +113,8 @@ export function registerRouteHandlers() {
 
   ipcMain.handle('route:start-server', async () => {
     try {
-      await startProxyServer();
       await unifiedConfigManager.updateRouteServerConfig({ enabled: true });
+      await startProxyServer();
       return ok();
     } catch (e: any) {
       log.error('start server failed:', e);
@@ -116,8 +124,8 @@ export function registerRouteHandlers() {
 
   ipcMain.handle('route:stop-server', async () => {
     try {
-      await stopProxyServer();
       await unifiedConfigManager.updateRouteServerConfig({ enabled: false });
+      await stopProxyServer();
       return ok();
     } catch (e: any) {
       return err(e.message);
@@ -182,24 +190,8 @@ export function registerRouteHandlers() {
   ipcMain.handle('route:reset-path-states', async (_, params?: RoutePathStateResetParams) => {
     try {
       const cleared = await unifiedConfigManager.resetRoutePathStates(params);
+      resetRouteSiteBreakers(params?.siteId);
       return ok({ cleared });
-    } catch (e: any) {
-      return err(e.message);
-    }
-  });
-
-  ipcMain.handle('route:get-health', async () => {
-    try {
-      return ok(unifiedConfigManager.getRoutingConfig().health);
-    } catch (e: any) {
-      return err(e.message);
-    }
-  });
-
-  ipcMain.handle('route:run-health-check', async () => {
-    try {
-      await runHealthCheck();
-      return ok();
     } catch (e: any) {
       return err(e.message);
     }
@@ -275,7 +267,7 @@ export function registerRouteHandlers() {
 
   ipcMain.handle(
     'route:create-armed-route-instance',
-    async (_, input: { modelId: string; reasoningEffort: string }) => {
+    async (_, input: { modelId?: string; reasoningEffort?: string }) => {
       try {
         const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
         if (!config) throw new Error('会话路由配置不可用');
@@ -456,6 +448,16 @@ export function registerRouteHandlers() {
       return ok(result);
     } catch (e: any) {
       return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:refresh-model-metadata', async () => {
+    try {
+      const registry = await modelRegistry.refreshModelRegistryMetadata(true);
+      broadcastRendererEvent('route:model-metadata-updated', {});
+      return ok(registry);
+    } catch (error: unknown) {
+      return err(error instanceof Error ? error.message : String(error));
     }
   });
 

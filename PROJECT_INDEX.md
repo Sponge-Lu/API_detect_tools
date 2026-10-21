@@ -40,18 +40,22 @@
 
 | 模块 | 作用 |
 |------|------|
-| `src/main/main.ts` | Electron 生命周期、窗口创建、预加载绑定，并接入渲染健康监控 |
-| `src/main/window-health-manager.ts` | 监听主框架加载、preload、渲染进程退出和无响应事件；持久化故障信息，执行一次有界自动恢复，并在持续失败时显示内置重试页 |
+| `src/main/request-rectifier.ts` | 按明确上游错误修复 thinking 签名、思考配置和 opaque 状态，供路由执行单次重试 |
+| `src/main/config-file-backups.ts` | CLI 配置集中备份、首次原件与最近十份保留、历史迁移、备份列表及恢复读取 |
+| `src/main/model-metadata-service.ts` | models.dev 元数据解析与缓存、启动后台刷新及手动刷新入口 |
+| `src/main/main.ts` | Electron 生命周期、窗口创建、预加载绑定；显式开发 URL 加载热更新页面，其余模式加载构建页面，并接入渲染健康监控 |
+| `src/main/window-health-manager.ts` | 统一开发、预览与打包页面加载；监听主框架加载、preload、渲染进程退出和无响应事件，执行有界恢复与错误页重试 |
 | `src/main/app-data-events.ts` | 主进程到渲染进程的数据变更通知桥，按域广播站点配置、站点快照和路由总览更新；广播会跳过已销毁窗口/webContents 并吞掉 Electron disposed-frame 竞态错误 |
 | `src/main/app-storage-manifest.ts` | 本地存储清单，声明稳定配置、运行态缓存/统计、日志、备份、敏感设置和受保护浏览器状态的路径、owner、retention/cap 与备份边界；支持 lightweight/full-manifest/portable-config 模式 |
 | `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复配置包；可迁移 portable 包仅含 config.json + custom-cli-configs.json，兼容旧 full-manifest 与 config-only 备份 |
 | `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户、seeded 路由示例与旧 OpenCode 路由协议字段清理、缺失 `site_type` 旧站点保持未决、读取失败短重试、原子写入、备份恢复、账户级 `cli_config` 更新、路由配置持久化与路径暂停状态恢复，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置；CLI probe latest/history 可一次性写入 sidecar |
 | `src/main/runtime-cache-manager.ts` | 运行期缓存持久化，维护站点共享缓存、账户运行态缓存与 90 天/120 条上限的站点每日快照 |
 | `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供 Cookie/UA 投影后的 Electron Session 通用 GET/POST 请求、页面级登录态重读和账户 Profile 签到页复用 |
+| `src/main/browser-runtime/bundled-resolver.ts` | 解析打包内置 Chromium（`<resources>/chromium/<os>-<arch>/`，`extraResources` 的 `${os}-${arch}` 宏命名），校验可执行文件与 `VERSION` 标记；缺失返回 null，由 chrome-manager 继续本机浏览器降级链；产物由 `npm run fetch:chromium` 落地 |
 | `src/main/site-type-registry.ts` | 站点类型注册表，统一维护各类型的初始化/模型/余额/API Key/分组/定价端点策略 |
 | `src/main/site-type-detector.ts` | 智能添加与多账户初始化前的站点类型自动识别 |
 | `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位重新读取基础账号信息并在 access token 无效时重建；统一识别认证失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
-| `src/main/api-service.ts` | 站点检测、HTTP 请求、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测，并在检测缓存落盘后触发站点每日快照采集 |
+| `src/main/api-service.ts` | 站点检测、HTTP 请求、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、API Key 分组异常归集、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`，并在检测缓存落盘后触发站点每日快照采集 |
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
 | `src/main/upstream-credential-resolver.ts` | 中性解析托管/直连真实上游 Base URL、API Key 与鉴权方案，不启动路由、选择通道或写入路由运行态 |
 | `src/main/api-key-identity.ts` | 生成稳定 API Key 标识，供路由、端点测试与配置服务共享 |
@@ -79,23 +83,21 @@
 | `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面元数据，包含并行的本地路由、模型映射、路由设置和路由日志入口 |
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面与 `数据总览` 子页入口 |
 | `src/renderer/components/LoadingState.tsx` / `ErrorState.tsx` / `AppSwitch.tsx` / `AppSelect.tsx` / `PageContainer.tsx` | 统一加载/错误/开关/下拉/页面容器原语；配合 `App*`/`DataTable` 收敛全 App 三态与同类控件视觉 |
-| `src/renderer/components/CreditPanel/DailyStatsCard.tsx` / `formatLastUpdated.ts` | 统一每日收支统计卡片（`variant: income/expense`，`Income/ExpenseStatsCard` 为其薄封装）与共享"更新于"时间格式化 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线，并提供左侧请求量（0–max）与右侧成功率（0–100%）双纵轴及对齐的 0/50/100 参考线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
-| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面；接入点侧滑面板提供信息、资源和原生端点测试，不再承载 CLI 配置 |
-| `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
+| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面；站点与直连配置名称统一调用系统浏览器并保留完整 URL；接入点侧滑面板提供信息、资源和原生端点测试，不再承载 CLI 配置 |
 | `src/renderer/pages/RoutePage.tsx` | 本地路由页：代理服务器区块 + 配置文件卡片区 |
-| `src/renderer/pages/ModelMappingPage.tsx` | 模型重定向、原始模型来源、站点/API Key 候选与优先级编辑 |
-| `src/renderer/pages/RouteSettingsPage.tsx` | 路由设置页，承载会话路由卡片区 |
+| `src/renderer/pages/RouteSettingsPage.tsx` | 路由设置页：左列独立 mini 会话路由卡片（`RouteSessionSection mini`，240-280px 三行扁布局：头部/Session/幽灵下拉模型行），右侧独立模型映射工作区（重定向模型列表 + 来源优先级详情） |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；按日志中的 Agent 动态筛选并以 Logo + 名称展示首列，Token 固定两行展示输入/输出与缓存写/读 |
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
-| `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色 |
+| `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色，条形图右侧内联汇总 48h 请求数与加权成功率 |
 | `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab1 信息表单、Tab2 资源布局与 Tab3 端点测试共享紧凑视觉规格、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
 | `src/renderer/components/Route/*` | 路由页内部区块（含 `#N` / `#N.M` 父子会话编号、模型重定向优先级色点、服务器/统计面板及 History 条形图） |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
 | `src/renderer/store/toastStore.ts` | 管理可见 Toast 队列与当前会话内事件历史 |
-| `src/renderer/store/routeStore.ts` | Route 工作台的数据抓取、运行状态与路径暂停恢复动作 |
+| `src/renderer/store/routeStore.ts` | Route 工作台的数据抓取、运行状态与路径暂停恢复动作；启停同步缓存启用状态，失败回读运行状态并隔离过期状态响应 |
 | `src/renderer/hooks/useAutoRefresh.ts` | 站点级/账号级自动刷新调度 |
+| `src/renderer/hooks/useCheckIn.ts` | 批量签到目标按保存的站点/账户配置生成，检测结果缓存用于签到状态过滤 |
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
 | `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
 | `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
@@ -112,14 +114,15 @@
 
 | 模块 | 作用 |
 |------|------|
-| `src/shared/types/site.ts` | 站点、账户、浏览器 Profile 选择与绑定、账户级 CLI 配置、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、API Key 活跃状态归一化、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
+| `src/shared/types/site.ts` | 站点、账户、浏览器 Profile 选择与绑定、账户级 CLI 配置、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、站点刷新异常、API Key 活跃状态归一化、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
 | `src/shared/types/endpoint-test.ts` | 独立手动上游端点测试目标、协议、选择状态与结果类型 |
 | `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由与分析统计类型；兼容 re-export 端点测试类型 |
 | `src/shared/config/builtin-client-configs.ts` | Claude Code、Codex、OpenCode、Grok Build 完整配置的共享唯一来源 |
 | `src/shared/types/config-file-profile.ts` | 版本化配置方案、含协议元数据的目标目录、应用模式、文件事务和对话记录诊断类型 |
-| `src/shared/theme/themePresets.ts` | `Light` / `Dark` 主题预设与旧值归一化 |
+| `src/shared/theme/themePresets.ts` | `Light` / `Dark` / `Modern` / `Modern Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |
 | `src/shared/utils/customCliRouteId.ts` / `groupLabel.ts` | 自定义 CLI 真实多 Key 路由通道合成 ID helper；数字分组前缀到圆圈数字标签的共享规范化 |
+| `src/shared/utils/date.ts` | 本地时区"同一天"判断 `isSameLocalDay()`，"今日已签/今日已刷新"类判断的跨进程单一收敛点 |
 
 ---
 
@@ -129,10 +132,9 @@
 
 - `数据总览`
 - `站点管理`
-- `LDC 积分`
 - `本地路由`
 - `模型映射`
-- `配置文件`
+- `路由设置`
 - `路由日志`
 - `设置`
 
@@ -141,8 +143,7 @@
 - `数据总览` 是新的默认首页，排在第一个入口，承载路由健康、站点余额/消费、历史快照和异常请求。
 - 左侧导航会在 `数据总览` 下显示两个子页：`站点数据` 与 `路由数据`；`路由日志` 是单一主入口，直接显示路由日志。
 - `App.tsx` 会结合 `pageMeta.ts` 与 `uiStore.overviewSubtab` 在 Header 中显示当前标题和简洁说明；Header 右侧操作由 `DataOverviewPage` 注入，站点子页显示 `刷新`，路由子页显示 `24h / 7d / 刷新`。
-- `credit` 已恢复为一级导航页，用于 Linux Do Credit 积分视图。
-- `本地路由` 只承载网关与会话路由；模型映射和配置文件分别使用独立一级页面。
+- `本地路由` 承载网关与配置文件卡片区；`路由设置`（`config-files`）单页合并 mini 会话路由卡片与模型映射工作区，原 `model-mapping` 一级页面已下线（旧持久化 id 映射到 `config-files`）。
 - 直连配置作为站点管理中的接入点展示；侧滑测试页始终原生探测三个协议，顶部上游协议选择仅保存真实路由策略。
 
 ---
@@ -171,7 +172,7 @@
 ### Route 工作台
 
 1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / analytics`，通过 `endpoint-test:*` IPC 读写手动端点测试状态。
-2. 主进程由 `route-proxy-service`、`endpoint-test-service`、`route-analytics-service` 与 `route-history-service` 负责运行时行为。端点测试通过中性 `upstream-credential-resolver` 获取真实目标后直接请求上游；不导入路由通道/代理/target-lock 模块，不发送 CLI marker/User-Agent/originator，也不写入路由统计与 History。
+2. 主进程由 `route-proxy-service`、`endpoint-test-service`、`route-analytics-service` 与 `route-history-service` 负责运行时行为。代理监听按请求顺序串行启停，启动失败清理监听实例。端点测试通过中性 `upstream-credential-resolver` 获取真实目标后直接请求上游；不导入路由通道/代理/target-lock 模块，不发送 CLI marker/User-Agent/originator，也不写入路由统计与 History。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
 
 ### 数据总览
@@ -228,8 +229,7 @@
 - 新增 `src/renderer/utils/routeRulePresentation.ts`
 - 新增 `src/__tests__/data-overview-page.test.tsx`
 - 新增 `src/__tests__/unified-cli-config-dialog.test.tsx`
-- 新增 `src/__tests__/credit-service.test.ts`
-- 新增 `src/__tests__/useCredit.test.ts`
+- Linux Do Credit（LDC）积分子系统已整体移除：删除 `credit-service.ts`、`credit-handlers.ts`、`types/credit.ts`、`CreditPage`、`CreditPanel/`、`useCredit` / `useLdcSites`、站点检测中的 LDC 支付探测（`/api/user/topup/info`、`/api/user/amount`）与站点列表 LDC 列；`credit:*` IPC、`LDC_UI_VISIBILITY`、`LDC_PAYMENT_NAMES` 一并清理，旧持久化 `'credit'` 标签页回退到站点管理
 - 新增 `scripts/dev-cleanup.cjs`、`scripts/dev-main.cjs`、`scripts/dev.cjs`、`scripts/run-node-module.cjs`、`scripts/repair-legacy-accounts.cjs`，并保留 `scripts/migrate-config-v224-to-v301.cjs` 用于将 v2.1.24 配置拆分为 clean config、runtime-cache 与 route state 文件
 - 旧版 iOS 命名原语目录已全部退出主线设计系统
 - `ApiKeyInfo` 新增 `status_str / state / enabled` 兼容字段，并通过 `getApiKeyAvailability()` / `isApiKeyActive()` 统一判断 API Key 是否可用
@@ -257,6 +257,9 @@
 ---
 
 ## 索引维护
+
+站点配置共用 `src/shared/utils/apiConfig.ts` 处理密钥来源、认证方式和 API 地址；开发与打包统一使用 Electron 网络栈及固定版本的内置 Chromium。`scripts/dev-main.cjs` 和 `scripts/before-pack.cjs` 共用浏览器准备逻辑；`npm run preview` 加载构建页面，`npm run verify:packaged` 校验打包代码、前端资源、运行依赖与浏览器版本，并在原生架构执行浏览器页面检查。
+本地密钥并发与持久化回归覆盖位于 `src/__tests__/local-api-key-service.test.ts`。
 
 索引体系分为三层：
 

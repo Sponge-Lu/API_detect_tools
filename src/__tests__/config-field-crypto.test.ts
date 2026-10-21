@@ -73,6 +73,7 @@ describe('ConfigFieldCrypto', () => {
             account_name: 'Test Account',
             user_id: 'user123',
             access_token: 'acc-token-xyz-789',
+            api_key: 'sk-account-key-123',
             auth_source: 'manual',
             status: 'active',
             created_at: Date.now(),
@@ -93,12 +94,17 @@ describe('ConfigFieldCrypto', () => {
       expect(encrypted.sites[0].api_key).toMatch(/^encrypted:v1:/);
       expect(encrypted.sites[0].access_token).toMatch(/^encrypted:v1:/);
       expect(encrypted.accounts[0].access_token).toMatch(/^encrypted:v1:/);
+      expect(encrypted.accounts[0].api_key).toMatch(/^encrypted:v1:/);
+      expect(encrypted.accounts[0].api_key).not.toContain('sk-account-key-123');
+      expect(config.accounts[0].api_key).toBe('sk-account-key-123');
+      expect(decryptConfigFields(config).accounts[0].api_key).toBe('sk-account-key-123');
 
       const decrypted = decryptConfigFields(encrypted);
 
       expect(decrypted.sites[0].api_key).toBe('sk-site-key-123');
       expect(decrypted.sites[0].access_token).toBe('token-abc-456');
       expect(decrypted.accounts[0].access_token).toBe('acc-token-xyz-789');
+      expect(decrypted.accounts[0].api_key).toBe('sk-account-key-123');
     });
 
     it('should handle undefined sensitive fields', () => {

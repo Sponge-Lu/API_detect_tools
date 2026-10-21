@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
@@ -1983,14 +1984,12 @@ function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
 
 interface ModelRedirectionTabProps {
   isActive?: boolean;
-  leadingPane?: ReactNode;
   className?: string;
   setPageHeaderActions?: (actions: ReactNode | null) => void;
 }
 
 export function ModelRedirectionTab({
   isActive = true,
-  leadingPane,
   className = '',
   setPageHeaderActions,
 }: ModelRedirectionTabProps = {}) {
@@ -2017,6 +2016,7 @@ export function ModelRedirectionTab({
     }))
   );
   const [syncingSources, setSyncingSources] = useState(false);
+  const [refreshingMetadata, setRefreshingMetadata] = useState(false);
   const [resettingPathCanonicalName, setResettingPathCanonicalName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedDisplayItemId, setSelectedDisplayItemId] = useState<string | null>(null);
@@ -2477,6 +2477,36 @@ export function ModelRedirectionTab({
     },
     []
   );
+
+  const handleRefreshMetadata = useCallback(async () => {
+    setRefreshingMetadata(true);
+    try {
+      const result = await window.electronAPI.route?.refreshModelMetadata();
+      if (!result?.success) throw new Error(result?.error || '无法刷新模型元数据');
+      toast.success('模型元数据已刷新');
+    } catch (error: unknown) {
+      toast.error(`刷新元数据失败: ${getErrorMessage(error)}`);
+    } finally {
+      setRefreshingMetadata(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = window.electronAPI.route?.onModelMetadataUpdated?.(() => {
+      void useRouteStore
+        .getState()
+        .fetchModelRegistry()
+        .then(registry => {
+          if (active && registry) refreshOpenSourceDetails(registry);
+        })
+        .catch(error => toast.error(`加载模型元数据失败: ${getErrorMessage(error)}`));
+    });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [refreshOpenSourceDetails]);
 
   const handleSyncSources = useCallback(async () => {
     setSyncingSources(true);
@@ -3315,6 +3345,16 @@ export function ModelRedirectionTab({
             variant="secondary"
             size="sm"
             className="!h-7 !min-h-7"
+            onClick={handleRefreshMetadata}
+            disabled={refreshingMetadata}
+          >
+            {refreshingMetadata ? '刷新中' : '刷新元数据'}
+          </AppButton>
+          <AppButton
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="!h-7 !min-h-7"
             onClick={handleSyncSources}
             disabled={syncingSources}
           >
@@ -3332,7 +3372,15 @@ export function ModelRedirectionTab({
           </AppButton>
         </div>
       ) : null,
-    [config, handleSyncSources, openCreateEditor, saving, syncingSources]
+    [
+      config,
+      handleRefreshMetadata,
+      handleSyncSources,
+      openCreateEditor,
+      refreshingMetadata,
+      saving,
+      syncingSources,
+    ]
   );
 
   useEffect(() => {
@@ -3344,8 +3392,6 @@ export function ModelRedirectionTab({
     return null;
   }
 
-  const hasLeadingPane = Boolean(leadingPane);
-
   return (
     <>
       <div
@@ -3354,21 +3400,8 @@ export function ModelRedirectionTab({
       >
         <div
           data-testid="redirect-two-pane-layout"
-          className={
-            hasLeadingPane
-              ? 'grid h-full min-h-0 grid-cols-[minmax(202px,0.2112fr)_minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
-              : 'grid h-full min-h-0 grid-cols-[minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
-          }
+          className="grid h-full min-h-0 grid-cols-[minmax(210px,245px)_minmax(0,1fr)]"
         >
-          {hasLeadingPane ? (
-            <div
-              data-testid="redirect-leading-pane"
-              className="flex min-h-0 flex-col border-r border-[var(--line-muted)]"
-            >
-              {leadingPane}
-            </div>
-          ) : null}
-
           <div
             data-testid="redirect-list-pane"
             className="flex min-h-0 flex-col border-r border-[var(--line-muted)]"
@@ -3383,6 +3416,10 @@ export function ModelRedirectionTab({
                   {displayItems.length} 项
                 </div>
               </div>
+              {/* 页面嵌入时动作按钮经 setPageHeaderActions 上报页面头部；独立渲染时回退到工具栏 */}
+              {setPageHeaderActions ? null : (
+                <div className="ml-auto flex items-center gap-1.5">{pageHeaderActions}</div>
+              )}
             </div>
 
             {displayItems.length > 0 ? (
@@ -3413,10 +3450,31 @@ export function ModelRedirectionTab({
                         <span
                           role="button"
                           tabIndex={0}
+                          aria-label={`编辑 ${displayItem.displayName}`}
+                          title="编辑模型重定向"
+                          data-testid="redirect-edit-button"
+                          className="ml-auto shrink-0 rounded px-1 py-0.5 text-[11px] font-medium leading-none text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                          onClick={event => {
+                            event.stopPropagation();
+                            openEditEditor(displayItem.item, displayItem.entry);
+                          }}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openEditEditor(displayItem.item, displayItem.entry);
+                            }
+                          }}
+                        >
+                          编辑
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
                           aria-label={`删除 ${displayItem.displayName}`}
                           title="删除重定向模型"
                           data-testid="redirect-delete-icon"
-                          className="ml-auto shrink-0 rounded p-0.5 text-[var(--text-tertiary)] transition-colors hover:text-[var(--danger)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                          className="shrink-0 rounded p-0.5 text-[var(--text-tertiary)] transition-colors hover:text-[var(--danger)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
                           onClick={event => {
                             event.stopPropagation();
                             setDeleteConfirm({
@@ -3435,7 +3493,7 @@ export function ModelRedirectionTab({
                             }
                           }}
                         >
-                          <X className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </span>
                       </div>
                     </button>
@@ -3450,60 +3508,6 @@ export function ModelRedirectionTab({
                 </p>
               </div>
             )}
-          </div>
-
-          <div
-            data-testid="redirect-original-pane"
-            className="flex min-h-0 flex-col border-r border-[var(--line-muted)] bg-[var(--surface-1)]"
-          >
-            <div className="flex h-9 shrink-0 items-center justify-between gap-1.5 border-b border-[var(--line-muted)] px-2.5">
-              <div className="text-xs font-semibold text-[var(--text-primary)]">原始模型</div>
-              {selectedDisplayItem ? (
-                <AppButton
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="!h-6 !min-h-6 !px-1.5 text-[11px]"
-                  onClick={() =>
-                    openEditEditor(selectedDisplayItem.item, selectedDisplayItem.entry)
-                  }
-                  aria-label={`编辑 ${selectedDisplayItem.displayName}`}
-                  title="编辑模型重定向"
-                  disabled={saving || isResettingSelectedRoutePaths}
-                >
-                  <span>编辑</span>
-                </AppButton>
-              ) : null}
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-2.5 py-2">
-              {selectedDisplayItem ? (
-                <div
-                  data-testid="redirect-detail-original-models"
-                  className="flex flex-col gap-1.5"
-                >
-                  {selectedDisplayItem.selectedOriginalModels.length > 0 ? (
-                    selectedDisplayItem.selectedOriginalModels.map(originalModel => (
-                      <div
-                        key={`${selectedDisplayItem.item.id}:${originalModel}`}
-                        className="max-w-full rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1"
-                      >
-                        <code className="break-all font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
-                          {originalModel}
-                        </code>
-                      </div>
-                    ))
-                  ) : (
-                    <span className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[11px] text-[var(--text-secondary)]">
-                      {selectedDisplayItem.item.canonicalName}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className="py-6 text-center text-xs text-[var(--text-secondary)]">
-                  选择重定向模型
-                </div>
-              )}
-            </div>
           </div>
 
           <div
@@ -3964,7 +3968,7 @@ export function ModelRedirectionTab({
                                           <div className="flex shrink-0 flex-col items-center gap-px">
                                             <button
                                               type="button"
-                                              className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
+                                              className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                                               aria-label={`${apiKey.apiKeyName} 上移`}
                                               title="上移"
                                               disabled={apiKeyIndex === 0}
@@ -3980,7 +3984,7 @@ export function ModelRedirectionTab({
                                             </button>
                                             <button
                                               type="button"
-                                              className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
+                                              className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
                                               aria-label={`${apiKey.apiKeyName} 下移`}
                                               title="下移"
                                               disabled={apiKeyIndex === enabledApiKeys.length - 1}
@@ -4122,7 +4126,7 @@ export function ModelRedirectionTab({
                                               </span>
                                               <button
                                                 type="button"
-                                                className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--success)]/35 bg-[var(--success-soft)] px-1.5 text-[10px] font-semibold leading-none text-[var(--success)] transition-colors hover:border-[var(--success)] disabled:cursor-not-allowed disabled:opacity-40"
+                                                className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--success)]/35 bg-[var(--success-soft)] px-1.5 text-[10px] font-semibold leading-none text-[var(--success)] transition-colors hover:border-[var(--success)] disabled:cursor-not-allowed disabled:opacity-50"
                                                 aria-label={`${apiKey.apiKeyName} 启用`}
                                                 title={siteDisabled ? '先启用站点' : '启用 API key'}
                                                 disabled={siteDisabled}

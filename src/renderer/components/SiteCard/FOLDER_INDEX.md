@@ -11,7 +11,6 @@
 - 显示检测结果
 - 提供主行高频操作按钮
 - 托管站点支持拖拽排序，直连配置行不参与排序
-- 显示 LDC 支付支持状态
 - 签到图标悬停显示签到统计 (New API 类型站点)
 
 **依赖关系**:
@@ -26,7 +25,7 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **SiteCard.tsx** | 站点列表行主组件（保持主行信息栅格 + 右侧操作区的稳定结构；详情由接入点侧滑面板承载；支持 `custom-cli` 直连轻量行且可关闭拖拽） | `SiteCard` 组件 |
-| **SiteCardHeader.tsx** | 列表行头部（站点、账户、刷新时间、余额、今日消费、模型数量、History 列；模型数按唯一模型去重，History 与站点名按钮不会误触发行选择） | `SiteCardHeader` 组件 |
+| **SiteCardHeader.tsx** | 列表行头部（站点、账户、刷新时间、余额、今日消费、模型数量、History 列；名称后的异常图标悬停展示详情，模型数按唯一模型去重，站点与直连配置名称均可打开系统浏览器，History 与名称按钮不会误触发行选择） | `SiteCardHeader` 组件 |
 | **SiteCardDetails.tsx** | 托管资源详情区（用户分组、API Keys、模型列表），模型名下统一显示完整分组标签、计费方式和价格；支持本地 Key 模型投影与远程 Key 状态刷新 | `SiteCardDetails` 组件 |
 | **SiteCardActions.tsx** | 主行高频操作按钮（打开加油站、签到、刷新检测）；编辑/删除/添加账户/自动刷新等低频入口迁移到接入点侧滑面板 | `SiteCardActions` 组件 |
 | **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新，区分打开站点与签到页回调） | `SiteCardProps`, `SiteCardActionsProps` 等 |

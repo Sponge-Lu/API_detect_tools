@@ -30,7 +30,6 @@ import { registerWebDAVHandlers } from './webdav-handlers';
 import { registerUpdateHandlers } from './update-handlers';
 import { registerCliCompatHandlers } from './cli-compat-handlers';
 import { registerCloseBehaviorHandlers } from './close-behavior-handlers';
-import { registerCreditHandlers } from './credit-handlers';
 import { registerCustomCliConfigHandlers } from './custom-cli-config-handlers';
 import { registerAccountHandlers } from './account-handlers';
 import { registerBrowserProfileHandlers } from './browser-profile-handlers';
@@ -91,9 +90,6 @@ export function registerAllHandlers(deps: HandlerDependencies) {
     registerCloseBehaviorHandlers(closeBehaviorManager);
   }
 
-  // Credit 积分检测相关
-  registerCreditHandlers();
-
   // 自定义 CLI 配置相关
   registerCustomCliConfigHandlers();
   registerConfigFileProfileHandlers();
@@ -126,7 +122,6 @@ export * from './webdav-handlers';
 export * from './update-handlers';
 export * from './cli-compat-handlers';
 export * from './close-behavior-handlers';
-export * from './credit-handlers';
 export * from './custom-cli-config-handlers';
 export * from './account-handlers';
 export * from './browser-profile-handlers';

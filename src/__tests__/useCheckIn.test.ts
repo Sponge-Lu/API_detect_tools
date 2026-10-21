@@ -1,7 +1,7 @@
 /**
  * 输入: useCheckIn 依赖的站点配置、检测结果和 Electron IPC mock
  * 输出: 批量签到过滤逻辑的回归测试结果
- * 定位: 测试层 - 验证一键签到不会调度不可用分组站点
+ * 定位: 测试层 - 验证一键签到过滤规则与配置驱动目标生成
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -138,6 +138,100 @@ describe('useCheckIn', () => {
     );
   });
 
+  it('检测缓存为空时仍应按已保存的站点和账户配置执行签到', async () => {
+    const showAlert = vi.fn();
+    const showDialog = vi.fn(async () => false);
+    const setCheckingIn = vi.fn();
+    const accountId = 'acct-available';
+    mockResults = [];
+    mockConfig.sites[0].has_checkin = true;
+    mockConfig.accounts = [
+      {
+        id: accountId,
+        site_id: 'site-available',
+        access_token: 'account-token',
+      },
+    ];
+
+    const { result } = renderHook(() =>
+      useCheckIn({
+        showAlert,
+        showDialog,
+        setCheckingIn,
+      })
+    );
+
+    let summary: { success: number; failed: number; skipped: number } | undefined;
+    await act(async () => {
+      summary = await result.current.handleCheckInAll();
+    });
+
+    expect(summary).toEqual({ success: 1, failed: 0, skipped: 0 });
+    expect(mockCheckinAndRefresh).toHaveBeenCalledTimes(1);
+    expect(mockCheckinAndRefresh).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Available Site' }),
+      30,
+      accountId
+    );
+    expect(mockUpsertResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Available Site',
+        accountId,
+        has_checkin: true,
+        can_check_in: false,
+      })
+    );
+    expect(showAlert).not.toHaveBeenCalledWith('没有可签到的站点', 'warning');
+  });
+
+  it('检测缓存为空时 AnyRouter 成功签到也应写入完成状态', async () => {
+    const showAlert = vi.fn();
+    const showDialog = vi.fn(async () => false);
+    const setCheckingIn = vi.fn();
+    const accountId = 'acct-anyrouter';
+    mockResults = [];
+    mockConfig.sites = [
+      {
+        id: 'site-anyrouter',
+        name: 'AnyRouter',
+        url: 'https://anyrouter.top/',
+        enabled: true,
+        group: BUILTIN_GROUP_IDS.DEFAULT,
+        api_key: '',
+        site_type: 'newapi',
+      },
+    ];
+    mockConfig.accounts = [
+      { id: accountId, site_id: 'site-anyrouter', access_token: 'account-token' },
+    ];
+    mockOpenSiteForCheckin.mockResolvedValue({ success: true });
+
+    const { result } = renderHook(() =>
+      useCheckIn({
+        showAlert,
+        showDialog,
+        setCheckingIn,
+      })
+    );
+
+    await act(async () => {
+      await result.current.handleCheckInAll();
+    });
+
+    expect(mockUpsertResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'AnyRouter',
+        accountId,
+        has_checkin: true,
+        can_check_in: false,
+        checkinStats: expect.objectContaining({
+          todayQuota: 12500000,
+          siteType: 'newapi',
+        }),
+      })
+    );
+  });
+
   it('点击自动签到失败弹窗的打开网站后应标记站点为今日已签到', async () => {
     const showAlert = vi.fn();
     const showDialog = vi.fn(async () => true);
@@ -173,15 +267,7 @@ describe('useCheckIn', () => {
         lastRefresh: expect.any(Number),
       })
     );
-    expect(mockPersistCheckinCompletion).toHaveBeenCalledWith(
-      'site-available',
-      undefined,
-      expect.objectContaining({
-        has_checkin: true,
-        can_check_in: false,
-        last_refresh: expect.any(Number),
-      })
-    );
+    expect(mockPersistCheckinCompletion).not.toHaveBeenCalled();
   });
 
   it('账户级签到不应因站点级 token 为空而提前进入手动签到', async () => {
@@ -355,14 +441,6 @@ describe('useCheckIn', () => {
         lastRefresh: expect.any(Number),
       })
     );
-    expect(mockPersistCheckinCompletion).toHaveBeenCalledWith(
-      'site-available',
-      undefined,
-      expect.objectContaining({
-        has_checkin: true,
-        can_check_in: false,
-        last_refresh: expect.any(Number),
-      })
-    );
+    expect(mockPersistCheckinCompletion).not.toHaveBeenCalled();
   });
 });

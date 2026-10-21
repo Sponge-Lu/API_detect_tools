@@ -10,8 +10,51 @@
  * 使用 fast-check 进行属性测试
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fc from 'fast-check';
+
+vi.mock('electron', () => ({ app: { getPath: () => 'C:/test-user-data' }, net: {}, shell: {} }));
+vi.mock('../main/utils/logger', () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+describe('UpdateService platform assets', () => {
+  it.each([
+    ['win32', 'x64', 'App-Setup-1.0-x64.exe'],
+    ['darwin', 'arm64', 'App-1.0-arm64.dmg'],
+    ['darwin', 'x64', 'App-1.0-x64.dmg'],
+    ['linux', 'x64', 'App-1.0-x64.AppImage'],
+    ['linux', 'arm64', null],
+  ])('selects the matching asset on %s %s', async (platform, arch, expectedName) => {
+    const { UpdateService } = await import('../main/update-service');
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const archDescriptor = Object.getOwnPropertyDescriptor(process, 'arch')!;
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform });
+    Object.defineProperty(process, 'arch', { ...archDescriptor, value: arch });
+    try {
+      const names = [
+        'App-Setup-1.0-x64.exe',
+        'App-1.0-x64.dmg',
+        'App-1.0-arm64.dmg',
+        'App-1.0-x64.AppImage',
+        'App-Setup-1.0.exe',
+      ];
+      const service = new UpdateService();
+      const url = (
+        service as unknown as { getDownloadUrl(release: unknown): string }
+      ).getDownloadUrl({
+        html_url: 'https://example.com/release',
+        assets: names.map(name => ({ name, browser_download_url: `https://example.com/${name}` })),
+      });
+      expect(url).toBe(
+        expectedName ? `https://example.com/${expectedName}` : 'https://example.com/release'
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+      Object.defineProperty(process, 'arch', archDescriptor);
+    }
+  });
+});
 
 // 由于 UpdateService 依赖 Electron，我们直接测试核心逻辑函数
 // 提取版本比较和验证逻辑进行独立测试

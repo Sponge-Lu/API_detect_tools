@@ -62,13 +62,14 @@ const AUTH_STATE_PATHS = [
 ];
 
 export class BrowserProfileManager {
+  private slotAllocationQueue: Promise<unknown> = Promise.resolve();
   /**
    * 检测用户主 Chrome Profile 路径（User Data 目录）
    * 优先使用配置中保存的路径，否则自动检测
    */
   async detectMainChromeProfile(): Promise<string | null> {
     // 1. 优先使用配置中的自定义路径
-    const config = await unifiedConfigManager.loadConfig();
+    const config = await unifiedConfigManager.getConfig();
     const customPath = config.settings.browser_profile?.main_profile_path;
     if (customPath && fs.existsSync(customPath)) {
       Logger.info(`[BrowserProfile] 使用配置中的主 Profile 路径: ${customPath}`);
@@ -123,49 +124,115 @@ export class BrowserProfileManager {
   }
 
   /**
-   * 检查 Chrome 是否正在运行
+   * 检查 Chrome 是否正在运行（默认按 chrome.exe，可传入已解析的浏览器 exe 路径按实际进程名查询）
    */
-  async isChromeRunning(): Promise<boolean> {
+  async isChromeRunning(browserExePath?: string): Promise<boolean> {
     try {
       const { execSync } = require('child_process');
       const platform = process.platform;
 
+      // 按传入的浏览器可执行文件名查询：Edge 的进程是 msedge.exe，只查 chrome.exe 会漏判
+      const imageNames = browserExePath
+        ? [path.basename(browserExePath).toLowerCase()]
+        : platform === 'win32'
+          ? ['chrome.exe']
+          : platform === 'darwin'
+            ? ['Google Chrome']
+            : ['chrome', 'chromium'];
+
       if (platform === 'win32') {
-        const output = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', {
-          encoding: 'utf8',
-          timeout: 5000,
-        });
-        return output.toLowerCase().includes('chrome.exe');
+        for (const name of imageNames) {
+          const output = execSync(`tasklist /FI "IMAGENAME eq ${name}" /NH`, {
+            encoding: 'utf8',
+            timeout: 5000,
+          });
+          if (output.toLowerCase().includes(name)) {
+            return true;
+          }
+        }
+        return false;
       } else if (platform === 'darwin') {
-        const output = execSync('pgrep -x "Google Chrome"', {
-          encoding: 'utf8',
-          timeout: 5000,
-        }).trim();
-        return output.length > 0;
+        for (const name of imageNames) {
+          try {
+            const output = execSync(`pgrep -f "${name.replace(/"/g, '')}"`, {
+              encoding: 'utf8',
+              timeout: 5000,
+            }).trim();
+            if (output.length > 0) return true;
+          } catch {
+            // pgrep 无匹配时 exit code 非 0
+          }
+        }
+        return false;
       } else {
-        const output = execSync('pgrep -x chrome || pgrep -x chromium', {
-          encoding: 'utf8',
-          timeout: 5000,
-        }).trim();
-        return output.length > 0;
+        for (const name of imageNames) {
+          try {
+            const output = execSync(`pgrep -f "${name.replace(/"/g, '')}"`, {
+              encoding: 'utf8',
+              timeout: 5000,
+            }).trim();
+            if (output.length > 0) return true;
+          } catch {
+            // pgrep 无匹配时 exit code 非 0
+          }
+        }
+        return false;
       }
     } catch {
-      // pgrep 无匹配时 exit code 非 0
+      // 查询失败时按未运行处理
       return false;
     }
   }
 
   /**
-   * 获取隔离 Profile 根目录
+   * 获取隔离 Profile 根目录（统一到 browser-runtime/profiles，与检测槽位共用命名空间）
    */
   getIsolatedRootDir(): string {
-    const config = unifiedConfigManager.getSites(); // 触发 config 加载的副作用已在上层完成
-    const settings = (unifiedConfigManager as any).config?.settings;
+    const settings = unifiedConfigManager.exportConfigSync()?.settings;
     const customRoot = settings?.browser_profile?.isolated_root_dir;
-    if (customRoot && fs.existsSync(customRoot)) {
+    if (customRoot) {
       return customRoot;
     }
+    return path.join(app.getPath('userData'), 'browser-runtime', 'profiles');
+  }
+
+  /** 旧版隔离 Profile 根目录（userData/browser-profiles），启动时一次性搬迁到新根目录 */
+  private getLegacyIsolatedRootDir(): string {
     return path.join(app.getPath('userData'), ISOLATED_PROFILES_DIR);
+  }
+
+  /** 旧目录存在且新目录为空时整体搬迁，保留其中的登录态（Cookies） */
+  private async migrateLegacyIsolatedRoot(): Promise<void> {
+    const legacyRoot = this.getLegacyIsolatedRootDir();
+    if (!fs.existsSync(legacyRoot)) {
+      return;
+    }
+    const newRoot = this.getIsolatedRootDir();
+    if (newRoot === legacyRoot) {
+      return;
+    }
+    try {
+      await fsp.mkdir(newRoot, { recursive: true });
+      const entries = await fsp.readdir(legacyRoot, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const from = path.join(legacyRoot, entry.name);
+        const to = path.join(newRoot, entry.name);
+        if (fs.existsSync(to)) continue;
+        try {
+          await fsp.rename(from, to);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
+          await fsp.cp(from, to, { recursive: true, errorOnExist: true, force: false });
+          await fsp.rm(from, { recursive: true });
+        }
+        Logger.info(`[BrowserProfile] 隔离 Profile 已迁移: ${from} → ${to}`);
+      }
+      if ((await fsp.readdir(legacyRoot)).length === 0) await fsp.rmdir(legacyRoot);
+      Logger.info(`[BrowserProfile] 旧隔离 Profile 根目录已清理: ${legacyRoot}`);
+    } catch (error: any) {
+      Logger.warn(`[BrowserProfile] 隔离 Profile 迁移失败（沿用原目录）: ${error.message}`);
+    }
   }
 
   /**
@@ -173,7 +240,7 @@ export class BrowserProfileManager {
    * @returns 隔离 Profile 的 userDataDir 路径
    */
   async prepareIsolatedProfile(siteId: string, accountId: string): Promise<string> {
-    await unifiedConfigManager.loadConfig();
+    await unifiedConfigManager.getConfig();
 
     const slotIndex = this.getNextSharedProfileSlot(siteId);
     return this.ensureIsolatedProfileSlot(slotIndex, accountId);
@@ -186,6 +253,9 @@ export class BrowserProfileManager {
     if (!Number.isInteger(slotIndex) || slotIndex < 2) {
       throw new Error(`无效的隔离 Profile 槽位: ${slotIndex}`);
     }
+
+    // 旧版 userData/browser-profiles 一次性迁移到统一根目录
+    await this.migrateLegacyIsolatedRoot();
 
     const profileDir = path.join(this.getIsolatedRootDir(), `${SHARED_PROFILE_PREFIX}${slotIndex}`);
     const alreadyExists = fs.existsSync(profileDir);
@@ -228,10 +298,10 @@ export class BrowserProfileManager {
   }
 
   private getAccountProfileOptionId(
-    account: Pick<AccountCredential, 'auth_source' | 'browser_profile_path'>
+    account: Pick<AccountCredential, 'auth_source' | 'browser_profile_path' | 'automation_slot'>
   ): BrowserProfileOptionId {
     if (account.auth_source === 'main_profile') {
-      return 'main_profile';
+      return account.automation_slot === 0 ? 'internal_profile' : 'main_profile';
     }
 
     if (account.auth_source === 'isolated_profile') {
@@ -273,7 +343,7 @@ export class BrowserProfileManager {
     siteId: string,
     accountId: string
   ): Promise<AccountBrowserProfileOptions> {
-    await unifiedConfigManager.loadConfig();
+    await unifiedConfigManager.getConfig();
     const account = unifiedConfigManager.getAccountById(accountId);
     if (!account || account.site_id !== siteId) {
       throw new Error('未找到对应的站点账户');
@@ -293,6 +363,15 @@ export class BrowserProfileManager {
     }
 
     const options: BrowserProfileOption[] = [
+      {
+        id: 'internal_profile',
+        label: '应用内置浏览器',
+        authSource: 'main_profile',
+        disabled: claimedByOther.has('internal_profile'),
+        disabledReason: claimedByOther.has('internal_profile')
+          ? `已被账户「${claimedByOther.get('internal_profile')}」使用`
+          : undefined,
+      },
       {
         id: 'manual',
         label: '手动添加账户无绑定浏览器',
@@ -344,6 +423,102 @@ export class BrowserProfileManager {
     return { selectedId, options };
   }
 
+  /**
+   * 优先使用已绑定的 Profile 槽位；未绑定账户从槽位 2 开始分配。
+   * 返回槽位号（账户不存在时返回 null）。
+   */
+  ensureAutomationSlot(siteId: string, accountId: string): Promise<number | null> {
+    const task = this.slotAllocationQueue.then(() =>
+      this.allocateAutomationSlot(siteId, accountId)
+    );
+    this.slotAllocationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  private async allocateAutomationSlot(siteId: string, accountId: string): Promise<number | null> {
+    await unifiedConfigManager.getConfig();
+    const account = unifiedConfigManager.getAccountById(accountId);
+    if (!account || account.site_id !== siteId) {
+      return null;
+    }
+    const boundSlot =
+      account.auth_source === 'isolated_profile'
+        ? this.extractSharedProfileSlot(account.browser_profile_path)
+        : null;
+    if (boundSlot !== null) {
+      if (account.automation_slot !== boundSlot) {
+        if (!(await unifiedConfigManager.updateAccount(accountId, { automation_slot: boundSlot })))
+          return null;
+      }
+      return boundSlot;
+    }
+    if (account.auth_source === 'main_profile' && account.automation_slot === undefined) {
+      const slot = account.browser_profile_path ? 1 : 0;
+      if (!(await unifiedConfigManager.updateAccount(accountId, { automation_slot: slot })))
+        return null;
+      return slot;
+    }
+    if (Number.isInteger(account.automation_slot) && account.automation_slot! >= 0) {
+      return account.automation_slot!;
+    }
+
+    const siteAccounts = unifiedConfigManager.getAccountsBySiteId(siteId);
+    const used = new Set<number>();
+    for (const item of siteAccounts) {
+      if (typeof item.automation_slot === 'number') {
+        used.add(item.automation_slot);
+        continue;
+      }
+      const fromPath = this.extractSharedProfileSlot(item.browser_profile_path);
+      if (fromPath !== null) {
+        used.add(fromPath);
+      }
+    }
+
+    let slot = 2;
+    while (used.has(slot)) {
+      slot++;
+    }
+
+    if (!(await unifiedConfigManager.updateAccount(accountId, { automation_slot: slot })))
+      return null;
+    Logger.info(`[BrowserProfile] 已为账户分配自动化槽位: account=${accountId}, slot=${slot}`);
+    return slot;
+  }
+
+  /**
+   * 枚举主浏览器 Profile（从 Local State 的 profile.info_cache，按最近使用排序）。
+   * 取代硬编码的 'Default'：登录过 Chrome 同步账号的机器上活跃 Profile 往往不是 Default。
+   */
+  async listMainBrowserProfiles(): Promise<
+    Array<{ directory: string; label: string; lastActive?: number }>
+  > {
+    const mainProfile = await this.detectMainChromeProfile();
+    if (!mainProfile) {
+      return [];
+    }
+    try {
+      const localState = JSON.parse(
+        fs.readFileSync(path.join(mainProfile, 'Local State'), 'utf-8')
+      );
+      const infoCache = localState?.profile?.info_cache || {};
+      const lastUsed = localState?.profile?.last_used;
+      const list = Object.entries(infoCache).map(([directory, info]: [string, any]) => ({
+        directory,
+        label: info?.name || info?.user_name || directory,
+        lastActive: typeof info?.active_time === 'number' ? info.active_time : undefined,
+      }));
+      list.sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
+      if (list.length === 0 && lastUsed) {
+        list.push({ directory: lastUsed, label: lastUsed, lastActive: undefined });
+      }
+      return list;
+    } catch (error: any) {
+      Logger.warn('[BrowserProfile] 读取主浏览器 Profile 列表失败:', error?.message || error);
+      return [];
+    }
+  }
+
   async bindAccountProfile(
     siteId: string,
     accountId: string,
@@ -361,10 +536,19 @@ export class BrowserProfileManager {
       throw new Error('所选隔离浏览器缺少 Profile 路径');
     }
 
+    const isolatedSlot = this.extractSharedProfileSlot(option.browserProfilePath);
     const updated = await unifiedConfigManager.updateAccount(accountId, {
       auth_source: option.authSource,
       browser_profile_path:
         option.authSource === 'isolated_profile' ? option.browserProfilePath : undefined,
+      automation_slot:
+        option.id === 'internal_profile'
+          ? 0
+          : option.authSource === 'main_profile'
+            ? 1
+            : option.authSource === 'isolated_profile' && isolatedSlot !== null
+              ? isolatedSlot
+              : undefined,
     });
     if (!updated) {
       throw new Error('浏览器 Profile 绑定保存失败');
@@ -467,6 +651,14 @@ export class BrowserProfileManager {
           createdSlots++;
         }
 
+        // 恢复后同步持久化槽位号，检测/签到链路不再按账户列表位置计算
+        const mutableAccount = account as typeof account & { automation_slot?: number };
+        if (mutableAccount.automation_slot !== slot) {
+          mutableAccount.automation_slot = slot;
+          dirty = true;
+          reboundAccounts++;
+        }
+
         if (account.browser_profile_path !== profileDir) {
           account.browser_profile_path = profileDir;
           dirty = true;
@@ -551,6 +743,10 @@ export class BrowserProfileManager {
       const parsedSlot = this.extractSharedProfileSlot(account.browser_profile_path);
       if (parsedSlot !== null) {
         usedSlots.add(parsedSlot);
+        continue;
+      }
+      if (Number.isInteger(account.automation_slot) && account.automation_slot! >= 2) {
+        usedSlots.add(account.automation_slot!);
         continue;
       }
 
@@ -682,11 +878,15 @@ export class BrowserProfileManager {
       };
     }
 
+    // 使用最近活跃的 Profile 目录，而非硬编码 'Default'（登录过同步账号的机器活跃 Profile 常非 Default）
+    const profiles = await this.listMainBrowserProfiles();
+    const profileDirectory = profiles[0]?.directory || 'Default';
+
     return {
       success: true,
       options: {
         userDataDir: mainProfile,
-        profileDirectory: 'Default',
+        profileDirectory,
       },
     };
   }
@@ -703,7 +903,18 @@ export class BrowserProfileManager {
     error?: string;
   }> {
     try {
-      const profileDir = await this.prepareIsolatedProfile(siteId, accountId);
+      await unifiedConfigManager.getConfig();
+      const account = unifiedConfigManager.getAccountById(accountId);
+      if (account && account.site_id !== siteId) throw new Error('账户不属于当前站点');
+      const boundPath =
+        account?.auth_source === 'isolated_profile' ? account.browser_profile_path : undefined;
+      const boundSlot = this.extractSharedProfileSlot(boundPath);
+      const profileDir =
+        boundPath && fs.existsSync(boundPath)
+          ? boundPath
+          : boundSlot !== null
+            ? await this.ensureIsolatedProfileSlot(boundSlot, accountId)
+            : await this.prepareIsolatedProfile(siteId, accountId);
       return {
         success: true,
         options: { userDataDir: profileDir },

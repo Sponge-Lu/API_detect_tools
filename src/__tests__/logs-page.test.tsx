@@ -1377,7 +1377,6 @@ describe('LogsPage', () => {
       .getAllByText('失败')
       .find(element => element.parentElement?.textContent === '失败1');
     expect(failureStat?.parentElement).toHaveTextContent('失败1');
-    expect(screen.getByText('1 条')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
 
@@ -1401,7 +1400,6 @@ describe('LogsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
 
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(4);
-    expect(screen.getByText('4 条')).toBeInTheDocument();
   });
 
   it('shows upstream failure details without repeating the status code', async () => {

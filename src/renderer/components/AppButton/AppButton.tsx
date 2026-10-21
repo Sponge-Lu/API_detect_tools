@@ -1,7 +1,7 @@
 import React, { forwardRef } from 'react';
 
 export interface AppButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'tertiary' | 'danger';
+  variant?: 'primary' | 'secondary' | 'tertiary' | 'danger' | 'success';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
 }
@@ -15,6 +15,8 @@ const variantStyles: Record<NonNullable<AppButtonProps['variant']>, string> = {
     'border border-transparent bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-2)]',
   danger:
     'border border-transparent bg-[var(--danger-soft)] text-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_20%,transparent)]',
+  success:
+    'border border-transparent bg-[var(--success-soft)] text-[var(--success)] hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)]',
 };
 
 const sizeStyles: Record<NonNullable<AppButtonProps['size']>, string> = {

@@ -123,7 +123,7 @@ export function DataTableHeader({
     ? `
     sticky
     top-0
-    z-10
+    z-[var(--z-sticky)]
     backdrop-blur-[12px]
   `
         .replace(/\s+/g, ' ')

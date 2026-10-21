@@ -73,7 +73,7 @@ describe('app shell redesign', () => {
     expect(screen.queryByRole('button', { name: '自定义CLI' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '站点检测' })).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: APP_PAGE_META.credit.navLabel })
+      screen.queryByRole('button', { name: 'LDC 积分' })
     ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '本地路由' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '路由日志' })).toBeInTheDocument();
@@ -87,7 +87,7 @@ describe('app shell redesign', () => {
       within(nav as HTMLElement)
         .getAllByRole('button')
         .map(button => button.getAttribute('aria-label'))
-    ).toEqual(['数据总览', '站点管理', '本地路由', '模型映射', '路由设置', '路由日志', '设置']);
+    ).toEqual(['数据总览', '站点管理', '本地路由', '路由模型', '路由日志', '设置']);
   });
 
   it('supports manual sidebar mode switching and keeps version/update info in the bottom section', () => {
@@ -378,10 +378,6 @@ describe('app shell redesign', () => {
       CustomCliPage: () => <div>Mock CLI Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/CreditPage', () => ({
-      CreditPage: () => <div>Mock Credit Page</div>,
-    }));
-
     vi.doMock('../renderer/pages/SettingsPage', () => ({
       SettingsPage: () => <div>Mock Settings Page</div>,
     }));
@@ -396,10 +392,6 @@ describe('app shell redesign', () => {
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
       RoutePage: () => <div>Mock Route Page</div>,
-    }));
-
-    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
-      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
     }));
 
     vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
@@ -667,10 +659,6 @@ describe('app shell redesign', () => {
       RoutePage: () => <div>Mock Route Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
-      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
-    }));
-
     vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
       RouteSettingsPage: () => <div>Mock Route Settings Page</div>,
     }));
@@ -894,10 +882,6 @@ describe('app shell redesign', () => {
       RoutePage: () => <div>Mock Route Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
-      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
-    }));
-
     vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
       RouteSettingsPage: () => <div>Mock Route Settings Page</div>,
     }));
@@ -1087,10 +1071,6 @@ describe('app shell redesign', () => {
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
       RoutePage: () => <div>Mock Route Page</div>,
-    }));
-
-    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
-      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
     }));
 
     vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
@@ -1300,8 +1280,7 @@ describe('app shell redesign', () => {
     expect(screen.queryByRole('button', { name: '检测设置' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('请求超时时间 (秒)')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '云端备份' }));
-
+    // 设置页已取消子 tab，云端备份区块直接纵向渲染在页面中
     const serverInput = await screen.findByLabelText('服务器地址');
     expect(serverInput).toHaveClass(
       'bg-[var(--surface-2)]',

@@ -1,5 +1,5 @@
 /**
- * 输入: Hooks (useTheme, useUpdate, useDataLoader), Store (configStore, uiStore, toastStore), Pages (SitesPage, CustomCliPage, CreditPage, SettingsPage)
+ * 输入: Hooks (useTheme, useUpdate, useDataLoader), Store (configStore, uiStore, toastStore), Pages (SitesPage, SettingsPage)
  * 输出: React 组件树, UI 状态管理, IPC 事件处理
  * 定位: 展示层 - 根组件，管理主布局、初始化和全局弹窗
  */
@@ -62,12 +62,15 @@ import type {
 } from '../shared/types/endpoint-test';
 import type { ThemeMode } from '../shared/theme/themePresets';
 import type {
+  ConfigFileBackupInput,
+  PreviewConfigFileBackupRestoreInput,
   CommitConfigFileProfileInput,
   ConfigFileTargetCatalogEntry,
   ConfigFileResolvedTargetValues,
   ConfigFilePreviewTransaction,
   ConfigFileProfile,
   ConfigFileSnapshot,
+  ConfigFileBackup,
   ConfigSessionRecordScanResult,
   DeleteConfigFileProfileInput,
   GenerateConfigFileProfileRouteKeyInput,
@@ -75,11 +78,11 @@ import type {
   PreviewConfigFileProfileInput,
   PreviewConfigFileProfileRouteKeyRotationInput,
   RestoreBuiltinConfigFileProfileInput,
+  SwitchBuiltinConfigFileProfileAuthModeInput,
   ResolveConfigFileProfileValuesInput,
   UpsertConfigFileProfileInput,
   ValidateSessionRecordConnectorInput,
 } from '../shared/types/config-file-profile';
-import { LDC_UI_VISIBILITY } from '../shared/constants';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入页面组件（懒加载）
@@ -87,12 +90,8 @@ const SitesPage = lazy(() => import('./pages/SitesPage').then(m => ({ default: m
 const DataOverviewPage = lazy(() =>
   import('./pages/DataOverviewPage').then(m => ({ default: m.DataOverviewPage }))
 );
-const CreditPage = lazy(() => import('./pages/CreditPage').then(m => ({ default: m.CreditPage })));
 const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })));
 const RoutePage = lazy(() => import('./pages/RoutePage').then(m => ({ default: m.RoutePage })));
-const ModelMappingPage = lazy(() =>
-  import('./pages/ModelMappingPage').then(m => ({ default: m.ModelMappingPage }))
-);
 const RouteSettingsPage = lazy(() =>
   import('./pages/RouteSettingsPage').then(m => ({ default: m.RouteSettingsPage }))
 );
@@ -148,11 +147,6 @@ declare global {
         forceAcceptEmpty?: boolean,
         accountId?: string
       ) => Promise<DetectionResult>;
-      detectAllSites: (
-        config: Config,
-        quickRefresh?: boolean,
-        cachedResults?: DetectionResult[]
-      ) => Promise<DetectionResult[]>;
       openUrl: (url: string) => Promise<void>;
       getAllAccounts: () => Promise<any[]>;
       token?: any;
@@ -303,15 +297,6 @@ declare global {
         minimizeToTray: () => Promise<{ success: boolean; error?: string }>;
         quitApp: () => Promise<{ success: boolean; error?: string }>;
       };
-      credit?: {
-        fetch: () => Promise<{ success: boolean; data?: any; error?: string }>;
-        login: () => Promise<{ success: boolean; message?: string; error?: string }>;
-        logout: () => Promise<{ success: boolean; error?: string }>;
-        getStatus: () => Promise<{ success: boolean; data?: boolean; error?: string }>;
-        saveConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
-        loadConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
-        getCached: () => Promise<{ success: boolean; data?: any; error?: string }>;
-      };
       accounts?: {
         list: (siteId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
         add: (data: {
@@ -320,8 +305,10 @@ declare global {
           user_id: string;
           username?: string;
           access_token: string;
+          api_key?: string;
           auth_source: string;
           browser_profile_path?: string;
+          automation_slot?: number;
           anyRouterConfig?: { userHash?: string };
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
         update: (
@@ -329,6 +316,7 @@ declare global {
           updates: {
             account_name?: string;
             access_token?: string;
+            api_key?: string;
             user_id?: string;
             auto_refresh?: boolean;
             auto_refresh_interval?: number;
@@ -431,7 +419,15 @@ declare global {
           input: ResolveConfigFileProfileValuesInput
         ) => Promise<ConfigFileResolvedTargetValues>;
         restoreBuiltin: (input: RestoreBuiltinConfigFileProfileInput) => Promise<ConfigFileProfile>;
+        restoreMissingBuiltins: () => Promise<ConfigFileProfile[]>;
+        switchAuthMode: (
+          input: SwitchBuiltinConfigFileProfileAuthModeInput
+        ) => Promise<ConfigFileProfile>;
         readFiles: (profileId: string) => Promise<ConfigFileSnapshot[]>;
+        listBackups: (input: ConfigFileBackupInput) => Promise<ConfigFileBackup[]>;
+        previewBackupRestore: (
+          input: PreviewConfigFileBackupRestoreInput
+        ) => Promise<ConfigFilePreviewTransaction>;
         preview: (input: PreviewConfigFileProfileInput) => Promise<ConfigFilePreviewTransaction>;
         previewRouteKeyRotation: (
           input: PreviewConfigFileProfileRouteKeyRotationInput
@@ -455,13 +451,13 @@ declare global {
         resetPathStates: (
           params?: RoutePathStateResetParams
         ) => Promise<{ success: boolean; data?: { cleared: number }; error?: string }>;
-        getHealth: () => Promise<{ success: boolean; data?: any; error?: string }>;
-        runHealthCheck: () => Promise<{ success: boolean; error?: string }>;
         getRuntimeStatus: () => Promise<{ success: boolean; data?: any; error?: string }>;
         startServer: () => Promise<{ success: boolean; error?: string }>;
         stopServer: () => Promise<{ success: boolean; error?: string }>;
         regenerateApiKey: () => Promise<{ success: boolean; data?: any; error?: string }>;
         getModelRegistry: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        refreshModelMetadata: () => Promise<{ success: boolean; error?: string }>;
+        onModelMetadataUpdated: (callback: () => void) => () => void;
         rebuildModelRegistry: (params?: {
           force?: boolean;
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
@@ -495,8 +491,8 @@ declare global {
           error?: string;
         }>;
         createArmedRouteInstance?: (input: {
-          modelId: string;
-          reasoningEffort: string;
+          modelId?: string;
+          reasoningEffort?: string;
         }) => Promise<{ success: boolean; data?: RouteInstance; error?: string }>;
         updateRouteInstance?: (
           instanceId: string,
@@ -682,12 +678,15 @@ function App() {
   } = useUIStore();
 
   const rawActiveTab = activeTab as string;
+  // 兼容旧版本持久化的标签页 id（redirection/proxystats → route, model-mapping → config-files, credit → sites）
   const visibleActiveTab: VisibleTabId =
     rawActiveTab === 'redirection' || rawActiveTab === 'proxystats'
       ? 'route'
-      : !LDC_UI_VISIBILITY.showCreditTab && rawActiveTab === 'credit'
-        ? 'sites'
-        : (rawActiveTab as VisibleTabId);
+      : rawActiveTab === 'model-mapping'
+        ? 'config-files'
+        : rawActiveTab === 'credit'
+          ? 'sites'
+          : (rawActiveTab as VisibleTabId);
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
@@ -695,8 +694,9 @@ function App() {
     null
   );
   const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
-  const [modelMappingPageHeaderActions, setModelMappingPageHeaderActions] =
+  const [routeSettingsPageHeaderActions, setRouteSettingsPageHeaderActions] =
     useState<ReactNode | null>(null);
+  const [logsPageHeaderActions, setLogsPageHeaderActions] = useState<ReactNode | null>(null);
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
@@ -965,9 +965,11 @@ function App() {
       ? overviewPageHeaderActions
       : visibleActiveTab === 'sites'
         ? sitesPageHeaderActions
-        : visibleActiveTab === 'model-mapping'
-          ? modelMappingPageHeaderActions
-          : null;
+        : visibleActiveTab === 'config-files'
+          ? routeSettingsPageHeaderActions
+          : visibleActiveTab === 'logs'
+            ? logsPageHeaderActions
+            : null;
 
   if (!config) {
     return (
@@ -1039,26 +1041,10 @@ function App() {
             </div>
             <div
               className={
-                visibleActiveTab === 'credit' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-              }
-            >
-              <CreditPage />
-            </div>
-            <div
-              className={
                 visibleActiveTab === 'route' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
               }
             >
               <RoutePage />
-            </div>
-            <div
-              className={
-                visibleActiveTab === 'model-mapping'
-                  ? 'flex-1 flex flex-col overflow-hidden'
-                  : 'hidden'
-              }
-            >
-              <ModelMappingPage setPageHeaderActions={setModelMappingPageHeaderActions} />
             </div>
             <div
               className={
@@ -1067,14 +1053,14 @@ function App() {
                   : 'hidden'
               }
             >
-              <RouteSettingsPage />
+              <RouteSettingsPage setPageHeaderActions={setRouteSettingsPageHeaderActions} />
             </div>
             <div
               className={
                 visibleActiveTab === 'logs' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
               }
             >
-              <LogsPage />
+              <LogsPage setPageHeaderActions={setLogsPageHeaderActions} />
             </div>
 
             <div
@@ -1131,18 +1117,27 @@ function App() {
 
             try {
               const timeout = config.settings?.timeout ?? 30;
+              // 透传 accountId：主进程使用该账户凭证检测（并支持 token 失效自动补发重试）
               const result = await window.electronAPI.detectSite(
                 site,
                 timeout,
                 false,
                 undefined,
-                true
+                true,
+                accountId
               );
 
-              const filtered = results.filter(r => r.name !== site.name);
-              setResults([...filtered, result]);
+              const normalized = accountId ? { ...result, accountId } : result;
+              const filtered = results.filter(r =>
+                accountId
+                  ? !(r.name === site.name && r.accountId === accountId)
+                  : r.name !== site.name
+              );
+              setResults([...filtered, normalized]);
 
-              const existingResult = results.find(r => r.name === siteName);
+              const existingResult = results.find(
+                r => r.name === siteName && (accountId ? r.accountId === accountId : true)
+              );
               const hasChanges =
                 !existingResult ||
                 existingResult.status !== result.status ||

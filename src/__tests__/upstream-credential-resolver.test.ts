@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   updateAccountCachedData: vi.fn(),
   loadCustomCliConfigStorage: vi.fn(),
   resolveUsableApiKeyValue: vi.fn(),
+  ensureAutomationSlot: vi.fn(),
+}));
+
+vi.mock('../main/browser-profile-manager', () => ({
+  browserProfileManager: { ensureAutomationSlot: mocks.ensureAutomationSlot },
 }));
 
 vi.mock('../main/unified-config-manager', () => ({
@@ -28,8 +33,32 @@ import {
 } from '../main/upstream-credential-resolver';
 
 describe('upstream-credential-resolver', () => {
+  it.each([
+    ['remote', 'sk-plain-secret'],
+    ['local', 'plain-secret'],
+  ])('uses the %s local-record source', async (source, expected) => {
+    mocks.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-a', url: 'https://site-a.example' }],
+      accounts: [
+        {
+          id: 'account-a',
+          site_id: 'site-a',
+          local_api_keys: [{ id: 'local-key', key: 'plain-secret', source }],
+        },
+      ],
+    });
+    await expect(
+      resolveUpstreamCredentials({
+        kind: 'managed',
+        siteId: 'site-a',
+        accountId: 'account-a',
+        apiKeyId: 'local-key',
+      })
+    ).resolves.toMatchObject({ apiKey: expected });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.ensureAutomationSlot.mockResolvedValue(7);
     configureUpstreamApiKeyResolver({
       resolveUsableApiKeyValue: mocks.resolveUsableApiKeyValue,
     });
@@ -105,7 +134,7 @@ describe('upstream-credential-resolver', () => {
       })
     ).resolves.toEqual({
       baseUrl: 'https://site-a.example',
-      apiKey: 'resolved-secret',
+      apiKey: 'sk-resolved-secret',
       authScheme: 'x-api-key',
     });
 
@@ -114,7 +143,7 @@ describe('upstream-credential-resolver', () => {
       7,
       'access-token',
       expect.objectContaining({ id: 'key-1' }),
-      expect.objectContaining({ browserSlot: 1, allowBrowserFallback: true })
+      expect.objectContaining({ browserSlot: 7, allowBrowserFallback: true })
     );
     expect(mocks.updateAccountCachedData).toHaveBeenCalledWith('account-a', expect.any(Function));
   });

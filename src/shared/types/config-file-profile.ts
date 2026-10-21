@@ -42,7 +42,15 @@ export type ConfigFileTarget =
 
 export type ConfigFileApplyMode = 'merge' | 'overwrite';
 export type ConfigFileFormat = 'auto' | 'json' | 'toml' | 'env' | 'text';
-export type ConfigFileOperation = 'apply' | 'direct-edit' | 'key-rotation';
+export type ConfigFileOperation = 'apply' | 'direct-edit' | 'key-rotation' | 'backup-restore';
+
+export const CONFIG_FILE_AUTH_MODES = ['third-party', 'official'] as const;
+export type ConfigFileAuthMode = (typeof CONFIG_FILE_AUTH_MODES)[number];
+export const DEFAULT_CONFIG_FILE_AUTH_MODE: ConfigFileAuthMode = 'third-party';
+
+export function normalizeConfigFileAuthMode(value: unknown): ConfigFileAuthMode {
+  return value === 'official' ? 'official' : DEFAULT_CONFIG_FILE_AUTH_MODE;
+}
 
 export const DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS = {
   baseUrl: '{{BASE_URL}}',
@@ -108,6 +116,8 @@ export interface ConfigFileProfile {
   id: string;
   name: string;
   agentLogoId?: AgentLogoId;
+  /** Third-party API configuration or the client's official account login. */
+  authMode?: ConfigFileAuthMode;
   /** Route credential identity without managed configuration files. */
   credentialOnly?: boolean;
   files: ConfigFileDefinition[];
@@ -142,6 +152,25 @@ export interface ConfigFileProfileLocalRouteCredential {
   apiKey: string;
   createdAt: number;
   rotatedAt?: number;
+}
+
+export interface ConfigFileBackup {
+  id: string;
+  kind: 'original' | 'snapshot' | 'legacy';
+  createdAt: number;
+  size: number;
+  sha256: string;
+}
+
+export interface ConfigFileBackupInput {
+  profileId: string;
+  fileId: string;
+}
+
+export interface PreviewConfigFileBackupRestoreInput extends ConfigFileBackupInput {
+  backupId: string;
+  expectedHash: string;
+  expectedRevision?: number;
 }
 
 export interface ConfigFileSnapshot {
@@ -218,6 +247,12 @@ export interface DeleteConfigFileProfileInput {
 
 export interface RestoreBuiltinConfigFileProfileInput {
   profileId: string;
+  expectedRevision?: number;
+}
+
+export interface SwitchBuiltinConfigFileProfileAuthModeInput {
+  profileId: string;
+  authMode: ConfigFileAuthMode;
   expectedRevision?: number;
 }
 

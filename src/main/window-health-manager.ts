@@ -1,9 +1,29 @@
-import type { RenderProcessGoneDetails, WebContents } from 'electron';
+import type { BrowserWindow, RenderProcessGoneDetails, WebContents } from 'electron';
 
 const RECOVERY_RETRY_URL = 'apihub-recovery://retry';
 const DEFAULT_MAX_RECOVERIES = 1;
 const DEFAULT_UNRESPONSIVE_TIMEOUT_MS = 5000;
 const DEFAULT_STABILITY_WINDOW_MS = 30000;
+
+export async function loadApplicationRenderer(
+  window: Pick<BrowserWindow, 'loadURL' | 'loadFile'>,
+  options: { isPackaged: boolean; htmlPath: string; devServerUrl?: string }
+): Promise<void> {
+  if (!options.isPackaged && options.devServerUrl) {
+    const url = new URL(options.devServerUrl);
+    if (
+      url.protocol !== 'http:' ||
+      !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ||
+      url.username ||
+      url.password
+    ) {
+      throw new Error('Development renderer must use a local HTTP server');
+    }
+    await window.loadURL(url.href);
+    return;
+  }
+  await window.loadFile(options.htmlPath);
+}
 
 export interface RendererHealthLogger {
   error: (...args: unknown[]) => void;

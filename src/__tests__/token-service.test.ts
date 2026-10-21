@@ -71,7 +71,9 @@ async function loadTokenServiceModule(
   }));
 
   vi.doMock('../main/utils/page-exec-queue', () => ({
-    runOnPageQueue: options?.runOnPageQueueImpl ? vi.fn(options.runOnPageQueueImpl) : vi.fn(),
+    runOnPageQueue: options?.runOnPageQueueImpl
+      ? vi.fn(options.runOnPageQueueImpl)
+      : vi.fn(async (_page: object, task: () => Promise<unknown>) => task()),
   }));
 
   return {
@@ -88,6 +90,7 @@ async function loadApiServiceModule(options?: {
   siteCachedData?: DetectionCacheData;
   accountUserId?: string;
   accountAccessToken?: string;
+  routeAuthScheme?: 'bearer' | 'x-api-key';
 }) {
   vi.resetModules();
 
@@ -123,6 +126,7 @@ async function loadApiServiceModule(options?: {
         site_id: 'site-1',
         user_id: options?.accountUserId,
         access_token: options?.accountAccessToken,
+        routeAuthScheme: options?.routeAuthScheme,
         cached_data: options?.accountCachedData,
       })),
       updateAccountCachedData,
@@ -218,6 +222,7 @@ async function loadTokenHandlersModule(options?: {
   vi.doMock('../main/unified-config-manager', () => ({
     unifiedConfigManager: {
       loadConfig: vi.fn(async () => true),
+      getConfig: vi.fn(async () => true),
       getSiteById: vi.fn(() => ({
         id: 'site-1',
         url: 'https://demo.example.com',
@@ -262,6 +267,7 @@ async function loadTokenHandlersModule(options?: {
     browserProfileManager: {
       detectMainChromeProfile,
       getIsolatedProfileLaunchOptions,
+      ensureAutomationSlot: vi.fn(async () => 4),
     },
   }));
 
@@ -1203,6 +1209,80 @@ describe('token-service API key 保留', () => {
     expect(httpGet).toHaveBeenCalledTimes(1);
   });
 
+  it('fetchApiTokens 遇到 TLS 握手错误时应回退到浏览器获取 API Key', async () => {
+    const tlsError: any = new Error('write EPROTO: SSLV3_ALERT_HANDSHAKE_FAILURE');
+    tlsError.code = 'EPROTO';
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+      httpGetImpl: async () => {
+        throw tlsError;
+      },
+    });
+    const page = {
+      evaluate: vi.fn(async () => ({
+        success: true,
+        data: [{ id: 42, name: 'primary', key: 'sk-anyrouter-raw-12345678' }],
+      })),
+      close: vi.fn(async () => undefined),
+    };
+    const release = vi.fn();
+    const chromeManager = {
+      createPage: vi.fn(async () => ({ page, release })),
+    };
+    const service = new TokenService(chromeManager as any);
+    vi.spyOn(service as any, 'waitForCloudflareChallengeToPass').mockResolvedValue(undefined);
+
+    const tokens = await service.fetchApiTokens('https://anyrouter.top', 7, 'site-access-token', {
+      siteType: 'newapi',
+    });
+
+    expect(tokens).toEqual([
+      { id: 42, name: 'primary', key: 'sk-anyrouter-raw-12345678', group: 'default' },
+    ]);
+    expect(httpGet).toHaveBeenCalledTimes(1);
+    expect(chromeManager.createPage).toHaveBeenCalledWith('https://anyrouter.top', {
+      slot: undefined,
+    });
+    expect(page.evaluate).toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('fetchApiTokens 遇到 Axios 超时时应回退到浏览器获取 API Key', async () => {
+    const timeoutError: any = new Error('timeout of 10000ms exceeded');
+    timeoutError.code = 'ECONNABORTED';
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+      httpGetImpl: async () => {
+        throw timeoutError;
+      },
+    });
+    const page = {
+      evaluate: vi.fn(async () => ({
+        success: true,
+        data: [{ id: 42, name: 'primary', key: 'sk-agentrouter-raw-12345678' }],
+      })),
+      close: vi.fn(async () => undefined),
+    };
+    const release = vi.fn();
+    const chromeManager = {
+      createPage: vi.fn(async () => ({ page, release })),
+    };
+    const service = new TokenService(chromeManager as any);
+    vi.spyOn(service as any, 'waitForCloudflareChallengeToPass').mockResolvedValue(undefined);
+
+    const tokens = await service.fetchApiTokens('https://agentrouter.org', 7, 'site-access-token', {
+      siteType: 'newapi',
+    });
+
+    expect(tokens).toEqual([
+      { id: 42, name: 'primary', key: 'sk-agentrouter-raw-12345678', group: 'default' },
+    ]);
+    expect(httpGet).toHaveBeenCalledTimes(1);
+    expect(chromeManager.createPage).toHaveBeenCalledWith('https://agentrouter.org', {
+      slot: undefined,
+    });
+  });
+
   it('fetchModelPricing 显式 newapi 应使用 /api/pricing 而不是 URL 反查出的 sub2api 类型', async () => {
     const { TokenService, httpGet } = await loadTokenServiceModule(null, {
       siteType: 'sub2api',
@@ -1760,11 +1840,6 @@ describe('api-service API key 持久化', () => {
       todayRequests: 0,
       pageRelease: undefined,
     });
-    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
-      ldcPaymentSupported: false,
-      ldcExchangeRate: undefined,
-      ldcPaymentType: undefined,
-    });
 
     const result = await service.detectSite(
       {
@@ -1853,11 +1928,6 @@ describe('api-service API key 持久化', () => {
       todayRequests: 1,
       pageRelease: undefined,
     });
-    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
-      ldcPaymentSupported: false,
-      ldcExchangeRate: undefined,
-      ldcPaymentType: undefined,
-    });
 
     const result = await service.detectSite(
       {
@@ -1879,30 +1949,80 @@ describe('api-service API key 持久化', () => {
       'https://demo.example.com',
       42,
       'account-token',
-      { siteType: 'newapi' }
+      { siteType: 'newapi', proxyUrl: undefined }
     );
     expect(tokenService.fetchUserGroups).toHaveBeenCalledWith(
       'https://demo.example.com',
       42,
       'account-token',
       null,
-      'newapi'
+      'newapi',
+      { proxyUrl: undefined }
     );
     expect(tokenService.fetchModelPricing).toHaveBeenCalledWith(
       'https://demo.example.com',
       42,
       'account-token',
       null,
-      'newapi'
+      'newapi',
+      { proxyUrl: undefined }
     );
     expect(result.apiKeys).toEqual(apiKeys);
     expect(result.userGroups).toEqual(userGroups);
+    expect(result.issues).toEqual([]);
 
     const updater = updateAccountCachedData.mock.calls[0][1];
     const next = updater(undefined);
     expect(next.api_keys).toEqual(apiKeys);
     expect(next.user_groups).toEqual(userGroups);
     expect(next.model_pricing).toEqual(modelPricing);
+  });
+
+  it('刷新发现 API Key 所属分组缺失时应返回可展示的异常信息', async () => {
+    const { ApiService } = await loadApiServiceModule({
+      accountUserId: '42',
+      accountAccessToken: 'account-token',
+    });
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => [{ id: 1, name: 'key-a', group: 'vip' }]),
+      fetchUserGroups: vi.fn(async () => ({ default: { desc: '默认分组', ratio: 1 } })),
+      fetchModelPricing: vi.fn(async () => ({ data: {} })),
+      checkSiteSupportsCheckIn: vi.fn(async () => false),
+    };
+    const service = new ApiService(tokenService);
+
+    vi.spyOn(service as any, 'getModels').mockResolvedValue({
+      models: ['gpt-4o-mini'],
+      page: null,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'getBalanceAndUsage').mockResolvedValue({
+      balance: 12,
+      todayUsage: 1,
+      todayPromptTokens: 10,
+      todayCompletionTokens: 2,
+      todayTotalTokens: 12,
+      todayRequests: 1,
+      pageRelease: undefined,
+    });
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'NewAPI Site',
+        url: 'https://demo.example.com',
+        site_type: 'newapi',
+        system_token: 'stale-site-token',
+        user_id: '1',
+      } as any,
+      30,
+      true,
+      undefined,
+      false,
+      { accountId: 'acct-1' }
+    );
+
+    expect(result.issues).toEqual(['API Key「key-a」所属分组「vip」不在当前用户分组列表中']);
   });
 
   it('NewAPI 系统模型端点为空时应继续获取扩展数据并从定价恢复模型', async () => {
@@ -1938,11 +2058,6 @@ describe('api-service API key 持久化', () => {
       todayTotalTokens: 12,
       todayRequests: 1,
       pageRelease: undefined,
-    });
-    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
-      ldcPaymentSupported: false,
-      ldcExchangeRate: undefined,
-      ldcPaymentType: undefined,
     });
 
     const result = await service.detectSite(
@@ -2012,11 +2127,6 @@ describe('api-service API key 持久化', () => {
       todayTotalTokens: 0,
       todayRequests: 0,
       pageRelease: undefined,
-    });
-    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
-      ldcPaymentSupported: false,
-      ldcExchangeRate: undefined,
-      ldcPaymentType: undefined,
     });
 
     const result = await service.detectSite(
@@ -2109,6 +2219,31 @@ describe('api-service API key 持久化', () => {
 
     expect(result).toEqual({ models: [] });
     expect((service as any).fetchWithBrowserFallback).not.toHaveBeenCalled();
+  });
+
+  it('uses the saved account auth scheme without duplicating v1 or altering manual keys', async () => {
+    const { ApiService } = await loadApiServiceModule({
+      siteType: 'newapi',
+      routeAuthScheme: 'x-api-key',
+    });
+    const service = new ApiService();
+    const fetch = vi.fn(async () => ({ result: ['model-a'] }));
+    (service as any).fetchWithBrowserFallback = fetch;
+    await (service as any).getModels(
+      { url: 'https://example.com/v1', site_type: 'newapi', api_key: 'plain-manual' },
+      3000,
+      false,
+      { accountId: 'acct-1' }
+    );
+    expect(fetch.mock.calls[0]).toEqual(
+      expect.arrayContaining([
+        'https://example.com/v1/models',
+        expect.objectContaining({ 'x-api-key': 'plain-manual' }),
+      ])
+    );
+    expect((service as any).resolveRepresentativeApiKeyValue([{ key: 'plain-remote' }])).toBe(
+      'sk-plain-remote'
+    );
   });
 
   it('api_key 鉴权下 /v1/models 返回 code/message 且无 data 时，应提示 API Key 失效而不是登录过期', async () => {

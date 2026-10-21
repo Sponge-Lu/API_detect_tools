@@ -41,7 +41,6 @@ interface RouteState {
   // Actions - 服务器
   startServer: () => Promise<boolean>;
   stopServer: () => Promise<boolean>;
-  runHealthCheck: () => Promise<void>;
   regenerateApiKey: () => Promise<string | null>;
 
   // Actions - 模型注册表
@@ -72,6 +71,8 @@ function mergeModelRegistryIntoRouteConfig(
 ): RoutingConfig | null {
   return config ? { ...config, modelRegistry } : null;
 }
+
+let serverStatusRevision = 0;
 
 export const useRouteStore = create<RouteState>((set, get) => ({
   config: null,
@@ -121,9 +122,10 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   fetchRuntimeStatus: async () => {
+    const revision = serverStatusRevision;
     try {
       const res = await window.electronAPI.route?.getRuntimeStatus();
-      if (res?.success && res.data) {
+      if (revision === serverStatusRevision && res?.success && res.data) {
         set({ serverRunning: res.data.running });
       }
     } catch {
@@ -195,31 +197,41 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   startServer: async () => {
+    serverStatusRevision += 1;
     const res = await window.electronAPI.route?.startServer();
     if (res?.success) {
-      set({ serverRunning: true });
+      serverStatusRevision += 1;
+      set(state => ({
+        serverRunning: true,
+        config: state.config
+          ? { ...state.config, server: { ...state.config.server, enabled: true } }
+          : null,
+      }));
       sessionEventLog.success('route', '代理服务器已启动');
       return true;
     }
     sessionEventLog.error('route', '代理服务器启动失败');
+    await get().fetchRuntimeStatus();
     return false;
   },
 
   stopServer: async () => {
+    serverStatusRevision += 1;
     const res = await window.electronAPI.route?.stopServer();
     if (res?.success) {
-      set({ serverRunning: false });
+      serverStatusRevision += 1;
+      set(state => ({
+        serverRunning: false,
+        config: state.config
+          ? { ...state.config, server: { ...state.config.server, enabled: false } }
+          : null,
+      }));
       sessionEventLog.info('route', '代理服务器已停止');
       return true;
     }
     sessionEventLog.error('route', '代理服务器停止失败');
+    await get().fetchRuntimeStatus();
     return false;
-  },
-
-  runHealthCheck: async () => {
-    await window.electronAPI.route?.runHealthCheck();
-    await get().fetchConfig();
-    sessionEventLog.info('route', '已执行路由健康检查');
   },
 
   regenerateApiKey: async () => {

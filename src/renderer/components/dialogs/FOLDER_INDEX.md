@@ -28,13 +28,13 @@
 | **SiteGroupDialog.tsx** | 站点分组对话框 | `SiteGroupDialog` 组件，支持创建和编辑分组 |
 | **ApplyConfigPopover.tsx** | 应用配置弹出菜单 | 支持四种内置 CLI；OpenCode 与 Grok Build 仅允许合并写入 |
 | **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | 四种内置 CLI 卡片常驻展开，紧凑配置 API Key、使用模型与上游协议，配置预览按需折叠 |
-| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | Tab1 编辑 Base URL/模型 URL/加油站链接（紧凑表单规格与 Tab2 一致）；Tab2 管理真实多 API Key；数字分组自动圆圈化，模型名下显示所属分组、计费方式与价格；四种内置 CLI 配置预览按需折叠 |
+| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | Tab1 编辑 Base URL/模型 URL/加油站链接（紧凑表单规格与 Tab2 一致）；Tab2 管理真实多 API Key，Key 分组输入带已有分组建议；数字分组自动圆圈化，模型名下显示所属分组、计费方式与价格；四种内置 CLI 配置预览按需折叠 |
 | **PanelSection.tsx** | 面板通用折叠分区原语 | `PanelSection` 组件，为窄面板内的托管/直连 CLI 编辑器提供统一 section chrome |
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置包或旧版配置文件进行恢复 |
 | **AutoRefreshDialog.tsx** | 自动刷新配置对话框 | `AutoRefreshDialog` 组件，由 SitesPage 调用，是自动刷新的唯一配置入口（默认30分钟） |
 | **AddAccessPointDialog.tsx** | 添加接入点对话框 | `AddAccessPointDialog` 组件，统一提供托管站点智能/手动添加与直连配置新建入口 |
-| **AccessPointDetailPanel.tsx** | 接入点详情侧滑面板 | `AccessPointDetailPanel` 组件，承载信息、模型 & 资源、CLI 配置与独立测试四页；托管本地 Key 模型/分组投影到可用模型 |
+| **AccessPointDetailPanel.tsx** | 接入点详情侧滑面板 | `AccessPointDetailPanel` 组件，承载信息、模型 & 资源、CLI 配置与独立测试四页；托管本地 Key 模型/分组投影到可用模型，手动添加/编辑本地令牌的分组可从已有用户分组中选择 |
 | **AccessPointResourcePrimitives.tsx** | 接入点资源页共享视觉原语 | 托管/直连三个 Tab 共用的外壳、区块标题、令牌行、列表、紧凑操作按钮及 Tab1/Tab3 表单字段标签与输入框紧凑规格样式 |
 | **EndpointTestPanel.tsx** | 端点测试面板 | 三卡常驻展开（表单规格与 Tab1/Tab2 共享紧凑样式）；托管模型按 Key 分组过滤并可列出全部，直连列出全部模型，显示简短结果和最近测试时间 |
 | **OperationRecordDialog.tsx** | 操作记录弹窗 | `OperationRecordDialog` 组件，读取当前会话 `toastStore.eventHistory` 中 `kind: 'action'` 的关键操作记录，排除普通 toast 通知与路由请求日志 |

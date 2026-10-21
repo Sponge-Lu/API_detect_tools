@@ -383,14 +383,14 @@ function DirectModelPriceEditor({
             <button
               type="button"
               onClick={() => updateMode('token')}
-              className={`rounded border px-2 py-1 ${!isPerCall ? 'border-transparent bg-[var(--accent-soft)] text-[var(--accent)]' : 'border-[var(--line-soft)] text-[var(--text-secondary)]'}`}
+              className={`rounded-[var(--radius-sm)] border px-2 py-1 ${!isPerCall ? 'border-transparent bg-[var(--accent-soft)] text-[var(--accent)]' : 'border-[var(--line-soft)] text-[var(--text-secondary)]'}`}
             >
               按量
             </button>
             <button
               type="button"
               onClick={() => updateMode('perCall')}
-              className={`rounded border px-2 py-1 ${isPerCall ? 'border-transparent bg-[var(--warning-soft)] text-[var(--warning)]' : 'border-[var(--line-soft)] text-[var(--text-secondary)]'}`}
+              className={`rounded-[var(--radius-sm)] border px-2 py-1 ${isPerCall ? 'border-transparent bg-[var(--warning-soft)] text-[var(--warning)]' : 'border-[var(--line-soft)] text-[var(--text-secondary)]'}`}
             >
               按次
             </button>
@@ -749,7 +749,7 @@ function CliModelSelector({
         />
       </button>
       {open && (
-        <div className="absolute z-50 w-full mt-1 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
+        <div className="absolute z-[var(--z-dropdown)] w-full mt-1 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] shadow-[var(--shadow-lg)] overflow-hidden">
           <div className="p-1.5 border-b border-[var(--line-soft)]">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" />
@@ -896,6 +896,7 @@ export function DirectCliConfigEditorContent({
     grokBuild: null,
   });
   const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   // 获取当前配置的模型列表 (从 store 中实时获取以反映拉取结果)
   const { configs } = useCustomCliConfigStore();
@@ -910,6 +911,18 @@ export function DirectCliConfigEditorContent({
       }),
     [apiKey, apiKeys, config.groupMultiplier, name]
   );
+  const existingKeyGroupOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          apiKeys
+            .map(item => normalizeCircledGroupLabel(item.group))
+            .filter(group => group.length > 0)
+        )
+      ),
+    [apiKeys]
+  );
+  const keyGroupListId = `direct-key-group-options-${config.id}`;
   const modelOptions = useMemo(
     () =>
       getModelInputOptions({
@@ -1084,7 +1097,13 @@ export function DirectCliConfigEditorContent({
       routeAuthScheme,
       supportedProtocols,
     });
-    await saveConfigs();
+    try {
+      await saveConfigs();
+    } catch {
+      setSaveFailed(true);
+      return;
+    }
+    setSaveFailed(false);
     await fetchModels(config.id);
     const latestConfig = useCustomCliConfigStore
       .getState()
@@ -1301,7 +1320,13 @@ export function DirectCliConfigEditorContent({
       modelPricing: { data: modelPricing },
       cliSettings: finalCliSettings,
     });
-    await saveConfigs();
+    try {
+      await saveConfigs();
+    } catch {
+      setSaveFailed(true);
+      return;
+    }
+    setSaveFailed(false);
     await onSaved?.();
   };
 
@@ -1326,26 +1351,28 @@ export function DirectCliConfigEditorContent({
     section !== 'cli' &&
     section !== 'identity' &&
     section !== 'models';
-  const isDirty = isDirectCliConfigDirty({
-    config,
-    name,
-    baseUrl,
-    modelUrl,
-    apiKey,
-    routeTargetProtocol,
-    routeAuthScheme,
-    supportedProtocols,
-    apiKeys,
-    gasStationUrl,
-    groupMultiplierInput,
-    notes,
-    manualModels,
-    modelPricing,
-    cliSettings,
-    perCliEdited,
-    selectedCli,
-    editedConfig,
-  });
+  const isDirty =
+    saveFailed ||
+    isDirectCliConfigDirty({
+      config,
+      name,
+      baseUrl,
+      modelUrl,
+      apiKey,
+      routeTargetProtocol,
+      routeAuthScheme,
+      supportedProtocols,
+      apiKeys,
+      gasStationUrl,
+      groupMultiplierInput,
+      notes,
+      manualModels,
+      modelPricing,
+      cliSettings,
+      perCliEdited,
+      selectedCli,
+      editedConfig,
+    });
   const saveButtonVariant = isDirty ? 'danger' : 'primary';
 
   useEffect(() => {
@@ -1632,6 +1659,7 @@ export function DirectCliConfigEditorContent({
                         />
                         <input
                           aria-label={`API Key ${index + 1} 分组`}
+                          list={keyGroupListId}
                           value={item.group}
                           onChange={event => updateApiKey(item.id, { group: event.target.value })}
                           onBlur={event =>
@@ -1683,7 +1711,7 @@ export function DirectCliConfigEditorContent({
                             <button
                               type="button"
                               onClick={() => void handleCopy(copyId, item.key)}
-                              className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]"
+                              className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] disabled:cursor-not-allowed disabled:opacity-50"
                               disabled={!item.key}
                               aria-label={copiedPath === copyId ? 'API Key 已复制' : '复制 API Key'}
                               title="复制 API Key"
@@ -1715,6 +1743,11 @@ export function DirectCliConfigEditorContent({
                   })}
                 </div>
               )}
+              <datalist id={keyGroupListId}>
+                {existingKeyGroupOptions.map(group => (
+                  <option key={group} value={group} />
+                ))}
+              </datalist>
             </div>
             <div className="space-y-0.5">
               <AccessPointResourceSectionHeader
@@ -1742,7 +1775,7 @@ export function DirectCliConfigEditorContent({
                       type="button"
                       onClick={handleFetchModels}
                       disabled={isFetching || !baseUrl || !apiKeys.some(item => item.key.trim())}
-                      className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)] transition-colors hover:opacity-90 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)] transition-colors hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isFetching ? (
                         <Loader2 className="h-3 w-3 animate-spin" />

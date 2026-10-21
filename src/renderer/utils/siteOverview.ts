@@ -1,5 +1,10 @@
 import type { Config } from '../App';
-import { BUILTIN_GROUP_IDS, type DetectionCacheData } from '../../shared/types/site';
+import {
+  BUILTIN_GROUP_IDS,
+  isSiteCheckinEnabled,
+  type DetectionCacheData,
+} from '../../shared/types/site';
+import { isSameLocalDay } from '../../shared/utils/date';
 import { getSiteDailyStats } from './siteDailyStats';
 
 export interface SiteOverviewMetric {
@@ -58,7 +63,7 @@ export function sumNonNegativeBalances<T extends { balance: number }>(items: rea
 }
 
 function isFreshToday(timestamp: number | undefined, now: Date): boolean {
-  return typeof timestamp === 'number' && new Date(timestamp).toDateString() === now.toDateString();
+  return isSameLocalDay(timestamp, now.getTime());
 }
 
 function getCacheMetrics(cache: CacheLike | undefined, now: Date) {
@@ -141,8 +146,10 @@ export function buildSiteOverviewMetrics(
         (sum, metric) => sum + (metric.supportsCheckin ? 1 : 0),
         0
       );
-      const checkinTargetCount =
-        detectedCheckinTargets > 0
+      // 用户显式关闭签到功能 → 不计入签到目标
+      const checkinTargetCount = !isSiteCheckinEnabled(site)
+        ? 0
+        : detectedCheckinTargets > 0
           ? detectedCheckinTargets
           : site.force_enable_checkin
             ? Math.max(siteAccounts.length, 1)
@@ -196,7 +203,9 @@ export function buildSiteCheckinOverviewRows(
     .filter(
       site =>
         (site.group || BUILTIN_GROUP_IDS.DEFAULT) !== BUILTIN_GROUP_IDS.UNAVAILABLE &&
-        site.enabled !== false
+        site.enabled !== false &&
+        // 用户显式关闭签到功能 → 不产生签到目标
+        isSiteCheckinEnabled(site)
     )
     .flatMap(site => {
       const siteWithCache = site as SiteConfigWithCache;

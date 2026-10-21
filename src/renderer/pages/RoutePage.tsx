@@ -30,13 +30,13 @@ export function RoutePage() {
   return (
     <div
       data-testid="route-page-scroll-container"
-      className="flex h-full min-h-0 flex-1 flex-col gap-2.5 overflow-x-hidden overflow-y-auto px-6 py-3 [scrollbar-gutter:stable]"
+      className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-6 py-4 [scrollbar-gutter:stable]"
     >
       <div data-testid="route-page-server-row" className="shrink-0">
         <ServerSection className="w-full" />
       </div>
 
-      <div data-testid="route-page-primary-row" className="flex min-w-0 shrink-0 flex-col gap-2.5">
+      <div data-testid="route-page-primary-row" className="flex min-w-0 shrink-0 flex-col gap-3">
         <div data-testid="route-page-config-row" className="min-w-0 shrink-0">
           <ConfigProfilesSection />
         </div>

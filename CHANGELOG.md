@@ -4,6 +4,32 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 变更
+- **路由熔断**：路径禁用统一为三态熔断——成功率跌破阈值同样按 2/10/30 分钟阶梯打开（配置的禁用时长为上限），到期进入半开只放行一个探测请求，成功即闭合并重开统计窗口，失败按下一级重新打开；新增站点级熔断，同站点连续传输异常或同站点同模型连续 404 类拒绝时整站（或该模型）短时跳过
+- **路由终结响应**：全部路径挂起从 400 改为 503 + `Retry-After`（Claude Code 收到 `overloaded_error`），不再终止 CLI 对话；所有终结分支的错误码写入主日志 `Route request completed`（失败为 warn 级），`attemptCount: 0` 的 4xx/5xx 不再无迹可查
+- **路由热路径**：路径状态改为内存写入 + 延迟落盘，上游结果不再等待全量 fsync；分析桶落盘间隔 5s → 30s；`state/` 下三个状态文件改为紧凑 JSON
+- **协议适配**：OpenAI Responses / Chat 的 `metadata`、`user`、`safety_identifier`、`prompt_cache_key`、`service_tier`（仅存储/遥测语义）跨协议转换时静默丢弃，不再整包拒绝；`include`、`text`、`reasoning.summary` 等影响输出的字段维持严格拒绝
+- **路由代理拆分**：`route-proxy-service.ts` 拆出 `route-upstream-forwarder`（单次上游传输）、`route-request-context`（请求生命周期）、`route-usage`（用量解析）、`route-proxy-shared`；规则选路与单次请求改写抽为独立函数；新增真实 socket 集成测试覆盖 SSE 分帧透传与中途断连
+
+### 移除
+- **通道评分排序**：候选顺序完全由用户配置的站点/Key 优先级决定，拉普拉斯评分不再参与（此前仅作末位平局键，实际从未生效）；移除 `route-health-service` 及 `route:get-health` / `route:run-health-check` IPC
+
+## [v3.1.2] - 2026-09-14
+
+### 新增
+- **中性上游凭证解析**：新增 `upstream-credential-resolver` 统一解析托管/直连真实上游 Base URL、API Key 与鉴权方案；端点测试直连上游执行，脱离路由通道 / target-lock 运行时
+- **端点测试状态独立**：新增 `endpoint-test-state-service` 独立维护端点测试 sidecar 选择与最新结果；新增 `api-key-identity` 生成稳定 API Key 标识，供路由、端点测试与配置服务共享
+- **会话色板**：路由会话按客户端 + 编号哈希取色，八色色板在刷新与重启后保持稳定
+- **接入点详情视觉规格**：统一 Tab1 信息表单 / Tab2 资源布局 / Tab3 端点测试的紧凑规格
+
+### 变更
+- **路由代理**：新增请求身份指纹与上游诊断分类规范化
+
+### 移除
+- **Linux Do Credit（LDC）子系统**：整体移除积分检测与充值功能，包括 `credit-service.ts`、`credit-handlers.ts`、`shared/types/credit.ts`、`CreditPage`、`CreditPanel/`、`useCredit` / `useLdcSites`、站点检测中的 LDC 支付探测（`/api/user/topup/info`、`/api/user/amount`）、站点列表 LDC 列与 `ldcRatio` 排序，以及 `credit:*` IPC、`LDC_UI_VISIBILITY`、`LDC_PAYMENT_NAMES` 常量和 `credit-settings.json` 存储清单条目；旧持久化 `'credit'` 标签页自动回退到站点管理。站点签到功能不受影响
+
 ## [v3.1.1] - 2026-09-03
 
 ### 新增

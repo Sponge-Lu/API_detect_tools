@@ -23,7 +23,6 @@ if (typeof window !== 'undefined') {
     getCookies: vi.fn(),
     fetchWithCookies: vi.fn(),
     detectSite: vi.fn(),
-    detectAllSites: vi.fn(),
     openUrl: vi.fn(),
     getAllAccounts: vi.fn(),
     browserProfile: {
@@ -94,6 +93,11 @@ if (typeof window !== 'undefined') {
         },
       ]),
       restoreBuiltin: vi.fn().mockImplementation(async ({ profileId }) => ({ id: profileId })),
+      restoreMissingBuiltins: vi.fn().mockResolvedValue([]),
+      switchAuthMode: vi.fn().mockImplementation(async ({ profileId, authMode }) => ({
+        id: profileId,
+        authMode,
+      })),
       readFiles: vi.fn().mockResolvedValue([]),
       preview: vi.fn().mockResolvedValue({ files: [] }),
       previewDirectEdit: vi.fn().mockResolvedValue({ files: [] }),

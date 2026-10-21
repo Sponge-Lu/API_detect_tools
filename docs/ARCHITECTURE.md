@@ -8,15 +8,15 @@
 - **渲染进程**：负责工作台 UI、交互逻辑、状态管理和页面展示。
 - **共享层**：负责前后端共用的类型、常量、schema 和主题预设。
 
-当前版本为 **v3.0.4**。相较 `v2.1.24`，核心架构变化是：
+当前版本为 **v3.1.2**。相较 `v2.1.24`，核心架构变化是：
 
 - 配置模型升级为 v3：`sites + accounts + routing`
-- 新增并行的 `本地路由`、`模型映射`、`配置文件` 工作区
+- 新增 `本地路由` 与合并后的 `路由模型`（mini 会话路由卡片 + 模型映射）工作区
 - 本地路由升级为按 pathname 分派的三协议通用网关，客户端身份不参与基础协议和通道选择
 - 接入点侧滑面板只提供三端点原生测试；顶部上游协议字段仅供真实路由使用
 - 路由运行态、端点测试最新结果、分析桶和模型来源快照拆分到 bounded sidecar 文件
 - UI 原语迁移到 `App*` 中性命名体系
-- 主题系统收敛为 `Light` / `Dark`
+- 主题系统支持 `Light` / `Dark` / `Modern` / `Modern Dark` 四套预设
 
 ---
 
@@ -117,10 +117,8 @@ interface UnifiedConfig {
   - `DataOverviewPage`
   - `SitesPage`
   - `RoutePage`
-  - `ModelMappingPage`
-  - `ConfigFilesPage`
   - `LogsPage`
-  - `CreditPage`
+  - `RouteSettingsPage`
   - `SettingsPage`
 
 ### 设计系统
@@ -134,10 +132,12 @@ interface UnifiedConfig {
 - `AppCard`
 - `AppIcon`
 
-主题预设由 `src/shared/theme/themePresets.ts` 管理，目前仅支持：
+主题预设由 `src/shared/theme/themePresets.ts` 管理，目前支持：
 
-- `light-b`：默认浅色主题
-- `dark`：深色主题
+- `light-b`（Light）：默认浅色主题
+- `dark`（Dark）：深色主题
+- `modern`（Modern）：铂金白浅色
+- `modern-dark`（Modern Dark）：铂金白深色
 
 旧主题值会在加载时归一化到当前支持集合。
 
@@ -147,6 +147,7 @@ interface UnifiedConfig {
 - `detectionStore`：站点检测结果、CLI 检测缓存
 - `uiStore`：当前页面、排序、弹窗、侧边栏状态
 - `routeStore`：Route 工作台数据与运行状态
+- `customCliConfigStore`：直连接入点配置
 - `toastStore`：全局通知
 
 ---
@@ -164,7 +165,6 @@ interface UnifiedConfig {
 | `EndpointTestService` | 解析托管/直连目标，绕过协议转换执行三协议原生测试并保存最新时间 |
 | `ConfigFileProfileService` | 配置卡片持久化、文件授权、预览事务、原子写入/回滚和会话记录扫描 |
 | `RouteSessionService` | 会话规则提取、候选发现、活动生命周期、连接器关联和覆盖查询 |
-| `CreditService` | Linux Do Credit 数据读取与充值跳转 |
 | `UpdateService` | 版本检查、应用内下载、安装 |
 
 ### 端点测试执行路径
@@ -200,7 +200,9 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 
 ### 主进程模块
 
-- `route-proxy-service.ts`：三协议 pathname 分派、模型发现/根探测、代理启停、完整 Base URL 前缀拼接和请求执行
+- `route-proxy-service.ts`：三协议 pathname 分派、模型发现/根探测、代理启停、规则选路与尝试循环调度
+- `route-upstream-forwarder.ts`：单次上游尝试的传输、SSE 校验/转换与提交窗口
+- `route-request-context.ts`：单请求生命周期（取消传播、尝试计数、日志上下文、终结错误诊断）
 - `route-channel-resolver.ts`：通道路由决策
 - `upstream-credential-resolver.ts`：中性解析托管/直连真实上游凭证；路由与端点测试共享解析结果，但不共享传输执行
 - `api-key-identity.ts`：生成稳定 API Key 标识，不属于路由选择或端点传输
@@ -210,15 +212,13 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 - `route-model-registry-service.ts`：模型注册表与覆盖项
 - `endpoint-test-service.ts`：三协议手动测试与最新结果持久化
 - `route-analytics-service.ts`：聚合分析统计
-- `route-health-service.ts`：健康检查
-- `route-stats-service.ts`：统计写入
+- `route-stats-service.ts`：路径级三态熔断（阶梯打开 → 半开单探测 → 闭合）、站点级熔断与通道统计写入
 - `route-target-lock.ts`：路由层内部 target-lock 请求的编解码与请求尝试预算；端点测试不依赖此模块
 
 ### 渲染层页面
 
-- `RoutePage`：本地网关服务与会话级模型/思考强度覆盖
-- `ModelMappingPage`：模型重定向、原始来源和候选优先级
-- `ConfigFilesPage`：配置方案摘要卡片（整卡点击编辑）、规则详情、模板应用与本地文件保存（行级 diff 预览）和对话记录路径
+- `RoutePage`：本地网关服务 + 配置文件卡片区（配置方案摘要卡片、规则详情、模板应用与本地文件保存、行级 diff 预览和对话记录路径）
+- `RouteSettingsPage`：mini 会话路由卡片（`RouteSessionSection mini`）与模型映射工作区（`ModelRedirectionTab` leadingPane 布局）单页合并；重定向模型列表行内编辑/图标删除，原始模型列移入编辑弹窗
 - `DataOverviewPage`：数据总览页；路由数据子页展示 KPI、趋势、模型热力、通道散点与 Sankey；趋势图在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴
 - `LogsPage`：日志页；路由日志按实际 Agent 动态筛选，首列纯文本展示 Agent，Token 固定两行展示输入/输出与缓存写/读
 - `EndpointTestPanel`：接入点侧滑面板的独立测试页，每端点单独选择 Key/模型并显示最近测试时间
@@ -326,10 +326,10 @@ Route 功能统一挂在 `route:*`：
 
 ## 总结
 
-从架构视角看，`v3.0.4` 的关键特征是：
+从架构视角看，`v3.1.2` 的关键特征是：
 
 - **数据模型更清晰**：站点、账号、稳定路由配置与高频运行态 sidecar 分层明确。
 - **工作台能力更完整**：站点管理之外，新增路由代理运维面。
 - **端点测试更明确**：协议中立、上游直连、最新结果与时间持久化形成统一诊断链路。
-- **UI 与主题体系收敛**：从旧命名和多套实验主题回到统一原语与双主题。
+- **UI 与主题体系收敛**：从旧命名和多套实验主题回到统一原语与四套中性主题。
 - **恢复能力更强**：配置迁移、坏文件保护和备份恢复成为内建能力。

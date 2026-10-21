@@ -33,6 +33,15 @@ const activeRoute = (): RouteInstance => ({
   lastRequestAt: 2_000,
 });
 
+const armedRoute = (): RouteInstance => ({
+  id: 'route-1',
+  display: {},
+  modelId: '',
+  reasoningEffort: 'medium',
+  routingState: 'armed',
+  presenceState: 'unknown',
+});
+
 beforeEach(() => {
   mockConfig = {
     modelRegistry: {
@@ -75,32 +84,24 @@ afterEach(() => {
 });
 
 describe('route session instance cards', () => {
-  it('precreates a route using only model and reasoning effort', async () => {
+  it('creates an armed route card immediately when starting a new session route', async () => {
     render(<RouteSessionSection />);
     await screen.findByText('session-1');
     fireEvent.click(screen.getByRole('button', { name: '为下一个新会话创建路由' }));
-    fireEvent.change(screen.getByLabelText('预创建路由模型'), {
-      target: { value: 'model-a' },
-    });
-    fireEvent.change(screen.getByLabelText('预创建路由思考强度'), {
-      target: { value: 'xhigh' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '创建' }));
-    await waitFor(() =>
-      expect(mockCreate).toHaveBeenCalledWith({ modelId: 'model-a', reasoningEffort: 'xhigh' })
-    );
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({}));
   });
 
-  it('cancels the next-session route form without creating an armed route', async () => {
+  it('lets model and reasoning effort be chosen directly on the armed card', async () => {
+    mockList.mockResolvedValue({ success: true, data: [armedRoute()] });
     render(<RouteSessionSection />);
-    await screen.findByText('session-1');
-    fireEvent.click(screen.getByRole('button', { name: '为下一个新会话创建路由' }));
-    expect(screen.getByLabelText('预创建路由模型')).toBeInTheDocument();
+    const modelSelect = await screen.findByLabelText('route-1 路由模型');
+    expect(modelSelect).toHaveValue('');
+    expect(screen.getByRole('option', { name: '选择模型' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '取消' }));
-
-    expect(screen.queryByLabelText('预创建路由模型')).not.toBeInTheDocument();
-    expect(mockCreate).not.toHaveBeenCalled();
+    fireEvent.change(modelSelect, { target: { value: 'model-a' } });
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith('route-1', { modelId: 'model-a' })
+    );
   });
 
   it('shows stable session identity and edits display aliases without changing it', async () => {
@@ -305,5 +306,63 @@ describe('route session instance cards', () => {
 
     fireEvent.click(actionButtons[0]);
     await waitFor(() => expect(mockRestore).toHaveBeenCalledWith('cancelled-route'));
+  });
+
+  it('renders a single-column mini density with restructured, simplified cards', async () => {
+    render(<RouteSessionSection mini />);
+
+    await screen.findByText('session-1');
+    expect(screen.getByTestId('route-session-grid')).toHaveClass('grid-cols-1');
+    expect(screen.getByTestId('route-session-grid').className).not.toContain('grid-cols-3');
+    expect(screen.getByTestId('route-session-grid').className).not.toContain('min-w-[60rem]');
+    expect(screen.getByTestId('route-session-card-route-1')).toHaveAttribute(
+      'data-density',
+      'mini'
+    );
+
+    // mini 卡片的动作只保留图标，文字说明由 aria-label/title 承载
+    const closeButton = screen.getByRole('button', { name: '关闭 session-1 路由' });
+    expect(closeButton).toHaveTextContent('');
+    expect(closeButton.querySelector('svg')).not.toBeNull();
+    expect(closeButton.getAttribute('title')).toBe('关闭 session-1 路由');
+    expect(screen.queryByText('为下一个新会话创建路由')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建路由' })).toBeInTheDocument();
+
+    // 信息精简：运行范围输入、创建/最近时间与字段标签在 mini 密度下省略
+    expect(screen.queryByDisplayValue('Terminal 1')).not.toBeInTheDocument();
+    expect(screen.queryByText(/创建 /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/最近 /)).not.toBeInTheDocument();
+    expect(screen.queryByText('Session')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('route-1 路由模型')).toBeInTheDocument();
+    expect(screen.getByLabelText('route-1 思考强度')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制 session-1 Session ID' })).toBeInTheDocument();
+
+    // 客户端名称直接展示不可编辑；备注内联在名称后且小一号（text-xs、h-4）
+    expect(screen.getByText('Codex #1')).toBeInTheDocument();
+    expect(screen.getByText('Codex #1')).toHaveClass('leading-4');
+    expect(screen.queryByLabelText('session-1 Agent 名称')).not.toBeInTheDocument();
+    const noteInput = screen.getByLabelText('route-1 备注');
+    expect(noteInput.className).toContain('text-xs');
+    expect(noteInput.className).toContain('h-4');
+    expect(noteInput.getAttribute('placeholder')).toBe('备注');
+
+    // 模型与思考强度同一行；卡片头标题与计数与映射工作区工具栏同字号
+    expect(screen.getByLabelText('route-1 思考强度').closest('.w-20')).not.toBeNull();
+    expect(screen.getByLabelText('route-1 路由模型').closest('.flex-1')).not.toBeNull();
+    expect(screen.getByText('会话路由')).toHaveClass('text-xs', 'font-semibold');
+    expect(screen.getByText('1 项')).toBeInTheDocument();
+
+    // 幽灵下拉：去外框留箭头，压扁到 h-5
+    expect(screen.getByLabelText('route-1 路由模型').className).toContain('!border-transparent');
+    expect(screen.getByLabelText('route-1 路由模型').className).toContain('h-5');
+    expect(screen.getByLabelText('route-1 思考强度').className).toContain('!border-transparent');
+    expect(screen.getByLabelText('route-1 思考强度').className).toContain('h-5');
+
+    // Session 行位于横线上方，横线下方是模型/思考强度行
+    const modelRow = screen
+      .getByLabelText('route-1 路由模型')
+      .closest('div.border-t') as HTMLElement;
+    expect(modelRow).not.toBeNull();
+    expect(modelRow.previousElementSibling as HTMLElement).toHaveTextContent('session-1');
   });
 });

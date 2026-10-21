@@ -11,6 +11,9 @@ import { normalizeCustomCliApiKeys } from '../shared/types/custom-cli-config';
 import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../shared/types/site';
 import type { TokenService } from './token-service';
 import { resolveApiKeyId } from './api-key-identity';
+import { browserProfileManager } from './browser-profile-manager';
+import { resolveApiKeyForUse } from '../shared/utils/apiConfig';
+import { isApiKeyActive } from '../shared/types/site';
 
 export type UpstreamAuthScheme = 'bearer' | 'x-api-key';
 export type UpstreamCredentialTarget =
@@ -49,15 +52,15 @@ function withStoredApiKeyValue(info: ApiKeyInfo, rawKey: string): ApiKeyInfo {
   return { ...info, key: rawKey };
 }
 
-function resolveBrowserSlot(accountId: string): number | undefined {
+async function resolveBrowserSlot(accountId: string): Promise<number | undefined> {
   const account = unifiedConfigManager.getAccountById(accountId);
   if (!account) {
     return undefined;
   }
 
-  const siteAccounts = unifiedConfigManager.getAccountsBySiteId(account.site_id);
-  const slotIndex = siteAccounts.findIndex(item => item.id === accountId);
-  return slotIndex >= 0 ? slotIndex : 0;
+  return (
+    (await browserProfileManager.ensureAutomationSlot(account.site_id, accountId)) ?? undefined
+  );
 }
 
 async function persistResolvedApiKeyValue(
@@ -84,7 +87,7 @@ export async function resolveAccountApiKeyValue(
 ): Promise<string | null> {
   const currentValue = getStoredApiKeyValue(info);
   if (currentValue && !isMaskedApiKeyValue(currentValue)) {
-    return currentValue;
+    return resolveApiKeyForUse(currentValue, 'remote') || null;
   }
 
   if (!configuredTokenService) {
@@ -103,7 +106,7 @@ export async function resolveAccountApiKeyValue(
     accessToken,
     info,
     {
-      browserSlot: resolveBrowserSlot(account.id),
+      browserSlot: await resolveBrowserSlot(account.id),
       allowBrowserFallback: true,
       challengeWaitMs: 10000,
     }
@@ -117,7 +120,7 @@ export async function resolveAccountApiKeyValue(
     await persistResolvedApiKeyValue(account.id, resolveApiKeyId(info), resolvedValue);
   }
 
-  return resolvedValue;
+  return resolveApiKeyForUse(resolvedValue, 'remote') || null;
 }
 
 export async function resolveUpstreamCredentials(
@@ -166,18 +169,27 @@ export async function resolveUpstreamCredentials(
   }
 
   const localApiKey = (account.local_api_keys || []).find(info => info.id === target.apiKeyId);
-  if (localApiKey?.key && !isMaskedApiKeyValue(localApiKey.key)) {
+  if (
+    localApiKey &&
+    isApiKeyActive({ enabled: localApiKey.status }) &&
+    resolveApiKeyForUse(localApiKey.key, localApiKey.source)
+  ) {
     return {
       baseUrl: site.url,
-      apiKey: localApiKey.key,
+      apiKey: resolveApiKeyForUse(localApiKey.key, localApiKey.source),
       authScheme: account.routeAuthScheme,
     };
   }
 
-  if (site.api_key) {
-    const keyId = resolveApiKeyId({ key: site.api_key });
-    if (keyId === target.apiKeyId && !isMaskedApiKeyValue(site.api_key)) {
-      return { baseUrl: site.url, apiKey: site.api_key, authScheme: account.routeAuthScheme };
+  const legacyKey = account.api_key || site.api_key;
+  if (legacyKey) {
+    const keyId = resolveApiKeyId({ key: legacyKey });
+    if (keyId === target.apiKeyId && !isMaskedApiKeyValue(legacyKey)) {
+      return {
+        baseUrl: site.url,
+        apiKey: resolveApiKeyForUse(legacyKey),
+        authScheme: account.routeAuthScheme,
+      };
     }
   }
 

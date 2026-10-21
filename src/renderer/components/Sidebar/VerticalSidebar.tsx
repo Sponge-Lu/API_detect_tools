@@ -11,7 +11,6 @@ import type { UpdateCheckResult } from '../../hooks/useUpdate';
 import { useRouteStore } from '../../store/routeStore';
 import { useUIStore } from '../../store/uiStore';
 import type { OverviewSubtab, SidebarDisplayMode, TabId } from '../../store/uiStore';
-import { LDC_UI_VISIBILITY } from '../../../shared/constants';
 import { APP_PAGE_META, APP_PAGE_ORDER } from '../AppShell/pageMeta';
 
 interface VerticalSidebarProps {
@@ -41,9 +40,7 @@ export function VerticalSidebar({
   };
   const sidebarDisplayMode = uiState.sidebarDisplayMode ?? 'expanded';
   const toggleSidebarDisplayMode = uiState.toggleSidebarDisplayMode ?? (() => undefined);
-  const visibleSidebarItems = APP_PAGE_ORDER.filter(
-    id => LDC_UI_VISIBILITY.showCreditTab || id !== 'credit'
-  ).map(id => APP_PAGE_META[id]);
+  const visibleSidebarItems = APP_PAGE_ORDER.map(id => APP_PAGE_META[id]);
   const showDownloadButton = updateInfo?.hasUpdate && updateInfo?.releaseInfo?.downloadUrl;
   const newVersion = updateInfo?.releaseInfo?.version || updateInfo?.latestVersion;
   const routeState = useRouteStore() as { serverRunning?: boolean };
@@ -78,7 +75,7 @@ export function VerticalSidebar({
           aria-label="切换侧栏显示模式"
           title={isIconOnly ? '切换为图标和文字导航' : '切换为仅图标导航'}
           onClick={toggleSidebarDisplayMode}
-          className={`rounded-md border border-[var(--line-soft)] bg-[var(--surface-1)]/86 p-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] ${isIconOnly ? 'absolute top-3' : ''}`}
+          className={`rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/86 p-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] ${isIconOnly ? 'absolute top-3' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
           {isIconOnly ? (
@@ -104,7 +101,7 @@ export function VerticalSidebar({
                 aria-current={isActive ? 'page' : undefined}
                 title={item.navLabel}
                 onClick={() => onTabChange(item.id)}
-                className={`flex w-full items-center rounded-lg py-2 text-[13px] font-medium transition-colors ${
+                className={`flex w-full items-center rounded-[var(--radius-sm)] py-2 text-[13px] font-medium transition-colors ${
                   isActive
                     ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
                     : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
@@ -174,7 +171,7 @@ export function VerticalSidebar({
             aria-label={`更新 v${newVersion}`}
             title={`更新 v${newVersion}`}
             onClick={onDownloadUpdate}
-            className={`flex w-full items-center rounded-lg bg-[var(--success-soft)] py-2 text-[11px] font-medium text-[var(--success)] transition-colors hover:opacity-90 ${isIconOnly ? 'justify-center px-2' : 'gap-2 px-3'}`}
+            className={`flex w-full items-center rounded-[var(--radius-sm)] bg-[var(--success-soft)] py-2 text-[11px] font-medium text-[var(--success)] transition-colors hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)] ${isIconOnly ? 'justify-center px-2' : 'gap-2 px-3'}`}
           >
             <Download className="w-3.5 h-3.5" />
             {!isIconOnly ? <span>更新 v{newVersion}</span> : null}

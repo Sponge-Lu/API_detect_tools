@@ -22,7 +22,6 @@ import Logger from '../utils/logger';
 import { useDetectionStore } from '../store/detectionStore';
 import { useConfigStore } from '../store/configStore';
 import { useUIStore } from '../store/uiStore';
-import { toast } from '../store/toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
 import type { Config, DetectionResult, SiteConfig } from '../App';
 import { BUILTIN_GROUP_IDS } from '../../shared/types/site';
@@ -154,7 +153,6 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
             `${site.name} 刷新触发认证错误：${rawResult.error || '未知错误'}`
           );
         } else if (rawResult.status === '失败') {
-          toast.error(`${site.name} 连接失败: ${rawResult.error || '未知错误'}`);
           sessionEventLog.error(
             'detection',
             `${site.name} 刷新失败：${rawResult.error || '未知错误'}`
@@ -202,21 +200,21 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       } catch (error: any) {
         Logger.error('检测失败:', error);
         const errorMessage = error?.message || String(error);
-        let displayMessage = '❌ 刷新失败: ' + errorMessage;
-        if (
-          errorMessage.includes('浏览器已关闭') ||
-          errorMessage.includes('操作已取消') ||
-          errorMessage.includes('操作已被取消')
-        ) {
-          displayMessage = '⚠️ 浏览器已关闭，操作已取消。请重新打开浏览器后重试。';
-        }
-        setRefreshMessage({ site: key, message: displayMessage, type: 'info' });
+        const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
+        upsertResult(
+          existingResult
+            ? { ...existingResult, status: '失败', error: errorMessage, accountId }
+            : {
+                name: site.name,
+                url: site.url,
+                status: '失败',
+                error: errorMessage,
+                models: [],
+                has_checkin: false,
+                accountId,
+              }
+        );
         sessionEventLog.error('detection', `${site.name} 刷新异常：${errorMessage}`);
-        setTimeout(() => {
-          if (useUIStore.getState().refreshMessage?.site === key) {
-            setRefreshMessage(null);
-          }
-        }, 5000);
       } finally {
         removeDetectingSite(key);
       }
@@ -288,10 +286,10 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         let cursor = 0;
         const resultsBuffer: DetectionResult[] = [];
         const authErrors: { name: string; url: string; error: string; accountId?: string }[] = [];
-        const failedSites: { name: string; error: string }[] = [];
+        let failedSiteCount = 0;
 
         const runForTask = async (task: DetectionTask) => {
-          const { site, accountId, accountName, key } = task;
+          const { site, accountId, key } = task;
           const currentResults = useDetectionStore.getState().results;
           const existingResult = currentResults.find(
             r => r.name === site.name && r.accountId === accountId
@@ -337,8 +335,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
               accountId,
             });
           } else if (rawResult.status === '失败') {
-            const displayName = accountName ? `${site.name} (${accountName})` : site.name;
-            failedSites.push({ name: displayName, error: rawResult.error || '未知错误' });
+            failedSiteCount += 1;
           }
 
           upsertResult(result);
@@ -369,21 +366,18 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           sessionEventLog.warning('detection', `批量检测发现 ${authErrors.length} 个认证异常站点`);
         }
 
-        if (failedSites.length > 0) {
-          const siteList = failedSites.map(s => `• ${s.name}：${s.error}`).join('\n');
-          toast.error(`以下站点检测失败：\n${siteList}`);
-          sessionEventLog.error('detection', `批量检测完成，但有 ${failedSites.length} 个站点失败`);
+        if (failedSiteCount > 0) {
+          sessionEventLog.error('detection', `批量检测完成，但有 ${failedSiteCount} 个站点失败`);
         }
 
         sessionEventLog.info(
           'detection',
-          `批量检测完成：共 ${tasks.length} 个任务，失败 ${failedSites.length} 个`
+          `批量检测完成：共 ${tasks.length} 个任务，失败 ${failedSiteCount} 个`
         );
 
         return resultsBuffer;
       } catch (error) {
         Logger.error('检测失败:', error);
-        toast.error('检测失败: ' + error);
         sessionEventLog.error('detection', `批量检测异常：${String(error)}`);
         return [];
       } finally {

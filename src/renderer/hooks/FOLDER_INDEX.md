@@ -20,16 +20,15 @@
 | **index.ts** | Hooks 导出入口 | 所有 Hooks 的统一导出 |
 | **useSiteGroups.ts** | 站点分组管理 | `{ groups, addGroup, deleteGroup, ... }` |
 | **useAutoRefresh.ts** | 自动刷新逻辑 | `{ isRefreshing, startRefresh, stopRefresh, ... }` |
-| **useSiteDetection.ts** | 站点检测 | `{ results, isDetecting, detect, ... }` |
+| **useSiteDetection.ts** | 站点检测；刷新失败写入站点结果，由名称旁的异常图标展示详情 | `{ results, isDetecting, detect, ... }` |
 | **useTokenManagement.ts** | Token 管理，支持站点 API Key 列表刷新、单个 API Key 状态刷新、创建与删除 | `{ refreshSiteApiKeys, handleRefreshToken, handleCreateTokenSubmit, handleDeleteToken }` |
-| **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组，账户级签到透传 `accountId`，按站点类型打开手动签到页，并持久化同日手动签到完成状态 | `{ canSignIn, isSigningIn, signIn, ... }` |
+| **useCheckIn.ts** | 签到逻辑，基于已保存站点/账户配置生成批量签到目标，跳过 `unavailable` 分组，按站点类型打开手动签到页 | `{ canSignIn, isSigningIn, signIn, ... }` |
 | **useCliCompatTest.ts** | 站点级 CLI 兼容性测试，仅为 Claude Code / Codex 构造探测请求 | `{ results, isTesting, test, ... }` |
 | **useDataLoader.ts** | 数据加载，支持站点状态持久化、签到能力缓存回填与账户级 CLI 配置按 card key 回填 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
 | **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |
 | **useUpdate.ts** | 应用更新检查 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
 | **useConfigDetection.ts** | CLI 配置检测 | `{ detection, isLoading, refresh, detect }` |
-| **useCredit.ts** | Linux Do Credit 积分检测 | `{ creditInfo, isLoggedIn, fetchCredit, login, logout, ... }` |
 ---
 ## 🎣 Hooks 详解
 ### useSiteGroups
@@ -195,37 +194,6 @@ interface UseUpdateReturn {
 - 版本比较
 - 下载更新
 - 更新提示
-### useCredit
-**职责**: Linux Do Credit 积分检测
-**返回值**:
-```typescript
-interface UseCreditReturn {
-  isLoggedIn: boolean;
-  isLoading: boolean;
-  isRefreshing: boolean;
-  error: string | null;
-  creditInfo: CreditInfo | null;
-  config: CreditConfig;
-  dailyStats: DailyStats | null;
-  transactions: TransactionList | null;
-  isLoadingStats: boolean;
-  isLoadingTransactions: boolean;
-  fetchCredit: () => Promise<void>;
-  fetchDailyStats: (days?: number) => Promise<void>;
-  fetchTransactions: (page?: number, pageSize?: number) => Promise<void>;
-  login: () => Promise<void>;
-  logout: () => Promise<void>;
-  updateConfig: (config: Partial<CreditConfig>) => Promise<void>;
-}
-```
-**特点**:
-- 积分数据获取
-- 每日统计数据获取
-- 交易记录获取
-- 登录/登出管理
-- 自动刷新（可配置间隔，最小15分钟）
-- 页面隐藏时暂停自动刷新
-- 配置持久化
 ---
 ## 🔄 Hook 通信模式
 ### IPC 通信

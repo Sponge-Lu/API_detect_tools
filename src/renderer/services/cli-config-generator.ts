@@ -11,6 +11,11 @@
 
 import { pinyin } from 'pinyin-pro';
 import {
+  buildVersionedApiUrl,
+  resolveApiKeyForUse,
+  type ApiKeySource,
+} from '../../shared/utils/apiConfig';
+import {
   buildClaudeCodeConfigFiles,
   buildCodexConfigFiles,
   buildGrokBuildConfigFiles,
@@ -96,13 +101,10 @@ export function normalizeUrl(url: string): string {
 /**
  * 规范化 API Key，确保以 "sk-" 开头
  * @param apiKey - 原始 API Key
- * @returns 带 "sk-" 前缀的 API Key
+ * @returns 按来源处理的 API Key，仅智能获取来源补齐前缀
  */
-export function normalizeApiKey(apiKey: string): string {
-  if (apiKey.startsWith('sk-')) {
-    return apiKey;
-  }
-  return `sk-${apiKey}`;
+export function normalizeApiKey(apiKey: string, source: ApiKeySource = 'local'): string {
+  return resolveApiKeyForUse(apiKey, source);
 }
 
 /**
@@ -271,22 +273,20 @@ export function generateCodexRouteConfig(params: CodexConfigParams): GeneratedCo
  */
 export function generateCodexTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释和 wire_api 说明
-  // 注意：移除 requires_openai_auth = true，因为它会强制使用 OpenAI 官方认证流程，
-  // 导致无法使用第三方 API。第三方 API 通过 OPENAI_API_KEY 环境变量认证即可。
+  // 第三方 API 通过 auth.json 中的 OPENAI_API_KEY 认证，不启用 requires_openai_auth。
   const configTomlTemplate =
     normalizeCodexFeatureFlagsToml(`model_provider = "${CODEX_PROVIDER_NAME}"
 model = "gpt-5.1-codex-max"
 model_reasoning_effort = "xhigh"
-disable_response_storage = true
-network_access = "enabled"
+# web_search 选项："disabled", "cached", "indexed", "live"；第三方中转建议 disabled
+web_search = "disabled"
 
 [model_providers.${CODEX_PROVIDER_NAME}]
 name = "${CODEX_PROVIDER_NAME}"
 base_url = "https://api.ikuncode.cc/v1"
+experimental_bearer_token = "sk-xxxxxxxxxxxxxxx"
 # wire_api 固定使用 "responses" (Responses API，chat 模式已废弃)
-wire_api = "responses"
-
-web_search = "cached"`);
+wire_api = "responses"`);
 
   const authJsonTemplate = `{
   "OPENAI_API_KEY": "sk-xxxxxxxxxxxxxxx"
@@ -321,7 +321,7 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
   config: Record<string, unknown>;
 } {
   const mode = resolveOpenCodeMode(params.targetProtocol);
-  const baseURL = `${normalizeUrl(params.siteUrl)}/v1`;
+  const baseURL = buildVersionedApiUrl(params.siteUrl);
 
   if (mode === 'anthropic-messages') {
     return {
@@ -330,7 +330,7 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
       config: {
         provider: {
           anthropic: {
-            options: { baseURL },
+            options: { baseURL, apiKey: normalizeApiKey(params.apiKey) },
             models: {
               [params.model]: {
                 name: params.model,
@@ -355,7 +355,7 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
       config: {
         provider: {
           openai: {
-            options: { baseURL },
+            options: { baseURL, apiKey: normalizeApiKey(params.apiKey) },
             models: {
               [params.model]: {
                 name: params.model,
@@ -376,7 +376,7 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
         [OPENCODE_PROVIDER_ID]: {
           npm: '@ai-sdk/openai-compatible',
           name: OPENCODE_PROVIDER_NAME,
-          options: { baseURL },
+          options: { baseURL, apiKey: normalizeApiKey(params.apiKey) },
           models: {
             [params.model]: {
               name: params.model,

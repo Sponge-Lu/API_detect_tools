@@ -1,6 +1,13 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { buildVersionedApiUrl, resolveApiKeyForUse } from '../shared/utils/apiConfig';
 import * as TOML from '@iarna/toml';
 import { app } from 'electron';
+import {
+  backupConfigFile,
+  listConfigFileBackups,
+  migrateLegacyConfigBackups,
+  readConfigFileBackup,
+} from './config-file-backups';
 import * as fs from 'fs/promises';
 import {
   applyEdits as applyJsonEdits,
@@ -12,6 +19,9 @@ import {
 import * as os from 'os';
 import * as path from 'path';
 import type {
+  ConfigFileBackup,
+  ConfigFileBackupInput,
+  PreviewConfigFileBackupRestoreInput,
   ApplyConfigFileProfileInput,
   CommitConfigFileProfileInput,
   ConfigFileDefinition,
@@ -19,6 +29,7 @@ import type {
   ConfigFilePreviewTransaction,
   ConfigFileProfile,
   ConfigFileApplyMode,
+  ConfigFileAuthMode,
   ConfigFileFormat,
   ConfigFileReplacementMatchCounts,
   ConfigFileSnapshot,
@@ -34,16 +45,20 @@ import type {
   PreviewConfigFileProfileRouteKeyRotationInput,
   PreviewConfigFileDirectEditInput,
   RestoreBuiltinConfigFileProfileInput,
+  SwitchBuiltinConfigFileProfileAuthModeInput,
   ResolveConfigFileProfileValuesInput,
   SessionRecordConnector,
   UpsertConfigFileProfileInput,
   ValidateSessionRecordConnectorInput,
 } from '../shared/types/config-file-profile';
 import {
+  DEFAULT_CONFIG_FILE_AUTH_MODE,
   DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS,
   isAgentLogoId,
+  normalizeConfigFileAuthMode,
 } from '../shared/types/config-file-profile';
 import {
+  BUILTIN_CLI_IDS,
   BUILTIN_CLI_TYPES,
   normalizeCliTargetProtocol,
   type BuiltinCliType,
@@ -78,18 +93,12 @@ const MAX_SESSION_RECORD_FILE_BYTES = 10 * 1024 * 1024;
 const previewTransactions = new Map<string, ConfigFilePreviewTransaction>();
 let routeCredentialIndex = new Map<string, ConfigFileProfile>();
 const routeCredentialMisses = new Set<string>();
-const BUILTIN_TEMPLATE_VERSION = 3;
+const BUILTIN_TEMPLATE_VERSION = 6;
 const BUILTIN_NAMES: Record<BuiltinCliType, string> = {
   claudeCode: 'Claude Code',
   codex: 'Codex',
   openCode: 'OpenCode',
   grokBuild: 'Grok Build',
-};
-const BUILTIN_IDS: Record<BuiltinCliType, string> = {
-  claudeCode: 'example:claude-code',
-  codex: 'example:codex',
-  openCode: 'example:opencode',
-  grokBuild: 'example:grok-build',
 };
 const LEGACY_SIMPLIFIED_EXAMPLES: Record<BuiltinCliType, { path: string; template: string }> = {
   claudeCode: {
@@ -132,34 +141,43 @@ function profileFingerprint(profile: Pick<ConfigFileProfile, 'name' | 'files'>):
   return hashContent(JSON.stringify({ name: profile.name, files: profile.files }));
 }
 
+function createBuiltinConfigFileProfile(
+  clientType: BuiltinCliType,
+  authMode: ConfigFileAuthMode,
+  now: number
+): ConfigFileProfile {
+  const id = BUILTIN_CLI_IDS[clientType];
+  const files = getBuiltinClientConfigTemplates(clientType, authMode).map((file, index) => ({
+    id: `${id}:file:${index + 1}`,
+    path: file.path,
+    template: file.content,
+    format: file.format,
+  }));
+  const profile: ConfigFileProfile = {
+    id,
+    name: BUILTIN_NAMES[clientType],
+    authMode,
+    files,
+    sessionRecordConnectors: [],
+    sessionRecordPaths: [],
+    target: { kind: 'local-route', model: null },
+    isExample: true,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+  profile.builtin = {
+    clientType,
+    version: BUILTIN_TEMPLATE_VERSION,
+    fingerprint: profileFingerprint(profile),
+  };
+  return profile;
+}
+
 export function createDefaultConfigFileProfiles(now = Date.now()): ConfigFileProfile[] {
-  return BUILTIN_CLI_TYPES.map(clientType => {
-    const id = BUILTIN_IDS[clientType];
-    const files = getBuiltinClientConfigTemplates(clientType).map((file, index) => ({
-      id: `${id}:file:${index + 1}`,
-      path: file.path,
-      template: file.content,
-      format: file.format,
-    }));
-    const profile: ConfigFileProfile = {
-      id,
-      name: BUILTIN_NAMES[clientType],
-      files,
-      sessionRecordConnectors: [],
-      sessionRecordPaths: [],
-      target: { kind: 'local-route', model: null },
-      isExample: true,
-      revision: 1,
-      createdAt: now,
-      updatedAt: now,
-    };
-    profile.builtin = {
-      clientType,
-      version: BUILTIN_TEMPLATE_VERSION,
-      fingerprint: profileFingerprint(profile),
-    };
-    return profile;
-  });
+  return BUILTIN_CLI_TYPES.map(clientType =>
+    createBuiltinConfigFileProfile(clientType, DEFAULT_CONFIG_FILE_AUTH_MODE, now)
+  );
 }
 
 function replaceLiteral(content: string, value: string | null | undefined, token: string): string {
@@ -335,6 +353,7 @@ function normalizeProfile(profile: ConfigFileProfile): ConfigFileProfile {
       ? (profile.agentLogoId as AgentLogoId)
       : undefined,
     credentialOnly: profile.credentialOnly === true,
+    authMode: normalizeConfigFileAuthMode(profile.authMode),
     files: sourceFiles.map((item, index) =>
       normalizeDefinition(item, `${profile.id}:file:${index + 1}`)
     ),
@@ -464,20 +483,33 @@ function renderDefinition(
 ): { content: string; matchCounts: ConfigFileReplacementMatchCounts } {
   let content = definition.template;
   const matchCounts = { baseUrl: 0, apiKey: 0, model: 0 };
+  if (content.includes(DEFAULT_TOKENS.baseUrl + '/v1')) {
+    [content, matchCounts.baseUrl] = countAndReplace(
+      content,
+      DEFAULT_TOKENS.baseUrl + '/v1',
+      buildVersionedApiUrl(values.baseUrl)
+    );
+  }
   for (const key of ['baseUrl', 'apiKey', 'model'] as const) {
-    [content, matchCounts[key]] = countAndReplace(content, DEFAULT_TOKENS[key], values[key]);
+    const [rendered, count] = countAndReplace(content, DEFAULT_TOKENS[key], values[key]);
+    content = rendered;
+    matchCounts[key] += count;
   }
   return { content, matchCounts };
-}
-
-function ensureSkPrefix(apiKey: string): string {
-  if (!apiKey) return apiKey;
-  return apiKey.startsWith('sk-') ? apiKey : `sk-${apiKey}`;
 }
 
 async function resolveProfileValues(
   profile: ConfigFileProfile
 ): Promise<ConfigFileResolvedTargetValues> {
+  if (normalizeConfigFileAuthMode(profile.authMode) === 'official') {
+    return {
+      baseUrl: '',
+      apiKey: '',
+      model: profile.target.model || '',
+      targetLabel: '官方账号登录',
+      apiKeyName: '',
+    };
+  }
   const target = profile.target;
   const { unifiedConfigManager } = await import('./unified-config-manager');
   if (target.kind === 'local-route') {
@@ -517,11 +549,11 @@ async function resolveProfileValues(
     const { loadCustomCliConfigStorage } = await import('./custom-cli-config-service');
     const storage = await loadCustomCliConfigStorage();
     const config = storage.configs.find(item => item.id === target.configId);
-    if (!config || !config.baseUrl.trim() || !config.apiKey.trim())
+    if (!config || !config.baseUrl.trim() || !resolveApiKeyForUse(config.apiKey))
       throw new Error('直连配置不可用');
     return {
       baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
+      apiKey: resolveApiKeyForUse(config.apiKey),
       model: target.model || config.models[0] || config.manualModels?.[0] || '',
       targetLabel: catalogEntry.label,
       apiKeyName: config.name.trim() || '直连 API Key',
@@ -530,12 +562,16 @@ async function resolveProfileValues(
   const site = unifiedConfigManager.getSiteById(target.siteId);
   const account = unifiedConfigManager.getAccountById(target.accountId);
   if (!site || !account || account.site_id !== target.siteId) throw new Error('站点账户不存在');
+  const legacyKey = account.api_key || site.api_key;
+  const localKey = account.local_api_keys?.find(item => item.id === target.apiKeyId);
   const apiKeys = account.cached_data?.api_keys || [];
   const { resolveApiKeyId } = await import('./route-model-registry-service');
   if (!target.apiKeyId) throw new Error('请选择有效的 API Key');
   const apiKeyInfo = apiKeys.find(item => resolveApiKeyId(item) === target.apiKeyId);
-  if (!apiKeyInfo || !isApiKeyActive(apiKeyInfo)) throw new Error('请选择有效的 API Key');
-  const catalogApiKey = catalogEntry.apiKeys.find(key => key.id === resolveApiKeyId(apiKeyInfo));
+  const isLegacyKey = legacyKey && resolveApiKeyId({ key: legacyKey }) === target.apiKeyId;
+  if (!localKey && !isLegacyKey && (!apiKeyInfo || !isApiKeyActive(apiKeyInfo)))
+    throw new Error('请选择有效的 API Key');
+  const catalogApiKey = catalogEntry.apiKeys.find(key => key.id === target.apiKeyId);
   if (!catalogApiKey) {
     throw new Error('所选 API Key 已不可用，请重新选择');
   }
@@ -544,14 +580,18 @@ async function resolveProfileValues(
     throw new Error('所选模型不属于当前 API Key 分组，请重新选择');
   }
   const { resolveAccountApiKeyValue } = await import('./route-channel-resolver');
-  const apiKey = await resolveAccountApiKeyValue(site, account, apiKeyInfo);
+  const apiKey = isLegacyKey
+    ? resolveApiKeyForUse(legacyKey)
+    : localKey
+      ? resolveApiKeyForUse(localKey.key, localKey.source)
+      : await resolveAccountApiKeyValue(site, account, apiKeyInfo!);
   if (!apiKey) throw new Error('无法解析 API Key 的真实值');
   return {
     baseUrl: site.url,
-    apiKey: ensureSkPrefix(apiKey),
+    apiKey: localKey || isLegacyKey ? apiKey : resolveApiKeyForUse(apiKey, 'remote'),
     model: target.model || scopedModels[0] || '',
     targetLabel: catalogEntry.label,
-    apiKeyName: String(apiKeyInfo.name || apiKeyInfo.token_id || apiKeyInfo.id || '未命名 API Key'),
+    apiKeyName: catalogApiKey.label,
   };
 }
 
@@ -587,17 +627,15 @@ async function writeProfileStorage(profiles: ConfigFileProfile[]): Promise<void>
 }
 
 function upgradeBuiltinProfiles(profiles: ConfigFileProfile[]): ConfigFileProfile[] {
-  const defaults = createDefaultConfigFileProfiles();
-  const latestByClient = new Map(defaults.map(item => [item.builtin!.clientType, item]));
   return profiles.map(profile => {
     if (!profile.isExample) return profile;
     const legacyClient = BUILTIN_CLI_TYPES.find(
-      clientType => BUILTIN_IDS[clientType] === profile.id
+      clientType => BUILTIN_CLI_IDS[clientType] === profile.id
     );
     const clientType = profile.builtin?.clientType || legacyClient;
     if (!clientType || profile.builtin?.migrationSourceId) return profile;
-    const latest = latestByClient.get(clientType);
-    if (!latest) return profile;
+    const authMode = normalizeConfigFileAuthMode(profile.authMode);
+    const latest = createBuiltinConfigFileProfile(clientType, authMode, Date.now());
     const isUntouchedLegacy =
       !profile.builtin &&
       profile.files.length === 1 &&
@@ -761,6 +799,16 @@ export async function deleteConfigFileProfile(input: DeleteConfigFileProfileInpu
   });
 }
 
+export async function restoreMissingBuiltinConfigFileProfiles(): Promise<ConfigFileProfile[]> {
+  const profiles = await loadConfigFileProfiles();
+  const existingIds = new Set(profiles.map(profile => profile.id));
+  const missing = createDefaultConfigFileProfiles().filter(profile => !existingIds.has(profile.id));
+  if (missing.length === 0) return profiles;
+  const restored = [...profiles, ...missing];
+  await writeProfileStorage(restored);
+  return restored;
+}
+
 export async function restoreBuiltinConfigFileProfile(
   input: RestoreBuiltinConfigFileProfileInput
 ): Promise<ConfigFileProfile> {
@@ -774,11 +822,10 @@ export async function restoreBuiltinConfigFileProfile(
   }
   const clientType =
     previous.builtin?.clientType ||
-    BUILTIN_CLI_TYPES.find(value => BUILTIN_IDS[value] === previous.id);
-  const latest = createDefaultConfigFileProfiles().find(
-    profile => profile.builtin?.clientType === clientType
-  );
-  if (!latest) throw new Error('找不到对应的最新内置示例');
+    BUILTIN_CLI_TYPES.find(value => BUILTIN_CLI_IDS[value] === previous.id);
+  if (!clientType) throw new Error('找不到对应的内置示例');
+  const authMode = normalizeConfigFileAuthMode(previous.authMode);
+  const latest = createBuiltinConfigFileProfile(clientType, authMode, Date.now());
   const restored: ConfigFileProfile = {
     ...latest,
     name: previous.name,
@@ -798,6 +845,44 @@ export async function restoreBuiltinConfigFileProfile(
     if (transaction.profileId === previous.id) previewTransactions.delete(id);
   });
   return restored;
+}
+
+export async function switchBuiltinConfigFileProfileAuthMode(
+  input: SwitchBuiltinConfigFileProfileAuthModeInput
+): Promise<ConfigFileProfile> {
+  if (!input?.profileId) throw new Error('配置卡片 ID 不能为空');
+  const profiles = await loadConfigFileProfiles();
+  const index = profiles.findIndex(item => item.id === input.profileId);
+  const previous = index >= 0 ? profiles[index] : undefined;
+  if (!previous || !previous.isExample) throw new Error('只有内置示例支持切换接入方式');
+  if (input.expectedRevision !== undefined && previous.revision !== input.expectedRevision) {
+    throw new Error('配置卡片已被其他操作修改，请重新加载');
+  }
+  const authMode = normalizeConfigFileAuthMode(input.authMode);
+  if (normalizeConfigFileAuthMode(previous.authMode) === authMode) return previous;
+  const clientType =
+    previous.builtin?.clientType ||
+    BUILTIN_CLI_TYPES.find(value => BUILTIN_CLI_IDS[value] === previous.id);
+  if (!clientType) throw new Error('找不到对应的内置示例');
+  const latest = createBuiltinConfigFileProfile(clientType, authMode, Date.now());
+  const switched: ConfigFileProfile = {
+    ...latest,
+    name: previous.name,
+    agentLogoId: previous.agentLogoId,
+    target: previous.target,
+    localRouteCredential: previous.localRouteCredential,
+    sessionRecordConnectors: previous.sessionRecordConnectors,
+    sessionRecordPaths: previous.sessionRecordPaths,
+    revision: (previous.revision || 1) + 1,
+    createdAt: previous.createdAt,
+    updatedAt: Date.now(),
+  };
+  profiles[index] = switched;
+  await writeProfileStorage(profiles);
+  previewTransactions.forEach((transaction, id) => {
+    if (transaction.profileId === previous.id) previewTransactions.delete(id);
+  });
+  return switched;
 }
 
 // Compatibility for legacy tests and callers. New UI persists profiles independently.
@@ -963,7 +1048,12 @@ export async function getConfigFileTargetCatalog(): Promise<ConfigFileTargetCata
   ];
   for (const site of unifiedConfigManager.getSites()) {
     for (const account of unifiedConfigManager.getAccountsBySiteId(site.id)) {
-      const allModels = Array.from(new Set(account.cached_data?.models || [])).filter(Boolean);
+      const allModels = Array.from(
+        new Set([
+          ...(account.cached_data?.models || []),
+          ...(account.local_api_keys || []).flatMap(key => key.models),
+        ])
+      ).filter(Boolean);
       const userGroups = account.cached_data?.user_groups || {};
       const apiKeys = (account.cached_data?.api_keys || []).filter(isApiKeyActive).map(key => {
         const groupName = key.group?.trim();
@@ -983,6 +1073,37 @@ export async function getConfigFileTargetCatalog(): Promise<ConfigFileTargetCata
           ),
         };
       });
+      for (const key of account.local_api_keys || []) {
+        if (
+          !isApiKeyActive({ enabled: key.status }) ||
+          !resolveApiKeyForUse(key.key, key.source) ||
+          apiKeys.some(item => item.id === key.id)
+        )
+          continue;
+        apiKeys.push({
+          id: key.id,
+          label: key.name || '本地 API Key',
+          key: undefined,
+          group: key.group || undefined,
+          ratio: key.groupMultiplier,
+          desc: undefined,
+          scopedModels: key.models,
+        });
+      }
+      const legacyKey = account.api_key || site.api_key;
+      if (legacyKey && resolveApiKeyForUse(legacyKey)) {
+        const id = resolveApiKeyId({ key: legacyKey });
+        if (!apiKeys.some(key => key.id === id))
+          apiKeys.push({
+            id,
+            label: '手动 API Key',
+            key: undefined,
+            group: undefined,
+            ratio: undefined,
+            desc: undefined,
+            scopedModels: allModels,
+          });
+      }
       const unavailableReasons = [
         !site.url?.trim() ? '缺少 Base URL' : '',
         site.enabled === false ? '站点已禁用' : '',
@@ -1012,7 +1133,7 @@ export async function getConfigFileTargetCatalog(): Promise<ConfigFileTargetCata
   for (const direct of (await loadCustomCliConfigStorage()).configs) {
     const unavailableReasons = [
       !direct.baseUrl.trim() ? '缺少 Base URL' : '',
-      !direct.apiKey.trim() ? '缺少 API Key' : '',
+      !resolveApiKeyForUse(direct.apiKey) ? '缺少有效 API Key' : '',
     ].filter(Boolean);
     const models = Array.from(new Set([...(direct.models || []), ...(direct.manualModels || [])]))
       .map(item => item.trim())
@@ -1047,6 +1168,39 @@ export async function readSavedConfigFiles(profileId: string): Promise<ConfigFil
       return { fileId: file.id, ...state };
     })
   );
+}
+
+export async function listSavedConfigFileBackups(
+  input: ConfigFileBackupInput
+): Promise<ConfigFileBackup[]> {
+  const profile = findProfile(await loadConfigFileProfiles(), input?.profileId);
+  const definition = profile.files.find(file => file.id === input.fileId);
+  if (!definition) throw new Error('配置文件不存在');
+  const pathname = normalizeConfigPath(definition.path);
+  await assertSafeConfigPath(pathname);
+  await migrateLegacyConfigBackups([pathname]);
+  return listConfigFileBackups(pathname);
+}
+
+export async function previewConfigFileBackupRestore(
+  input: PreviewConfigFileBackupRestoreInput
+): Promise<ConfigFilePreviewTransaction> {
+  const profile = findProfile(await loadConfigFileProfiles(), input?.profileId);
+  if (input.expectedRevision !== undefined && input.expectedRevision !== profile.revision)
+    throw new Error('配置卡片已修改，请重新加载');
+  const definition = profile.files.find(file => file.id === input.fileId);
+  if (!definition) throw new Error('配置文件不存在');
+  const pathname = normalizeConfigPath(definition.path);
+  const snapshot = await readFileState(pathname);
+  const content = await readConfigFileBackup(pathname, input.backupId, input.expectedHash);
+  const transaction = await previewConfigFileDirectEdit({
+    profileId: profile.id,
+    expectedRevision: profile.revision,
+    edits: { [definition.id]: content },
+    snapshots: { [definition.id]: snapshot },
+  });
+  transaction.operation = 'backup-restore';
+  return transaction;
 }
 
 async function assertSafeSessionRecordPath(pathname: string): Promise<void> {
@@ -1964,12 +2118,10 @@ export async function commitConfigFileProfile(input: CommitConfigFileProfileInpu
   }
 
   const changed = transaction.files.filter(file => file.changed);
-  const suffix = `.bak.${Date.now()}`;
+  await migrateLegacyConfigBackups(changed.map(file => file.path));
   for (const file of changed) {
     if (file.exists) {
-      await writeTextFileAtomically(`${file.path}${suffix}`, file.content, {
-        mode: file.mode ?? 0o600,
-      });
+      await backupConfigFile(file.path, file.content);
     }
   }
 
@@ -2048,8 +2200,7 @@ export async function readConfigFiles(filePaths: string[]): Promise<ConfigFileSn
 export async function saveConfigFile(pathname: string, content: string): Promise<void> {
   pathname = normalizeConfigPath(pathname);
   const previous = await readFileState(pathname);
-  if (previous.exists)
-    await writeTextFileAtomically(`${pathname}.bak.${Date.now()}`, previous.content);
+  if (previous.exists) await backupConfigFile(pathname, previous.content);
   await writeTextFileAtomically(pathname, content);
 }
 
@@ -2063,10 +2214,9 @@ export async function applyConfigFileProfile(input: ApplyConfigFileProfileInput)
       rendered: renderDefinition(definition, input.values),
     }))
   );
-  const suffix = `.bak.${Date.now()}`;
   for (const item of originals) {
     if (item.state.exists) {
-      await writeTextFileAtomically(`${item.state.path}${suffix}`, item.state.content);
+      await backupConfigFile(item.state.path, item.state.content);
     }
   }
   const written: typeof originals = [];

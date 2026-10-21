@@ -210,7 +210,7 @@ export async function electronFetch<T = any>(
       reject(new Error(`Request timeout after ${timeout}ms`));
     }, timeout);
 
-    let responseData = '';
+    const responseChunks: Buffer[] = [];
     const responseHeaders: Record<string, string> = {};
     let statusCode = 0;
     let statusMessage = '';
@@ -229,12 +229,14 @@ export async function electronFetch<T = any>(
       }
 
       response.on('data', chunk => {
-        responseData += chunk.toString();
+        // 按 Buffer 收集，end 后统一解码，避免多字节 UTF-8 字符在 chunk 边界被切裂
+        responseChunks.push(chunk);
       });
 
       response.on('end', () => {
         clearTimeout(timeoutId);
 
+        const responseData = Buffer.concat(responseChunks).toString('utf8');
         let parsedData: T;
         try {
           parsedData = JSON.parse(responseData) as T;

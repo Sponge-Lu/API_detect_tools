@@ -6,6 +6,11 @@
  */
 
 import Logger from './utils/logger';
+import {
+  getModelMetadata,
+  loadModelMetadata,
+  refreshModelMetadata,
+} from './model-metadata-service';
 import { unifiedConfigManager } from './unified-config-manager';
 import {
   buildCustomCliRouteAccountId,
@@ -37,6 +42,7 @@ import { resolveApiKeyId } from './api-key-identity';
 export { resolveApiKeyId } from './api-key-identity';
 import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 import { normalizeCircledGroupLabel } from '../shared/utils/groupLabel';
+import { resolveApiKeyForUse } from '../shared/utils/apiConfig';
 
 const log = Logger.scope('RouteModelRegistry');
 const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
@@ -236,7 +242,12 @@ function collectAvailableApiKeys(
   const localApiKeys = (account.local_api_keys || [])
     .filter(apiKey => {
       const group = normalizeCircledGroupLabel(apiKey.group);
-      return !!group && !!apiKey.key.trim() && apiKey.models.includes(originalModel);
+      return (
+        !!group &&
+        isApiKeyActive({ enabled: apiKey.status }) &&
+        !!resolveApiKeyForUse(apiKey.key, apiKey.source) &&
+        apiKey.models.includes(originalModel)
+      );
     })
     .map(apiKey => ({
       apiKeyId: apiKey.id,
@@ -246,7 +257,20 @@ function collectAvailableApiKeys(
       group: normalizeCircledGroupLabel(apiKey.group),
     }));
 
-  return [...remoteApiKeys, ...localApiKeys];
+  const keys = [...remoteApiKeys, ...localApiKeys];
+  if (account.api_key && resolveApiKeyForUse(account.api_key)) {
+    const id = resolveApiKeyId({ key: account.api_key });
+    if (!keys.some(key => key.apiKeyId === id)) {
+      keys.push({
+        apiKeyId: id,
+        apiKeyName: '手动 API Key',
+        accountId: account.id,
+        accountName: account.account_name,
+        group: availableUserGroups[0] || 'default',
+      });
+    }
+  }
+  return keys;
 }
 
 function addCustomCliModelCandidate(
@@ -562,7 +586,15 @@ async function rebuildModelRegistryInternal(force?: boolean): Promise<RouteModel
           .filter(apiKey => apiKey.models.includes(model))
           .map(apiKey => normalizeCircledGroupLabel(apiKey.group))
           .filter(Boolean);
-        const availableUserGroups = Array.from(new Set([...pricedUserGroups, ...localUserGroups]));
+        const availableUserGroups = Array.from(
+          new Set([
+            ...pricedUserGroups,
+            ...localUserGroups,
+            ...(account.api_key && resolveApiKeyForUse(account.api_key)
+              ? [userGroupKeys[0] || 'default']
+              : []),
+          ])
+        );
         const availableApiKeys = collectAvailableApiKeys(account, model, availableUserGroups);
         const apiKeyNamesByGroup = buildApiKeyNamesByGroup(availableApiKeys);
         const apiKeyGroups = Array.from(new Set(availableApiKeys.map(apiKey => apiKey.group)));
@@ -671,6 +703,15 @@ async function rebuildModelRegistryInternal(force?: boolean): Promise<RouteModel
     lastAggregatedAt: now,
   };
 
+  await loadModelMetadata().catch(error =>
+    log.warn('Model metadata cache unavailable', String(error))
+  );
+  for (const entry of Object.values(registry.entries)) {
+    entry.metadata =
+      getModelMetadata(entry.canonicalName) ??
+      entry.aliases.map(getModelMetadata).find(Boolean) ??
+      existing.entries[entry.canonicalName]?.metadata;
+  }
   await unifiedConfigManager.updateRouteModelRegistry(registry);
   log.info(`Model registry rebuilt: ${Object.keys(registry.entries).length} canonical models`);
   return registry;
@@ -832,7 +873,21 @@ function processModelSource(
 
 /** 获取当前 registry */
 export function getModelRegistry(): RouteModelRegistryConfig {
-  return unifiedConfigManager.getRoutingConfig().modelRegistry;
+  const registry = unifiedConfigManager.getRoutingConfig().modelRegistry;
+  for (const entry of Object.values(registry.entries)) {
+    const metadata =
+      getModelMetadata(entry.canonicalName) ?? entry.aliases.map(getModelMetadata).find(Boolean);
+    if (metadata) entry.metadata = metadata;
+  }
+  return registry;
+}
+
+export async function refreshModelRegistryMetadata(
+  force = false
+): Promise<RouteModelRegistryConfig> {
+  await refreshModelMetadata(force);
+  // Read current routing only after I/O; metadata must never overwrite routing edits.
+  return getModelRegistry();
 }
 
 /** 按厂商过滤 registry 条目 */

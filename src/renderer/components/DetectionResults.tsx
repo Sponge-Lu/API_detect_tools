@@ -73,12 +73,6 @@ export function DetectionResults({ results, detecting }: DetectionResultsProps) 
               </span>
             </div>
 
-            {result.error && (
-              <div className="mb-3 rounded-[var(--radius-md)] border border-[var(--danger)]/22 bg-[var(--danger-soft)] p-3">
-                <p className="text-sm text-[var(--danger)]">{result.error}</p>
-              </div>
-            )}
-
             {result.balance !== undefined && result.balance !== null && (
               <div className="mb-3 flex items-center gap-2 text-[var(--accent)]">
                 <DollarSign className="h-4 w-4" />

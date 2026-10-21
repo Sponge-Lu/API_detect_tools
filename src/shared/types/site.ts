@@ -1,6 +1,6 @@
 /**
  * 输入: 无 (纯类型定义)
- * 输出: TypeScript 类型和接口 (Site, SiteGroup, AccountCredential, DetectionResult, CheckinStats, LdcPaymentInfo 等)
+ * 输出: TypeScript 类型和接口 (Site, SiteGroup, AccountCredential, DetectionResult, CheckinStats 等)
  * 定位: 类型定义层 - 定义主进程和渲染进程共享的数据模型
  *
  * 多账户支持: AccountCredential 存储多账户凭证，站点级字段仅保留无账户场景所需的兼容信息
@@ -79,45 +79,6 @@ export interface CheckinStats {
   siteType?: 'veloera' | 'newapi';
 }
 
-// ============= LDC 支付类型 =============
-
-/** 支付方式 */
-export interface PayMethod {
-  name: string; // 支付方式名称，如 "Linuxdo Credit"
-  type: string; // 支付方式类型，如 "epay"
-}
-
-/** 充值信息 API 响应 - /api/user/topup/info */
-export interface TopupInfoApiResponse {
-  success: boolean;
-  message: string;
-  data: {
-    amount_options: number[]; // 充值金额选项 [10, 20, 50, 100, 200, 500]
-    creem_products: string; // Creem 产品配置
-    discount: Record<string, unknown>; // 折扣配置
-    enable_creem_topup: boolean; // 是否启用 Creem 充值
-    enable_online_topup: boolean; // 是否启用在线充值
-    enable_stripe_topup: boolean; // 是否启用 Stripe 充值
-    min_topup: number; // 最小充值金额
-    pay_methods: PayMethod[]; // 支付方式列表
-    stripe_min_topup: number; // Stripe 最小充值金额
-  };
-}
-
-/** 兑换比例 API 响应 - /api/user/amount */
-export interface AmountApiResponse {
-  success?: boolean;
-  message?: string;
-  data: string; // 兑换比例，如 "10.00" 表示 10 LDC = 1 站点余额
-}
-
-/** LDC 支付信息 */
-export interface LdcPaymentInfo {
-  ldcPaymentSupported: boolean; // 是否支持 LDC 支付
-  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
-  ldcPaymentType?: string; // 支付方式类型，如 "epay"
-}
-
 /** 单个 CLI 配置项 */
 export interface CliConfigItem {
   apiKeyId: number | null;
@@ -151,6 +112,7 @@ export type AccountAuthSource = 'main_profile' | 'isolated_profile' | 'manual';
 export type BrowserProfileOptionId =
   | 'manual'
   | 'main_profile'
+  | 'internal_profile'
   | `isolated_profile:${number}`
   | 'current_isolated_profile';
 
@@ -196,6 +158,12 @@ export interface AccountCredential {
 
   auth_source: AccountAuthSource;
   browser_profile_path?: string; // isolated profile 持久化路径
+  /**
+   * 浏览器自动化槽位号（创建时分配并持久化，同一站点内唯一）。
+   * 决定该账户专属的浏览器 Profile 目录（browser-runtime/profiles/slot-N），
+   * 取代旧的"按账户列表位置"计算方式，删账户/排序不再引起串号。
+   */
+  automation_slot?: number;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
   cached_data?: DetectionCacheData; // 账户级检测缓存
@@ -227,9 +195,28 @@ export function generateAccountId(): string {
   return `acct_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
-/** 判断是否为 AnyRouter 站点 */
+/** 判断是否为 AnyRouter 站点（注意：代理路由等行为也依赖此判断，扩展匹配需评估代理侧影响） */
 export function isAnyRouterSite(siteName: string): boolean {
   return siteName.replace(/[\s_-]+/g, '').toLowerCase() === 'anyrouter';
+}
+
+/**
+ * 登录即送奖励的路由站点（Any Router / Agent Router）。
+ * 这类站点无独立签到接口：使用账户浏览器打开站点即视为完成签到，奖励固定为登录赠送额度。
+ * 仅用于签到流程；代理路由仍使用 isAnyRouterSite，避免行为扩散。
+ */
+export function isLoginBonusRouterSite(siteName: string): boolean {
+  const normalized = siteName.replace(/[\s_-]+/g, '').toLowerCase();
+  return normalized === 'anyrouter' || normalized === 'agentrouter';
+}
+
+/**
+ * 站点是否启用签到（对应 UI「启用签到功能」开关）。
+ * 显式 false 表示用户已关闭：该站点不再参与任何签到，优先于站点自身的签到能力探测结果。
+ * undefined 保持原有语义，交由签到能力探测决定。
+ */
+export function isSiteCheckinEnabled(site: { force_enable_checkin?: boolean }): boolean {
+  return site.force_enable_checkin !== false;
 }
 
 // ============= 检测缓存数据 =============
@@ -250,9 +237,6 @@ export interface DetectionCacheData {
   last_refresh?: number;
   has_checkin?: boolean;
   can_check_in?: boolean;
-  ldc_payment_supported?: boolean;
-  ldc_exchange_rate?: string;
-  ldc_payment_type?: string;
   checkin_stats?: {
     today_quota?: number;
     checkin_count?: number;
@@ -287,9 +271,6 @@ export interface AccountRuntimeDetectionData {
   last_refresh?: number;
   has_checkin?: boolean;
   can_check_in?: boolean;
-  ldc_payment_supported?: boolean;
-  ldc_exchange_rate?: string;
-  ldc_payment_type?: string;
   checkin_stats?: DetectionCacheData['checkin_stats'];
   status?: string;
   error?: string;
@@ -356,6 +337,11 @@ export interface Site {
   force_enable_checkin?: boolean; // 强制启用签到
   auto_refresh?: boolean; // 站点级自动刷新开关
   auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小15分钟
+  /**
+   * 站点级 HTTP 代理（检测/刷新等直连请求使用；http/https/socks4/socks5）。
+   * 仅作用于 Node 侧 HTTP 请求；浏览器会话回退仍跟随浏览器自身代理。
+   */
+  proxy_url?: string;
 
   // v3.0.6: CLI 配置已移至账户级
 
@@ -414,6 +400,7 @@ export interface WebDAVConfig {
   password: string; // 存储时 Base64 编码
   remotePath: string; // 默认 '/api-hub-backups'
   maxBackups: number; // 默认 10
+  includeSecrets?: boolean;
 }
 
 /** WebDAV 备份文件信息 */
@@ -485,6 +472,7 @@ export interface SiteConfig {
   has_checkin?: boolean;
   force_enable_checkin?: boolean;
   extra_links?: string;
+  proxy_url?: string; // 站点级 HTTP 代理，检测/刷新等直连请求使用
   auto_refresh?: boolean; // 站点独立的自动刷新开关
   auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小15分钟
 }
@@ -541,6 +529,8 @@ export interface DetectionResult {
   todayTotalTokens?: number;
   todayRequests?: number;
   error?: string;
+  /** Non-blocking anomalies found while refreshing this site. */
+  issues?: string[];
   has_checkin: boolean;
   can_check_in?: boolean;
   apiKeys?: ApiKeyInfo[];
@@ -550,10 +540,6 @@ export interface DetectionResult {
   lastRefresh?: number;
   // 多账户: 标识此结果属于哪个账户（per-account 检测）
   accountId?: string;
-  // LDC 支付信息
-  ldcPaymentSupported?: boolean;
-  ldcExchangeRate?: string;
-  ldcPaymentType?: string;
   // 签到统计数据 (New API 类型站点)
   checkinStats?: CheckinStats;
 }
@@ -692,10 +678,6 @@ export interface CachedDisplayData {
   models?: string[];
   lastRefresh: number;
   can_check_in?: boolean;
-  // LDC 支付信息
-  ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
-  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
-  ldcPaymentType?: string; // 支付方式类型，如 "epay"
   // 签到统计数据 (New API)
   checkinStats?: CheckinStats;
 }
@@ -789,9 +771,6 @@ export function splitDetectionCacheData(cache?: DetectionCacheData): {
     last_refresh: cache.last_refresh,
     has_checkin: cache.has_checkin,
     can_check_in: cache.can_check_in,
-    ldc_payment_supported: cache.ldc_payment_supported,
-    ldc_exchange_rate: cache.ldc_exchange_rate,
-    ldc_payment_type: cache.ldc_payment_type,
     checkin_stats: cache.checkin_stats,
     status: cache.status,
     error: cache.error,
@@ -822,9 +801,6 @@ export function mergeDetectionCacheData(
     last_refresh: runtime?.last_refresh ?? shared?.last_refresh,
     has_checkin: runtime?.has_checkin,
     can_check_in: runtime?.can_check_in,
-    ldc_payment_supported: runtime?.ldc_payment_supported,
-    ldc_exchange_rate: runtime?.ldc_exchange_rate,
-    ldc_payment_type: runtime?.ldc_payment_type,
     checkin_stats: runtime?.checkin_stats,
     status: runtime?.status,
     error: runtime?.error,

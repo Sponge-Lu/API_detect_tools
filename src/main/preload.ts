@@ -24,6 +24,8 @@ import type {
 import type { EndpointTestSelectionInput, EndpointTestTarget } from '../shared/types/endpoint-test';
 import type { BrowserProfileOptionId } from '../shared/types/site';
 import type {
+  ConfigFileBackupInput,
+  PreviewConfigFileBackupRestoreInput,
   CommitConfigFileProfileInput,
   DeleteConfigFileProfileInput,
   GenerateConfigFileProfileRouteKeyInput,
@@ -31,6 +33,7 @@ import type {
   PreviewConfigFileProfileInput,
   PreviewConfigFileProfileRouteKeyRotationInput,
   RestoreBuiltinConfigFileProfileInput,
+  SwitchBuiltinConfigFileProfileAuthModeInput,
   ResolveConfigFileProfileValuesInput,
   UpsertConfigFileProfileInput,
   ValidateSessionRecordConnectorInput,
@@ -106,8 +109,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 轻量级余额刷新（签到后使用）
   refreshBalanceOnly: (site: any, timeout: number, checkinStats?: any, accountId?: string) =>
     ipcRenderer.invoke('refresh-balance-only', site, timeout, checkinStats, accountId),
-  detectAllSites: (config: any, quickRefresh?: boolean, cachedResults?: any) =>
-    ipcRenderer.invoke('detect-all-sites', config, quickRefresh, cachedResults),
   openUrl: (url: string) => ipcRenderer.invoke('open-url', url),
   getAllAccounts: () => ipcRenderer.invoke('get-all-accounts'),
 
@@ -115,14 +116,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   token: {
     // 初始化站点账号（一次性从浏览器获取所有数据）
     initializeSite: (baseUrl: string) => ipcRenderer.invoke('token:initialize-site', baseUrl),
-    // 初始化并保存为 AccountCredential（多账户流程）
-    initializeAccount: (params: {
-      siteId: string;
-      baseUrl: string;
-      accountName?: string;
-      authSource: 'main_profile' | 'isolated_profile' | 'manual';
-      profilePath?: string;
-    }) => ipcRenderer.invoke('token:initialize-account', params),
     // 刷新显示数据（使用access_token获取余额、使用量等）
     refreshDisplayData: (account: any) => ipcRenderer.invoke('token:refresh-display-data', account),
     // 从浏览器登录态刷新账户基础信息（user_id / username / access_token）
@@ -217,7 +210,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 手动触发备份
     manual: () => ipcRenderer.invoke('backup:manual'),
     // 导出 portable 可迁移配置包（config.json + custom-cli-configs.json）
-    exportPackage: () => ipcRenderer.invoke('backup:export-config-package'),
+    exportPackage: (includeSecrets = false) =>
+      ipcRenderer.invoke('backup:export-config-package', includeSecrets),
     // 导入 portable / full-manifest / legacy config-only 配置包
     importPackage: (content: string) => ipcRenderer.invoke('backup:import-config-package', content),
     // 从备份恢复配置
@@ -342,38 +336,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     quitApp: () => ipcRenderer.invoke('close-behavior:quit-app'),
   },
 
-  // Linux Do Credit 积分检测 API
-  credit: {
-    // 获取积分数据
-    fetch: () => ipcRenderer.invoke('credit:fetch'),
-    // 获取每日统计数据
-    fetchDailyStats: (days?: number) => ipcRenderer.invoke('credit:fetch-daily-stats', days),
-    // 获取交易记录
-    fetchTransactions: (page?: number, pageSize?: number) =>
-      ipcRenderer.invoke('credit:fetch-transactions', page, pageSize),
-    // 刷新所有数据（积分、每日统计、交易记录）- 在单个浏览器页面中完成
-    refreshAll: () => ipcRenderer.invoke('credit:refresh-all'),
-    // 启动登录
-    login: () => ipcRenderer.invoke('credit:login'),
-    // 登出
-    logout: () => ipcRenderer.invoke('credit:logout'),
-    // 获取登录状态
-    getStatus: () => ipcRenderer.invoke('credit:get-status'),
-    // 保存配置
-    saveConfig: (config: any) => ipcRenderer.invoke('credit:save-config', config),
-    // 加载配置
-    loadConfig: () => ipcRenderer.invoke('credit:load-config'),
-    // 获取缓存数据
-    getCached: () => ipcRenderer.invoke('credit:get-cached'),
-    // 获取缓存的每日统计数据
-    getCachedDailyStats: () => ipcRenderer.invoke('credit:get-cached-daily-stats'),
-    // 获取缓存的交易记录
-    getCachedTransactions: () => ipcRenderer.invoke('credit:get-cached-transactions'),
-    // 发起充值
-    initiateRecharge: (request: { siteUrl: string; amount: number; token: string }) =>
-      ipcRenderer.invoke('credit:initiate-recharge', request),
-  },
-
   // 自定义 CLI 配置 API
   customCliConfig: {
     // 加载配置
@@ -398,8 +360,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('config-file-profile:resolve-values', input),
     restoreBuiltin: (input: RestoreBuiltinConfigFileProfileInput) =>
       ipcRenderer.invoke('config-file-profile:restore-builtin', input),
+    restoreMissingBuiltins: () =>
+      ipcRenderer.invoke('config-file-profile:restore-missing-builtins'),
+    switchAuthMode: (input: SwitchBuiltinConfigFileProfileAuthModeInput) =>
+      ipcRenderer.invoke('config-file-profile:switch-auth-mode', input),
     readFiles: (profileId: string) =>
       ipcRenderer.invoke('config-file-profile:read-files', profileId),
+    listBackups: (input: ConfigFileBackupInput) =>
+      ipcRenderer.invoke('config-file-profile:list-backups', input),
+    previewBackupRestore: (input: PreviewConfigFileBackupRestoreInput) =>
+      ipcRenderer.invoke('config-file-profile:preview-backup-restore', input),
     preview: (input: PreviewConfigFileProfileInput) =>
       ipcRenderer.invoke('config-file-profile:preview', input),
     previewRouteKeyRotation: (input: PreviewConfigFileProfileRouteKeyRotationInput) =>
@@ -421,8 +391,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       user_id: string;
       username?: string;
       access_token: string;
+      api_key?: string;
       auth_source: string;
       browser_profile_path?: string;
+      automation_slot?: number;
       anyRouterConfig?: { userHash?: string };
     }) => ipcRenderer.invoke('accounts:add', data),
     update: (accountId: string, updates: any) =>
@@ -488,13 +460,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetStats: (ruleId?: string) => ipcRenderer.invoke('route:reset-stats', ruleId),
     resetPathStates: (params?: RoutePathStateResetParams) =>
       ipcRenderer.invoke('route:reset-path-states', params),
-    getHealth: () => ipcRenderer.invoke('route:get-health'),
-    runHealthCheck: () => ipcRenderer.invoke('route:run-health-check'),
     getRuntimeStatus: () => ipcRenderer.invoke('route:get-runtime-status'),
     startServer: () => ipcRenderer.invoke('route:start-server'),
     stopServer: () => ipcRenderer.invoke('route:stop-server'),
     regenerateApiKey: () => ipcRenderer.invoke('route:regenerate-api-key'),
     getModelRegistry: () => ipcRenderer.invoke('route:get-model-registry'),
+    refreshModelMetadata: () => ipcRenderer.invoke('route:refresh-model-metadata'),
+    onModelMetadataUpdated: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('route:model-metadata-updated', handler);
+      return () => ipcRenderer.removeListener('route:model-metadata-updated', handler);
+    },
     rebuildModelRegistry: (params?: { force?: boolean }) =>
       ipcRenderer.invoke('route:rebuild-model-registry', params),
     syncModelRegistrySources: (params?: { force?: boolean }) =>
@@ -514,7 +490,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listSessions: (scope?: 'active' | 'recent' | 'history' | 'all') =>
       ipcRenderer.invoke('route:list-sessions', scope),
     listRouteInstances: () => ipcRenderer.invoke('route:list-route-instances'),
-    createArmedRouteInstance: (input: { modelId: string; reasoningEffort: string }) =>
+    createArmedRouteInstance: (input: { modelId?: string; reasoningEffort?: string }) =>
       ipcRenderer.invoke('route:create-armed-route-instance', input),
     updateRouteInstance: (instanceId: string, updates: RouteInstanceUpdate) =>
       ipcRenderer.invoke('route:update-route-instance', instanceId, updates),

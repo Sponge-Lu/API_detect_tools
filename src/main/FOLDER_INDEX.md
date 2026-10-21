@@ -1,5 +1,7 @@
 # 📁 src/main/ - Electron 主进程
 
+新增采纳模块：`request-rectifier.ts` 提供错误触发的窄口径请求修复；`config-file-backups.ts` 管理集中备份、历史迁移与恢复读取；`model-metadata-service.ts` 提供 models.dev 缓存、启动后台刷新及手动刷新。实现状态见 `docs/PEER_BENCHMARK_AND_ADOPTION.md`。
+
 ## 架构说明
 
 **职责**: Electron 主进程，处理应用生命周期、窗口管理、IPC 通信、后端业务逻辑
@@ -23,18 +25,18 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **window-health-manager.ts** | 主窗口渲染健康监控、有界自动恢复与内置错误页 | `createRendererHealthMonitor()`, `buildRendererRecoveryPage()` |
+| **main.ts** | 应用入口、显式开发页面与构建页面加载、窗口管理 | `createWindow()`, `app.whenReady()` |
+| **window-health-manager.ts** | 统一开发/预览/打包页面加载、渲染健康监控、有界恢复与内置错误页 | `loadApplicationRenderer()`, `createRendererHealthMonitor()`, `buildRendererRecoveryPage()` |
 | **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更；广播会跳过已销毁窗口/webContents 并吞掉 Electron disposed-frame 竞态错误 | `notifyAppDataChanged()`, `broadcastRendererEvent()` |
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界；支持 lightweight/full-manifest/portable-config 模式 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
 | **app-storage-bundle.ts** | 配置包创建/恢复；portable-config 仅含 config.json + custom-cli-configs；full-manifest 另含 runtime/settings；兼容 legacy config-only 恢复 | `createAppStorageBundleContent()`, `createPortableAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
 | **config-field-crypto.ts** | 配置字段 AES-256-GCM 加密/解密，应用固定密钥版本化，在磁盘 I/O 边界透明加解密敏感字段（api_key, access_token, apiKey） | `encryptField()`, `decryptField()`, `encryptConfigFields()`, `decryptConfigFields()`, `encryptCustomCliConfigs()`, `decryptCustomCliConfigs()` |
-| **api-service.ts** | API 请求服务、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
+| **api-service.ts** | API 请求服务、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、API Key 分组异常归集、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集；检测/刷新 HTTP 请求透传站点级 `proxy_url` 代理 | `ApiService` 类 |
 | **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
 | **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供 Cookie/UA 投影后的 Electron Session 通用 GET/POST 请求、页面级登录态重读和账户 Profile 签到页复用 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
-| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；统一识别认证失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
+| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；统一识别认证失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key；API Keys/用户分组/模型定价检测请求支持站点级 `proxyUrl` 代理透传 | `TokenService` 类 |
 | **endpoint-test-service.ts** | 解析托管/直连目标，绕过本地 Route Proxy 直接执行 Messages、Responses 与 Chat Completions 上游测试，持久化最新选择、结果与 `testedAt` | `getEndpointTestState()`, `runEndpointTest()` |
 | **endpoint-test-state-service.ts** | 独立保存端点测试选择与最新结果 sidecar；不读写路由运行态、统计或分析 | `endpointTestStateService` |
 | **upstream-credential-resolver.ts** | 中性上游凭证解析层；解析托管/直连 Base URL、真实 API Key 与鉴权方案，不启动路由或写入路由运行态 | `resolveUpstreamCredentials()`, `resolveAccountApiKeyValue()` |
@@ -52,9 +54,12 @@
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | Claude Code、Codex、OpenCode、Grok Build 本地配置静态检测；Grok Build 仅读取 `~/.grok/config.toml`，不执行模型探测 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
-| **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **route-channel-resolver.ts** | 路由通道选择与目标协议解析；凭证接口仅保留兼容导出，实际解析由中性上游凭证层负责 | `resolveChannels()`, `resolveChannelCredentials()`, `resolveChannelTarget()` |
-| **route-proxy-service.ts** | 三标准协议通用本地网关，支持 Responses 状态亲和、增量流校验/转换、原生 Anthropic 流延迟提交窗口与截断降级、会话覆盖与模型发现，并明确拒绝 Conversations API | `startRouteProxyServer()`, `stopRouteProxyServer()`, `buildUpstreamRequestUrl()` |
+| **route-proxy-service.ts** | 三标准协议通用本地网关调度：串行启停监听、持久化开关与运行态双重请求闸门、启动失败清理、请求分类/凭证/会话解析、规则选路与亲和排序、尝试循环与终结响应；失败终结统一以 warn 级「Route request completed」附错误码落主日志，全部路径挂起回 503 + Retry-After | `handleRequest()`, `startProxyServer()`, `stopProxyServer()` |
+| **route-upstream-forwarder.ts** | 单次上游尝试的传输层：上游 URL/请求头构造、增量流校验/协议转换、原生 Anthropic 流延迟提交窗口与截断降级、SSE 错误补发 | `forwardToUpstream()`, `buildUpstreamRequestUrl()`, `buildUpstreamHeaders()` |
+| **route-request-context.ts** | 单个下游请求的生命周期状态：客户端取消传播、尝试计数、请求日志上下文与终结错误码诊断 | `RouteRequestContext`, `markRouteTerminalError()` |
+| **route-usage.ts** | 上游响应体/SSE 用量与思考强度解析（纯函数） | `extractUsageFromBody()`, `extractRouteReasoningEffort()` |
+| **route-proxy-shared.ts** | 路由代理模块间共享的路径/协议推断小工具 | `inferSourceProtocol()`, `getRequestPathname()` |
 | **route-session-service.ts** | RouteInstance 三元路由键与父子谱系归一化，解析 Codex/Claude Code/OpenCode 原生会话元数据，按客户端模型共享父卡或创建稳定副编号子卡，并保留 ARMED/生命周期语义 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
 | **route-target-lock.ts** | 路由层内部 target-lock 请求的编解码、终止错误状态与单测试上游尝试预算；端点测试不依赖 | `buildTargetLockRouteApiKey()`, `parseTargetLockRouteApiKey()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
@@ -64,7 +69,7 @@
 | **route-model-registry-service.ts** | 模型注册表来源聚合、真实直连多 Key/托管本地 Key 模型候选、手工/显式 override 展示项维护与厂商优先级配置 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将真实路由请求按 Messages、Responses、Chat Completions 等实际请求端点分轨聚合为 48h / 2h 成功率数据 | `getHistoryBuckets()` |
-| **route-stats-service.ts** | 路由调用统计与通道评分排序；上游确证不可用时按阶梯时长（2/10/30 分钟）首次即禁用路径 | `recordOutcome()`, `sortChannelsByScore()`, `recordRoutePathOutcome()` |
+| **route-stats-service.ts** | 路径级三态熔断（阶梯打开 2/10/30 分钟 → 半开单探测 → 成功闭合）、站点级熔断（连续传输异常 / 同站点同模型 404 类）、通道统计内存批量 flush；路径状态热路径不等待落盘 | `recordRoutePathOutcome()`, `beginRoutePathAttempt()`, `getRoutePathDisabledUntil()`, `sortChannelsByScore()` |
 | **route-upstream-failure.ts** | 上游失败分类（请求侧/通道侧/瞬时/配额耗尽）、确证不可用原因解析、响应体摘要归一化、Retry-After 解析与聚合响应留存排序 | `classifyUpstreamFailure()`, `resolveRoutePathDisabledReason()`, `failureClassToOutcome()` |
 | **route-session-binding-service.ts** | 会话-通道绑定侧车，让并发会话各自粘在不同上游通道；通道级绑定（不含模型）使换模型仍保住 prompt cache 亲和性 | `routeSessionBindingService`, `listActive()` |
 | **route-state-manager.ts** | 路由运行态文件管理，只维护 `route-runtime.json`、`route-analytics.json` 与模型来源快照；端点测试状态由独立 sidecar 管理 | `routeStateManager` |
@@ -76,6 +81,7 @@
 
 | 文件夹 | 职责 |
 |--------|------|
+| **browser-runtime/** | 内置 Chromium（打包分发）路径解析，浏览器降级链的第一主路径 |
 | **handlers/** | IPC 事件处理器 |
 | **types/** | TypeScript 类型定义 |
 | **utils/** | 工具函数 |
@@ -129,7 +135,6 @@ main.ts: app.whenReady()
 - `checkBalance(site)` - 查询余额
 - `checkStatus(site)` - 检测站点状态
 - `checkSignIn(site)` - 检测签到状态
-- `detectLdcPayment(site, timeout, sharedPage)` - 检测 LDC 支付支持
 - `saveCachedDisplayData(siteUrl, result)` - 保存检测结果到缓存（含状态和错误信息）
 - `saveLastDetectionStatus(siteUrl, status, error)` - 保存失败检测状态到缓存
 - `refreshBalanceOnly(site, timeout, checkinStats, page, accountId)` - 轻量级余额刷新（支持账户级缓存）
@@ -227,21 +232,6 @@ main.ts: app.whenReady()
 
 **缓存机制**: 检测结果缓存 5 分钟，避免重复读取文件
 
-### CreditService
-
-**职责**: Linux Do Credit 积分检测服务
-
-**关键方法**:
-- `fetchCreditData()` - 获取积分数据（基准值、当前分、差值）
-- `launchLogin()` - 启动浏览器登录
-- `getLoginStatus()` - 获取登录状态
-- `logout()` - 登出
-- `saveConfig(config)` - 保存配置
-- `loadConfig()` - 加载配置
-- `getCachedCreditInfo()` - 获取缓存的积分数据
-
-**依赖**: ChromeManager (浏览器登录)
-
 ### Route Registry / Probe Services
 
 **职责**: 为 Route 工作台提供模型来源聚合、厂商优先级排序、CLI wrapper 探测和统计评分能力
@@ -251,7 +241,7 @@ main.ts: app.whenReady()
 - `route-cli-probe-service.ts` - 按站点下全部活跃账户和自定义 CLI 虚拟配置执行 Claude Code / Codex wrapper 探测，并维护 `history/latest`
 - `route-channel-resolver.ts` - 解析可用路由通道、结合厂商优先级选择实际出口并确定目标协议
 - `upstream-credential-resolver.ts` - 独立解析托管/直连真实上游凭证，供路由代理与端点测试共享
-- `route-stats-service.ts` - 记录运行结果并计算评分，供通道排序和统计视图复用
+- `route-stats-service.ts` - 路径/站点级熔断状态机与通道统计；排序只依赖用户配置的优先级，不健康路径由熔断器剔除而非评分下沉
 - `route-upstream-failure.ts` - 纯函数失败分类器；仅 `request_fatal` 记 `neutral` 以避免调用方载荷缺陷误禁用健康通道，故障转移行为不受其影响
 
 ### PowerManager
@@ -344,16 +334,6 @@ main.ts: app.whenReady()
 
 - `cli:test` - 测试 CLI 兼容性
 - `cli:generateConfig` - 生成 CLI 配置
-
-### Credit 相关
-
-- `credit:fetch` - 获取积分数据
-- `credit:login` - 启动登录
-- `credit:logout` - 登出
-- `credit:get-status` - 获取登录状态
-- `credit:save-config` - 保存配置
-- `credit:load-config` - 加载配置
-- `credit:get-cached` - 获取缓存数据
 
 ### Overview 相关
 

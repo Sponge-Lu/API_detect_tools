@@ -56,6 +56,13 @@ export const BUILTIN_CLI_LABELS: Record<BuiltinCliType, string> = {
   grokBuild: 'Grok Build',
 };
 
+export const BUILTIN_CLI_IDS: Record<BuiltinCliType, string> = {
+  claudeCode: 'example:claude-code',
+  codex: 'example:codex',
+  openCode: 'example:opencode',
+  grokBuild: 'example:grok-build',
+};
+
 export type CliTargetProtocolCliType = BuiltinCliType;
 
 export function getCliTargetEndpoint(
@@ -254,6 +261,7 @@ export interface ApiKeyInfo {
   group?: string;
   models?: string;
   status?: number;
+  source?: 'remote' | 'local';
 }
 
 /** 用户分组信息 */

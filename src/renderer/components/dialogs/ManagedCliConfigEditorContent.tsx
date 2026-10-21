@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { resolveApiKeyForUse } from '../../../shared/utils/apiConfig';
 import { Copy, Check, Edit2, Eye, Loader2, RotateCcw, Search, X, ChevronDown } from 'lucide-react';
 import { AppButton } from '../AppButton/AppButton';
 import { AppSwitch } from '../AppSwitch';
@@ -152,7 +153,7 @@ function getApiKeyId(apiKey: ApiKeyInfo): number {
 }
 
 function getApiKeyValue(apiKey: ApiKeyInfo): string {
-  return apiKey.key || apiKey.token || '';
+  return resolveApiKeyForUse(apiKey.key || apiKey.token || '', apiKey.source ?? 'remote');
 }
 
 function collectSiteModelNames(
@@ -386,7 +387,7 @@ function SearchableModelSelector({
         />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-lg">
+        <div className="absolute z-[var(--z-dropdown)] mt-1 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-lg)]">
           <div className="border-b border-[var(--line-soft)] p-1.5">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-tertiary)]" />
@@ -1218,7 +1219,7 @@ export function ManagedCliConfigEditorContent({
                               e.target.value ? parseInt(e.target.value, 10) : null
                             )
                           }
-                          className="w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className="h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                         >
                           <option value="">请选择 API Key</option>
                           {apiKeys.map(apiKey => {

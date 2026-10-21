@@ -13,6 +13,8 @@
  */
 
 import { Calendar, CheckCircle, Fuel, Loader2, RefreshCw } from 'lucide-react';
+import { isSameLocalDay } from '../../../shared/utils/date';
+import { isSiteCheckinEnabled } from '../../../shared/types/site';
 import type { SiteCardActionsProps } from './types';
 
 /**
@@ -95,12 +97,12 @@ export function SiteCardActions({
         </button>
       )}
 
-      {accessPointType === 'managed' && (site.force_enable_checkin || siteResult?.has_checkin) && (
+      {accessPointType === 'managed' &&
+        isSiteCheckinEnabled(site) &&
+        (site.force_enable_checkin || siteResult?.has_checkin) && (
         <>
           {(() => {
-            const isToday = siteResult?.lastRefresh
-              ? new Date(siteResult.lastRefresh).toDateString() === new Date().toDateString()
-              : false;
+            const isToday = isSameLocalDay(siteResult?.lastRefresh);
             const effectiveCanCheckIn = isToday
               ? siteResult?.can_check_in
               : siteResult?.can_check_in === false

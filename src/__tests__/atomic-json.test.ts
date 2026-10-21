@@ -126,4 +126,29 @@ describe('atomic-json utilities', () => {
     const files = await fs.readdir(tempDir);
     expect(files.filter(file => file.startsWith('existing-directory.'))).toEqual([]);
   });
+
+  it('cleanupStaleTempFiles removes only stale .tmp leftovers', async () => {
+    const { cleanupStaleTempFiles } = await import('../main/utils/atomic-json');
+
+    const freshTmp = path.join(tempDir, 'route-runtime.json.123.456.aa.bb.tmp');
+    const staleTmp = path.join(tempDir, 'route-analytics.json.123.456.cc.dd.tmp');
+    const target = path.join(tempDir, 'route-runtime.json');
+    await fs.writeFile(freshTmp, 'x');
+    await fs.writeFile(staleTmp, 'x');
+    await fs.writeFile(target, '{}');
+    const staleTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await fs.utimes(staleTmp, staleTime, staleTime);
+
+    await expect(cleanupStaleTempFiles(tempDir, 60 * 60 * 1000)).resolves.toBe(1);
+
+    const files = await fs.readdir(tempDir);
+    expect(files).toContain('route-runtime.json');
+    expect(files).toContain('route-runtime.json.123.456.aa.bb.tmp');
+    expect(files).not.toContain('route-analytics.json.123.456.cc.dd.tmp');
+  });
+
+  it('cleanupStaleTempFiles tolerates a missing directory', async () => {
+    const { cleanupStaleTempFiles } = await import('../main/utils/atomic-json');
+    await expect(cleanupStaleTempFiles(path.join(tempDir, 'not-created'))).resolves.toBe(0);
+  });
 });
