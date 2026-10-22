@@ -95,7 +95,12 @@ async function main() {
       userDataDir,
       headless: 'new',
       timeout: 30000,
-      args: ['--no-first-run'],
+      // CI 的 Linux runner（Ubuntu 24.04 + AppArmor 限制 unprivileged userns）无法启用 Chrome 沙箱，
+      // 且 /dev/shm 偏小，这里显式降级；仅用于冒烟测试，不涉及产品运行配置。
+      args:
+        platform === 'linux'
+          ? ['--no-first-run', '--no-sandbox', '--disable-dev-shm-usage']
+          : ['--no-first-run'],
     });
     const page = await browser.newPage();
     await page.setContent('<title>bundled-browser-smoke</title>');
@@ -112,6 +117,9 @@ async function main() {
 }
 
 main().catch(error => {
+  const message = error instanceof Error ? error.message : String(error);
   console.error(error);
+  // 输出 workflow command，使失败原因出现在 GitHub 注解里（无需下载日志）
+  console.log('::error::' + message.replace(/\r?\n/g, ' | '));
   process.exitCode = 1;
 });

@@ -58,6 +58,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'apt-get update failed' }
           sudo apt-get install -y unzip libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libdrm2 libgbm1 libxcb-dri3-0
           if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+          # 打包校验会真实启动内置 Chromium，它比 Electron 打包额外需要这些运行库；
+          # Ubuntu 24.04 起部分包改名为 *t64，逐个安装并容忍个别缺失（缺库会在校验步骤暴露）。
+          $browserLibs = @(
+            'libasound2t64', 'libasound2',
+            'libcups2t64', 'libcups2',
+            'libatk-bridge2.0-0t64', 'libatk-bridge2.0-0',
+            'libxkbcommon0', 'libcairo2', 'libpango-1.0-0', 'libpangoft2-1.0-0',
+            'libxcomposite1', 'libxdamage1', 'libxrandr2', 'libxfixes3',
+            'libwayland-client0', 'libxshmfence1'
+          )
+          foreach ($pkg in $browserLibs) {
+            sudo apt-get install -y $pkg 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "installed $pkg" }
+          }
 
       - name: Install dependencies
         run: |
@@ -103,7 +117,27 @@ jobs:
             $targetPlatform = 'linux'
           }
           npm run verify:packaged -- $resourceRoot $targetPlatform $targetArch
-          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime verification failed' }
+          if ($LASTEXITCODE -ne 0) {
+            # 失败时把关键诊断信息写进注解（Actions 日志需鉴权，注解公开可读）
+            if ($targetPlatform -eq 'linux') {
+              $chrome = Join-Path $resourceRoot "chromium/linux-$targetArch/chrome"
+              if (Test-Path $chrome) {
+                Write-Host "chrome binary: $chrome"
+                $missing = & ldd $chrome 2>&1 | Select-String 'not found'
+                if ($missing) {
+                  foreach ($line in $missing) { Write-Host "::error::missing shared library -> $line" }
+                } else {
+                  Write-Host '::error::no missing shared libraries reported by ldd'
+                }
+                Get-ChildItem $resourceRoot/chromium -Directory | ForEach-Object {
+                  Write-Host "chromium dir: $($_.Name)"
+                }
+              } else {
+                Write-Host "::error::chrome binary not found at $chrome"
+              }
+            }
+            throw 'Packaged runtime verification failed'
+          }
 
       - name: Upload artifacts
         if: success()
