@@ -56,6 +56,9 @@ import {
 } from '../shared/types/site';
 import type {
   RoutingConfig,
+  RouteClientRoutingConfig,
+  RouteInstance,
+  RouteInstanceUpdate,
   RouteRule,
   RouteChannelKey,
   RouteChannelStats,
@@ -77,7 +80,11 @@ import type {
   RouteSessionOverride,
   RouteSourceProtocol,
 } from '../shared/types/route-proxy';
-import { normalizeRouteSessionOverride, normalizeRouteSessionRule } from './route-session-service';
+import {
+  normalizeRouteSessionOverride,
+  normalizeRouteSessionRule,
+  updateRouteInstance,
+} from './route-session-service';
 import {
   BUILTIN_CLI_LABELS,
   BUILTIN_CLI_TYPES,
@@ -89,6 +96,7 @@ import {
 } from '../shared/types/cli-config';
 import {
   DEFAULT_ROUTING_CONFIG,
+  normalizeRouteClientRoutingConfig,
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
   DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
@@ -1211,6 +1219,12 @@ export class UnifiedConfigManager {
       config.routing = structuredClone(DEFAULT_ROUTING_CONFIG);
     }
     const r = config.routing;
+    r.clientRouting = Object.fromEntries(
+      Object.entries(r.clientRouting || {}).map(([profileId, value]) => [
+        profileId,
+        normalizeRouteClientRoutingConfig(value),
+      ])
+    );
     if (!r.server) r.server = { ...DEFAULT_ROUTING_CONFIG.server };
     if (!r.rules) r.rules = [];
     r.rules = r.rules.filter(rule => ROUTE_SOURCE_PROTOCOLS.includes(rule.sourceProtocol));
@@ -2817,6 +2831,77 @@ export class UnifiedConfigManager {
     );
     await this.saveConfig();
     return this.config.routing!.cliModelSelections;
+  }
+
+  async updateRouteInstance(
+    instanceId: string,
+    updates: RouteInstanceUpdate
+  ): Promise<RouteInstance> {
+    const sessionRouting = this.getRoutingConfig().sessionRouting;
+    if (!sessionRouting?.instances[instanceId]) throw new Error('路由实例不存在');
+    const previous = structuredClone(sessionRouting.instances[instanceId]);
+    try {
+      const saved = updateRouteInstance(sessionRouting, instanceId, updates);
+      await this.saveConfig();
+      return saved;
+    } catch (error) {
+      const current = this.getRoutingConfig().sessionRouting;
+      if (current) current.instances[instanceId] = previous;
+      throw error;
+    }
+  }
+
+  async updateRouteClientRouting(
+    profileId: string,
+    updates: Partial<RouteClientRoutingConfig>
+  ): Promise<RouteClientRoutingConfig> {
+    if (!this.config) throw new Error('Config not loaded');
+    if (!profileId?.trim()) throw new Error('客户端 ID 不能为空');
+    if (!updates || typeof updates !== 'object') throw new Error('路由配置无效');
+    if (updates.mode !== undefined && !['client', 'session'].includes(updates.mode)) {
+      throw new Error('路由模式无效');
+    }
+    if (
+      updates.modelId !== undefined &&
+      updates.modelId !== null &&
+      typeof updates.modelId !== 'string'
+    ) {
+      throw new Error('路由模型无效');
+    }
+    if (
+      updates.reasoningEffort !== undefined &&
+      updates.reasoningEffort !== null &&
+      typeof updates.reasoningEffort !== 'string'
+    ) {
+      throw new Error('思考强度无效');
+    }
+    if (updates.pinned !== undefined && typeof updates.pinned !== 'boolean') {
+      throw new Error('钉住状态无效');
+    }
+    const routing = this.getRoutingConfig();
+    const previous = routing.clientRouting || {};
+    const next = normalizeRouteClientRoutingConfig({ ...previous[profileId], ...updates });
+    routing.clientRouting = { ...previous, [profileId]: next };
+    try {
+      await this.saveConfig();
+    } catch (error) {
+      const latest = this.getRoutingConfig();
+      const current = latest.clientRouting?.[profileId];
+      if (
+        current &&
+        current.mode === next.mode &&
+        current.modelId === next.modelId &&
+        current.reasoningEffort === next.reasoningEffort &&
+        current.pinned === next.pinned
+      ) {
+        const restored = { ...latest.clientRouting };
+        if (previous[profileId]) restored[profileId] = previous[profileId];
+        else delete restored[profileId];
+        latest.clientRouting = restored;
+      }
+      throw error;
+    }
+    return next;
   }
 
   async updateRouteCliThinkingEffortSelections(

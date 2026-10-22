@@ -27,6 +27,8 @@ export const AGENT_LOGO_IDS = [
   'rooCode',
   'trae',
   'windsurf',
+  'kimi',
+  'kwaipilot',
 ] as const;
 
 export type AgentLogoId = (typeof AGENT_LOGO_IDS)[number];

@@ -37,6 +37,7 @@
 | **overview-handlers.ts** | 数据总览处理 | `overview:get-site-daily-snapshots` |
 | **route-handlers.ts** | 路由代理、统计、会话活动/覆盖/规则、生命周期设置及 profile 状态映射预览/清理 | `route:get-config`, `route:list-sessions`, `route:upsert-session-rule`, `route:preview-profile-state-clear`, `route:clear-profile-state` |
 | **config-file-profile-handlers.ts** | 单卡片持久化、权威目标目录、模板应用/真实文件事务和对话记录路径验证 | `config-file-profile:upsert`, `config-file-profile:target-catalog`, `config-file-profile:preview-direct-edit`, `config-file-profile:commit` |
+| **dsh-integration-handlers.ts** | DSH 会话级路由接入：状态检测、一键接入、回滚、存量会话迁移 | `dsh-integration:status`, `dsh-integration:enable`, `dsh-integration:rollback`, `dsh-integration:migrate-sessions` |
 | **cli-compat-handlers.ts** | 本地 CLI 配置读取、写入与托管站点 CLI 配置保存；站点级 `cli_config` 仅作 legacy fallback | `cli-compat:save-config`, `cli-compat:write-config` |
 | **custom-cli-config-handlers.ts** | 自定义 CLI 配置处理；保存后强制同步路由模型 registry，避免旧自定义 CLI 模型继续出现在路由模型选择中 | `custom-cli-config:load`, `custom-cli-config:save`, `custom-cli-config:fetch-models` |
 | **token-handlers.ts** | Token 与本地 API Key 管理；本地 Key 增删改和模型刷新后同步路由模型 registry | `token:add-local-api-key`, `token:update-local-api-key`, `token:refresh-local-api-keys` |

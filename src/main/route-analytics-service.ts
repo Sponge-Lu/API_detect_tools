@@ -272,6 +272,9 @@ function resolveRouteEstimatedCostUsd(params: {
 }
 
 function appendRouteRequestLog(params: {
+  routingMode?: RouteRequestLogItem['routingMode'];
+  profileId?: string;
+  modelSelectionSource?: RouteRequestLogItem['modelSelectionSource'];
   requestId: string;
   requestSelectionStartedAt?: number;
   attempt: number;
@@ -317,6 +320,9 @@ function appendRouteRequestLog(params: {
   });
 
   const item: RouteRequestLogItem = {
+    routingMode: params.routingMode,
+    profileId: params.profileId,
+    modelSelectionSource: params.modelSelectionSource,
     id: buildRouteRequestLogId(params.at),
     requestId: params.requestId,
     requestSelectionStartedAt: params.requestSelectionStartedAt,
@@ -431,6 +437,9 @@ export async function saveAnalyticsConfig(
 
 /** 记录一次代理请求 */
 export function recordRouteRequest(params: {
+  routingMode?: RouteRequestLogItem['routingMode'];
+  profileId?: string;
+  modelSelectionSource?: RouteRequestLogItem['modelSelectionSource'];
   requestId: string;
   requestSelectionStartedAt?: number;
   attempt: number;
@@ -492,6 +501,9 @@ export function recordRouteRequest(params: {
       })
     : undefined;
   const logItem = appendRouteRequestLog({
+    routingMode: params.routingMode,
+    profileId: params.profileId,
+    modelSelectionSource: params.modelSelectionSource,
     requestId: params.requestId,
     requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,

@@ -779,6 +779,16 @@ export async function deleteConfigFileProfile(input: DeleteConfigFileProfileInpu
   if (input.expectedRevision !== undefined && profile.revision !== input.expectedRevision) {
     throw new Error('配置卡片已被其他操作修改，请重新加载');
   }
+  const { unifiedConfigManager } = await import('./unified-config-manager');
+  const routing = unifiedConfigManager.getRoutingConfig();
+  if (
+    routing.clientRouting?.[input.profileId]?.pinned ||
+    Object.values(routing.sessionRouting?.instances || {}).some(
+      instance => instance.profileId === input.profileId && instance.pinned
+    )
+  ) {
+    throw new Error('客户端存在已钉住的路由，请先取消钉住');
+  }
   await writeProfileStorage(profiles.filter(item => item.id !== input.profileId));
   try {
     await Promise.all([

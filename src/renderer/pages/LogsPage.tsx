@@ -877,7 +877,19 @@ export function LogsPage({
                     <span
                       data-testid="route-request-agent"
                       className="flex min-w-0 items-center gap-1.5 text-[var(--text-primary)]"
-                      title={row.agentDisplayLabel}
+                      title={[
+                        row.agentDisplayLabel,
+                        item.routingMode === 'client'
+                          ? '客户端级路由'
+                          : item.routingMode === 'session'
+                            ? '会话级路由'
+                            : '',
+                        item.modelSelectionSource
+                          ? `模型来源：${{ client: '客户端设置', session: '会话设置', request: '请求', 'target-lock': '目标锁定' }[item.modelSelectionSource]}`
+                          : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     >
                       <AgentLogo agentId={item.agentId} agentName={item.agentName} />
                       <span className="min-w-0 truncate">{row.agentDisplayLabel}</span>

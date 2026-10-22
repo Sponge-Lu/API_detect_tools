@@ -68,6 +68,7 @@ export interface RouteInstanceResolution {
   instance: RouteInstance | null;
   changed: boolean;
   resolutionPath?:
+    | 'client'
     | 'exact'
     | 'parent'
     | 'parent-unresolved'
@@ -100,6 +101,7 @@ const CLAUDE_CODE_PARENT_AGENT_ID_HEADER = 'x-claude-code-parent-agent-id';
 const CLAUDE_CODE_SESSION_SLOT_LABEL = 'Claude Code 会话';
 const OPEN_CODE_SESSION_ID_HEADER = 'x-session-affinity';
 const OPEN_CODE_PARENT_SESSION_ID_HEADER = 'x-parent-session-id';
+const DEEPSEEK_HARNESS_SESSION_ID_HEADER = 'x-deepseek-harness-session-id';
 const CODEX_TURN_METADATA_MAX_LENGTH = 8_192;
 const ROUTE_INSTANCE_MEMBER_SESSION_MAX_COUNT = 64;
 const ROUTE_INSTANCE_PARENT_MAX_DEPTH = 32;
@@ -121,6 +123,23 @@ function asIdentityRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function claudeMetadataSession(body: unknown): IdentityPartResolution {
+  const metadata = asIdentityRecord(asIdentityRecord(body)?.metadata);
+  const userId = metadata?.user_id;
+  if (typeof userId !== 'string' || userId.length > CODEX_TURN_METADATA_MAX_LENGTH) {
+    return { supplied: false, value: null };
+  }
+  const record = parseBoundedIdentityRecord(userId);
+  if (record?.session_id !== undefined) {
+    return { supplied: true, value: normalizeIdentityPart(record.session_id) };
+  }
+  const match =
+    /^user_[a-f\d]+_account_[^\r\n]*_session_([a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.exec(
+      userId
+    );
+  return { supplied: Boolean(match), value: match?.[1] || null };
 }
 
 function parseBoundedIdentityRecord(value: unknown): Record<string, unknown> | null {
@@ -153,6 +172,7 @@ function resolveConsistentIdentityPart(values: unknown[]): IdentityPartResolutio
 
 function inferObservedAgentName(req: Pick<http.IncomingMessage, 'headers'>): string {
   const userAgent = normalizeIdentityPart(req.headers['user-agent'])?.toLowerCase() || '';
+  if (userAgent.includes('deepseek-harness')) return 'DeepSeek Harness';
   if (userAgent.includes('opencode')) return 'OpenCode';
   if (userAgent.includes('pi-coding-agent') || userAgent.includes('pi-agent')) return 'Pi';
   if (userAgent.includes('grok')) return 'Grok Build';
@@ -205,6 +225,15 @@ function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): bo
   );
 }
 
+export function isLikelyDeepSeekHarnessRequest(
+  req: Pick<http.IncomingMessage, 'headers'>
+): boolean {
+  return (
+    req.headers[DEEPSEEK_HARNESS_SESSION_ID_HEADER] !== undefined ||
+    userAgentIncludes(req, 'deepseek-harness')
+  );
+}
+
 export function hasObservedRouteInstanceEvidence(
   req: Pick<http.IncomingMessage, 'headers'>,
   body?: unknown
@@ -223,6 +252,19 @@ export function hasObservedRouteInstanceEvidence(
   ) {
     return true;
   }
+  if (
+    isLikelyDeepSeekHarnessRequest(req) &&
+    [
+      req.headers[DEEPSEEK_HARNESS_SESSION_ID_HEADER],
+      req.headers.session_id,
+      req.headers['x-session-affinity'],
+      req.headers['x-session-id'],
+      req.headers['x-client-request-id'],
+    ].some(value => value !== undefined)
+  )
+    return true;
+  if (claudeMetadataSession(body).supplied || req.headers['x-grok-conv-id'] !== undefined)
+    return true;
   if (isLikelyCodexRequest(req, clientMetadata)) return true;
   return (
     isLikelyOpenCodeRequest(req) &&
@@ -354,6 +396,7 @@ function mergeDuplicateRouteInstance(target: RouteInstance, duplicate: RouteInst
   target.display.observedRuntimeSlotLabel =
     latest.display.observedRuntimeSlotLabel || target.display.observedRuntimeSlotLabel;
   target.clientModelId ||= duplicate.clientModelId;
+  if (duplicate.pinned) target.pinned = true;
   target.parentInstanceId ||= duplicate.parentInstanceId;
   target.childOrdinal ||= duplicate.childOrdinal;
   for (const memberSessionId of duplicate.memberSessionIds || []) {
@@ -546,6 +589,32 @@ export function extractObservedRouteInstanceKey(
     };
   }
 
+  if (isLikelyDeepSeekHarnessRequest(req)) {
+    const nativeSession = req.headers[DEEPSEEK_HARNESS_SESSION_ID_HEADER];
+    const session = resolveConsistentIdentityPart(
+      nativeSession !== undefined
+        ? [nativeSession]
+        : [
+            req.headers.session_id,
+            req.headers['x-session-affinity'],
+            req.headers['x-session-id'],
+            ...((protocol || inferObservedProtocol(req)) === 'openai-responses'
+              ? [req.headers['x-client-request-id']]
+              : []),
+          ]
+    );
+    if (session.supplied) {
+      if (!session.value) return null;
+      return {
+        agentId: 'deepseekHarness',
+        runtimeSlotId: session.value,
+        sessionId: session.value,
+        observedAgentName: 'DeepSeek Harness',
+        observedRuntimeSlotLabel: '会话级路由',
+      };
+    }
+  }
+
   const bodyRecord = asIdentityRecord(body);
   const clientMetadata = asIdentityRecord(bodyRecord?.client_metadata);
   if (isLikelyCodexRequest(req, clientMetadata)) {
@@ -565,7 +634,7 @@ export function extractObservedRouteInstanceKey(
       clientMetadata?.[CODEX_WINDOW_ID_HEADER],
       clientMetadata?.window_id,
     ]);
-    if (!runtimeSlot.value) return null;
+    if (runtimeSlot.supplied && !runtimeSlot.value) return null;
     const nativeSession = resolveConsistentIdentityPart([
       req.headers[CODEX_SESSION_COMPAT_HEADER],
       req.headers[CODEX_SESSION_ID_HEADER],
@@ -680,8 +749,10 @@ export function extractObservedRouteInstanceKey(
     };
   }
 
+  const metadataSession = claudeMetadataSession(body);
   const claudeCodeSession = resolveConsistentIdentityPart([
     req.headers[CLAUDE_CODE_SESSION_ID_HEADER],
+    ...(metadataSession.supplied ? [metadataSession.value] : []),
   ]);
   const claudeCodeAgent = resolveConsistentIdentityPart([req.headers[CLAUDE_CODE_AGENT_ID_HEADER]]);
   const claudeCodeParentAgent = resolveConsistentIdentityPart([
@@ -739,6 +810,18 @@ export function extractObservedRouteInstanceKey(
         observedRuntimeSlotLabel: '会话级路由',
       };
     }
+  }
+
+  if (req.headers['x-grok-conv-id'] !== undefined) {
+    const sessionId = normalizeIdentityPart(req.headers['x-grok-conv-id']);
+    if (!sessionId) return null;
+    return {
+      agentId: 'grokBuild',
+      runtimeSlotId: sessionId,
+      sessionId,
+      observedAgentName: 'Grok Build',
+      observedRuntimeSlotLabel: '会话级路由',
+    };
   }
 
   const genericIdentity = extractRouteSessionIdentity(
@@ -801,6 +884,9 @@ export function updateRouteInstance(
   ensureRouteInstanceCollections(config);
   const instance = config.instances[instanceId];
   if (!instance) throw new Error('路由实例不存在');
+  if (updates.pinned !== undefined) {
+    if (typeof updates.pinned !== 'boolean') throw new Error('钉住状态无效');
+  }
   if (updates.modelId !== undefined) {
     const modelId = updates.modelId.trim();
     if (!modelId) throw new Error('模型不能为空');
@@ -821,6 +907,7 @@ export function updateRouteInstance(
   if (updates.customNote !== undefined) {
     instance.display.customNote = updates.customNote?.trim() || undefined;
   }
+  if (updates.pinned !== undefined) instance.pinned = updates.pinned;
   return instance;
 }
 
@@ -910,6 +997,7 @@ export function archiveRouteInstance(
 ): boolean {
   ensureRouteInstanceCollections(config);
   const instance = config.instances[instanceId];
+  if (instance?.pinned) throw new Error('路由已钉住，请先取消钉住');
   if (!instance || instance.routingState === 'active' || instance.routingState === 'armed') {
     return false;
   }

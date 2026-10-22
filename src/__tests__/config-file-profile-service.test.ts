@@ -686,6 +686,28 @@ describe('config file profile service', () => {
     );
   });
 
+  it.each(['client', 'session'])(
+    'rejects profile deletion when its %s route is pinned',
+    async mode => {
+      mocks.userData = await createTempDirectory();
+      const input = profile([]);
+      await saveConfigFileProfiles([input]);
+      if (mode === 'client') {
+        mocks.routing.clientRouting = { [input.id]: { mode: 'session', pinned: true } };
+      } else {
+        mocks.routing.sessionRouting = {
+          instances: { pinned: { profileId: input.id, pinned: true } },
+        };
+      }
+      const removeState = vi.spyOn(routeStateAffinityService, 'removeByProfile');
+      await expect(deleteConfigFileProfile({ profileId: input.id })).rejects.toThrow(
+        '请先取消钉住'
+      );
+      expect(removeState).not.toHaveBeenCalled();
+      expect((await loadConfigFileProfiles()).map(item => item.id)).toContain(input.id);
+    }
+  );
+
   it('removes only the deleted profile state affinity records', async () => {
     const directory = await createTempDirectory();
     mocks.userData = directory;

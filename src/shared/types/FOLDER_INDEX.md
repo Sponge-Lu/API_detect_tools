@@ -17,8 +17,9 @@
 |------|------|--------|
 | **site.ts** | 站点（含站点级 `proxy_url` 刷新代理）、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
 | **endpoint-test.ts** | 手动上游端点测试目标、协议、API Key 选项、选择状态与结果 | EndpointTestTarget, EndpointTestProtocol, EndpointTestResult |
-| **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、含父子谱系与客户端模型的会话路由实例、端点历史类型；兼容 re-export 端点测试类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
+| **route-proxy.ts** | 通用网关、客户端双模式设置、卡片钉住状态、请求路由来源、Responses affinity、模型映射、会话父子谱系和端点历史类型 | RoutingConfig, RouteClientRoutingConfig, RouteInstance, RouteRequestLogItem, HistoryEndpointTrack |
 | **config-file-profile.ts** | 版本化配置方案、含协议元数据的目标目录、文件事务和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
+| **dsh-integration.ts** | DeepSeek Harness 会话级路由接入的状态/漂移原因/请求与结果类型，含 DSH 侧常量（条目 id、provider id、凭据 ref） | DshRoutingStatus, DshDriftReason, EnableDshSessionRoutingInput, EnableDshSessionRoutingResult, DshActionResult |
 | **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
 | **custom-cli-config.ts** | 直连接入点配置、模型列表 URL 及接入点级上游协议 | CustomCliConfig, modelUrl, routeTargetProtocol, manualModels |
 | **config-detection.ts** | 四种 CLI 本地配置静态检测类型与官方端点/路径 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |

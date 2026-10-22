@@ -39,7 +39,7 @@
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
-| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | 损坏恢复、原子保存、旧账户上游协议唯一值/冲突迁移、路由状态恢复 |
+| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | 损坏恢复、原子保存、客户端模式/模型/钉住重载、保存失败和并发客户端回滚隔离、路由状态恢复 |
 | **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理、同目标串行写入和 Windows final rename 临时错误重试、孤儿 .tmp 清理 |
 | **atomic-json-fsync.test.ts** | 原子写入 fsync 持久性测试 | rename 前 fsync 临时文件（默认开启）、sync:false 跳过；独立成文件避免与 rename 重试 mock 互相污染 |
 | **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、portable 仅含 config+custom-cli、受保护浏览器状态不变更约束 |
@@ -80,7 +80,8 @@
 | **custom-cli-model-service.test.ts** | 直连配置模型 URL 选择测试 | 模型 URL 为空时回退 Base URL，非空时使用独立模型端点 |
 | **config-file-profile-service.test.ts** | 配置方案、目标目录协议、独立凭证、文件事务与对话路径测试 | 完整内置模板、模型域、Key 轮换、profile affinity 清理、revision/路径冲突、回滚和增量扫描 |
 | **config-profiles-section.test.tsx** | 配置文件卡片区 UI 刷新回归测试 | 整卡点击编辑、卡片按钮隔离、内置/需修复徽章、删除配置/文件确认、segmented 模型范围、本地配置直接保存、行级 diff 预览、会话关联卡片已移除、内置模板删除后可恢复 |
-| **route-session-service.test.ts** | RouteInstance 身份与生命周期测试 | 完整内部三元键优先级、Codex 原生 Header/Body、Claude Code 会话头、歧义拒绝、ARMED 原子认领、槽位切换、复用和配置优先级 |
+| **route-session-service.test.ts** | RouteInstance 身份与生命周期测试 | 三元键、DSH 原生/兼容标识及异常拒绝、原生元数据、歧义拒绝、ARMED 认领、父子关联、生命周期及钉住归档保护 |
+| **dsh-integration-service.test.ts** | DSH 接入服务测试 | 注释/!!js 保留式 YAML 合并、按 id 幂等、模型目录同步与回退、凭据 refs 合并、两处会话引用迁移、回滚与外部改动保护 |
 | **route-session-activity-service.test.ts** | 会话活动 sidecar 测试 | 合并写入、重启 hydrate、TTL 与容量限制 |
 | **route-session-section.test.tsx** | 会话路由卡片界面回归测试 | 固定三列横向滚动、仅模型/思考强度预创建、会话级运行范围、只读 Session ID、展示别名和显式关闭 |
 | **agent-logo.test.tsx** | Agent 产品 Logo 映射回归测试 | Claude Code、Codex、OpenCode、Grok Build、Pi、ZCode 与未知灰色占位 |

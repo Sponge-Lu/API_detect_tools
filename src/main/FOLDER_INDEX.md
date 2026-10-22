@@ -43,13 +43,14 @@
 | **api-key-identity.ts** | 中性 API Key 稳定标识工具，供路由、端点测试和配置服务共享 | `resolveApiKeyId()` |
 | **custom-cli-config-service.ts** | 直连接入点持久化、旧 CLI 协议迁移、虚拟路由标识与删除后的 affinity 清理 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **config-file-profile-service.ts** | v3 配置方案、独立本地路由凭证、可用目标/模型域、结构化合并/覆盖、revision 文件事务、删除 affinity 清理和增量对话记录扫描 | `upsertConfigFileProfile()`, `previewConfigFileProfileRouteKeyRotation()`, `deleteConfigFileProfile()`, `scanSavedSessionRecordsWithDiagnostics()` |
+| **dsh-integration-service.ts** | DSH 接入：检测 profile/patch/凭据状态、从路由运行时派生 baseURL/密钥/模型目录、注释保留式改写 cordis.patch.yml、备份与回滚、存量会话 provider 迁移 | `detectDshRouting()`, `enableDshSessionRouting()`, `rollbackDshSessionRouting()`, `migrateDshSessionProviders()` |
 | **route-state-affinity-service.ts** | Stateful Responses 本地亲和映射、非敏感 profile 分类摘要与按 profile/site/account/API Key 实体清理；兼容清理旧 Conversation sidecar 记录 | `summarizeProfile()`, `removeByProfile()`, `removeBySites()`, `removeByAccount()`, `removeByApiKey()` |
 | **route-session-activity-service.ts** | RouteInstance 高频 `lastRequestAt` sidecar，按 instance/profile 合并写入、TTL/容量压缩、启动 hydrate 与退出 flush | `hydrate()`, `touch()`, `flush()`, `removeByProfile()` |
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `modelUrl`（为空时回退 `baseUrl`）获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
 | **local-api-key-service.ts** | Access Token 无效时仍可独立管理本地 API Key，并按 Key 刷新/保留模型快照 | `listLocalApiKeys()`, `addLocalApiKey()`, `refreshLocalApiKeys()` |
 | **backup-manager.ts** | 本地备份管理；自动备份保持 config-only 节流去重，手动备份生成 portable 2 文件包，恢复后重绑隔离 Profile | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端 portable 配置包上传、列表、删除与恢复，兼容旧 full-manifest / config-only `.json` 备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 字段清理、账户级 CLI 配置与路由运行态恢复 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 字段清理、账户级 CLI 配置、客户端双模式路由与卡片钉住状态持久化及失败回滚 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位；列出并校验账户可绑定 Profile，支持显式重绑；备份恢复后按旧 slot-N 重建空目录并重写 browser_profile_path | `BrowserProfileManager`, `listAccountProfileOptions()`, `bindAccountProfile()`, `reconcileIsolatedProfilesAfterRestore()` |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | Claude Code、Codex、OpenCode、Grok Build 本地配置静态检测；Grok Build 仅读取 `~/.grok/config.toml`，不执行模型探测 | `ConfigDetectionService` 类 |
@@ -60,7 +61,7 @@
 | **route-request-context.ts** | 单个下游请求的生命周期状态：客户端取消传播、尝试计数、请求日志上下文与终结错误码诊断 | `RouteRequestContext`, `markRouteTerminalError()` |
 | **route-usage.ts** | 上游响应体/SSE 用量与思考强度解析（纯函数） | `extractUsageFromBody()`, `extractRouteReasoningEffort()` |
 | **route-proxy-shared.ts** | 路由代理模块间共享的路径/协议推断小工具 | `inferSourceProtocol()`, `getRequestPathname()` |
-| **route-session-service.ts** | RouteInstance 三元路由键与父子谱系归一化，解析 Codex/Claude Code/OpenCode 原生会话元数据，按客户端模型共享父卡或创建稳定副编号子卡，并保留 ARMED/生命周期语义 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
+| **route-session-service.ts** | RouteInstance 三元键、DSH 原生及兼容会话标识、父子谱系、ARMED 和生命周期管理；钉住保护阻止归档，归一化合并保留保护状态 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
 | **route-target-lock.ts** | 路由层内部 target-lock 请求的编解码、终止错误状态与单测试上游尝试预算；端点测试不依赖 | `buildTargetLockRouteApiKey()`, `parseTargetLockRouteApiKey()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 之间执行单次无损子集转换，覆盖文本、函数工具、共享 `tool_choice`/并行调用控制、思考强度、流式 SSE 与非流式 JSON；不可等价字段以 `CliProtocolAdapterError` 中立跳过候选 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |

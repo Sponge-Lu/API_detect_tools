@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import type {
   RoutingConfig,
+  RouteClientRoutingConfig,
   RouteRule,
   RouteProxyServerConfig,
   RouteModelRegistryConfig,
@@ -27,6 +28,10 @@ interface RouteState {
 
   // Actions - 配置
   fetchConfig: () => Promise<void>;
+  saveClientRouting: (
+    profileId: string,
+    updates: Partial<RouteClientRoutingConfig>
+  ) => Promise<RouteClientRoutingConfig>;
   refreshRuntimeState: () => Promise<void>;
   fetchRuntimeStatus: () => Promise<void>;
   saveServerConfig: (updates: Partial<RouteProxyServerConfig>) => Promise<void>;
@@ -91,6 +96,22 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
   },
 
+  saveClientRouting: async (profileId, updates) => {
+    const response = await window.electronAPI.route?.updateClientRouting?.(profileId, updates);
+    if (!response?.success || !response.data)
+      throw new Error(response?.error || '保存客户端路由失败');
+    const saved = response.data;
+    set(state => ({
+      config: state.config
+        ? {
+            ...state.config,
+            clientRouting: { ...state.config.clientRouting, [profileId]: saved },
+          }
+        : null,
+    }));
+    return saved;
+  },
+
   refreshRuntimeState: async () => {
     try {
       const res = await window.electronAPI.route?.getConfig();
@@ -107,6 +128,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
           config: {
             ...state.config,
             server: res.data.server,
+            clientRouting: res.data.clientRouting,
             stats: res.data.stats,
             routePathStates: res.data.routePathStates,
             routeEndpointCapabilities: res.data.routeEndpointCapabilities,

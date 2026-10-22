@@ -8,6 +8,7 @@
 import { useShallow } from 'zustand/shallow';
 import { ServerSection } from '../components/Route/ProxyStats/ProxyStatsTab';
 import { ConfigProfilesSection } from '../components/Route/ConfigProfilesSection';
+import { DshIntegrationBanner } from '../components/Route/DshIntegrationBanner';
 import { LoadingState } from '../components/LoadingState';
 import { useRouteStore } from '../store/routeStore';
 
@@ -34,6 +35,10 @@ export function RoutePage() {
     >
       <div data-testid="route-page-server-row" className="shrink-0">
         <ServerSection className="w-full" />
+      </div>
+
+      <div data-testid="route-page-dsh-row" className="min-w-0 shrink-0">
+        <DshIntegrationBanner />
       </div>
 
       <div data-testid="route-page-primary-row" className="flex min-w-0 shrink-0 flex-col gap-3">

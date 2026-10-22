@@ -1,6 +1,6 @@
 /**
  * 路由设置页
- * 输入: RouteSessionSection (独立 mini 会话路由卡片列), ModelRedirectionTab (模型映射工作区)
+ * 输入: RouteSessionSection (按客户端分组的双模式路由卡片列), ModelRedirectionTab (模型映射工作区)
  * 输出: 两个独立卡片区域的合并布局
  * 定位: 展示层 - 路由设置页入口
  */

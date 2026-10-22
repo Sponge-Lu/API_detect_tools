@@ -485,6 +485,14 @@ declare global {
           data?: RouteSessionActivity[];
           error?: string;
         }>;
+        updateClientRouting?: (
+          profileId: string,
+          updates: Partial<import('../shared/types/route-proxy').RouteClientRoutingConfig>
+        ) => Promise<{
+          success: boolean;
+          data?: import('../shared/types/route-proxy').RouteClientRoutingConfig;
+          error?: string;
+        }>;
         listRouteInstances?: () => Promise<{
           success: boolean;
           data?: RouteInstance[];

@@ -123,6 +123,9 @@ export class RouteRequestContext {
     }
     recordRouteRequest({
       ...params,
+      routingMode: this.logContext.routingMode,
+      profileId: this.logContext.profileId,
+      modelSelectionSource: this.logContext.modelSelectionSource,
       requestSelectionStartedAt: this.startedAt,
       agentId: this.agentId,
       agentName: this.agentName,

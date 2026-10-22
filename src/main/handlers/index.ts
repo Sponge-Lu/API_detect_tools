@@ -38,6 +38,7 @@ import { registerRouteHandlers } from './route-handlers';
 import { registerOverviewHandlers } from './overview-handlers';
 import { registerAnyRouterHandlers } from './anyrouter-handlers';
 import { registerConfigFileProfileHandlers } from './config-file-profile-handlers';
+import { registerDshIntegrationHandlers } from './dsh-integration-handlers';
 
 interface HandlerDependencies {
   chromeManager: ChromeManager;
@@ -93,6 +94,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // 自定义 CLI 配置相关
   registerCustomCliConfigHandlers();
   registerConfigFileProfileHandlers();
+
+  // DeepSeek Harness 会话级路由接入
+  registerDshIntegrationHandlers();
 
   // 多账户管理相关
   registerAccountHandlers();

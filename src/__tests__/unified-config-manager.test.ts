@@ -263,6 +263,97 @@ describe('UnifiedConfigManager', () => {
     expect(restored.sites[0].name).toBe('Recovered Site');
   });
 
+  it('persists independent client modes, targets and pins across reload without changing session data', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    expect(manager.getRoutingConfig().clientRouting).toEqual({});
+    await manager.updateRouteClientRouting('client-a', {
+      mode: 'client',
+      modelId: ' client-model ',
+      reasoningEffort: ' HIGH ',
+      pinned: true,
+    });
+    await manager.updateRouteClientRouting('client-b', { mode: 'session', modelId: 'other-model' });
+    await manager.updateRouteClientRouting('client-a', { mode: 'session' });
+    await manager.updateRouteClientRouting('client-a', { mode: 'client' });
+    await manager.loadConfig();
+    expect(manager.getRoutingConfig().clientRouting).toEqual({
+      'client-a': {
+        mode: 'client',
+        modelId: 'client-model',
+        reasoningEffort: 'high',
+        pinned: true,
+      },
+      'client-b': { mode: 'session', modelId: 'other-model', reasoningEffort: null, pinned: false },
+    });
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.routing.clientRouting['client-a'].pinned).toBe(true);
+    expect(manager.getRoutingConfig().sessionRouting?.instances).toEqual({});
+  });
+
+  it('rolls back client routing when persistence fails and rejects invalid modes', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.updateRouteClientRouting('client-a', { mode: 'client', pinned: true });
+    vi.spyOn(manager, 'saveConfig').mockRejectedValue(new Error('Disk unavailable'));
+    await expect(
+      manager.updateRouteClientRouting('client-a', { mode: 'session', pinned: false })
+    ).rejects.toThrow('Disk unavailable');
+    expect(manager.getRoutingConfig().clientRouting?.['client-a']).toMatchObject({
+      mode: 'client',
+      pinned: true,
+    });
+    await expect(
+      manager.updateRouteClientRouting('client-a', { mode: 'invalid' as never })
+    ).rejects.toThrow('路由模式无效');
+  });
+
+  it('does not roll back another client when a concurrent client save fails', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    let rejectFirst!: (error: Error) => void;
+    vi.spyOn(manager, 'saveConfig')
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+          })
+      )
+      .mockResolvedValue(undefined);
+    const firstSave = manager.updateRouteClientRouting('client-a', { mode: 'client' });
+    const rejected = expect(firstSave).rejects.toThrow('Disk unavailable');
+    await manager.updateRouteClientRouting('client-b', { mode: 'client', pinned: true });
+    rejectFirst(new Error('Disk unavailable'));
+    await rejected;
+    expect(manager.getRoutingConfig().clientRouting?.['client-a']).toBeUndefined();
+    expect(manager.getRoutingConfig().clientRouting?.['client-b']).toMatchObject({
+      mode: 'client',
+      pinned: true,
+    });
+  });
+
+  it('preserves a pinned session when saving an unpin fails', async () => {
+    const manager = await loadManager();
+    const config = createSampleConfig() as any;
+    config.routing = structuredClone(DEFAULT_ROUTING_CONFIG);
+    config.routing.sessionRouting.instances.pinned = {
+      id: 'pinned',
+      profileId: 'client-a',
+      pinned: true,
+      display: {},
+      modelId: 'model-a',
+      reasoningEffort: 'high',
+      routingState: 'closed',
+      presenceState: 'unknown',
+    };
+    await manager.saveConfig(config);
+    vi.spyOn(manager, 'saveConfig').mockRejectedValue(new Error('Disk unavailable'));
+    await expect(manager.updateRouteInstance('pinned', { pinned: false })).rejects.toThrow(
+      'Disk unavailable'
+    );
+    expect(manager.getRoutingConfig().sessionRouting?.instances.pinned.pinned).toBe(true);
+  });
+
   it('keeps proxy settings and distinguishes sites under the same origin', async () => {
     const manager = await loadManager();
     const input = createSampleConfig() as any;

@@ -6,6 +6,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 // 前面用例的 400 会把后面用例的候选通道整批跳过。
 beforeEach(() => {
   clearRequestFatalNegativeCache();
+  vi.mocked(findConfigFileProfileByRouteApiKey).mockReset();
+  vi.mocked(findConfigFileProfileByRouteApiKey).mockImplementation(async apiKey =>
+    apiKey === 'wrong-key' ? null : ({ id: 'profile-test', name: 'Test Client' } as never)
+  );
 });
 
 const { routeDiagnosticLog } = vi.hoisted(() => ({ routeDiagnosticLog: vi.fn() }));
@@ -173,6 +177,8 @@ import {
   DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
   type RoutePathState,
+  type RouteClientRoutingConfig,
+  type RouteInstance,
 } from '../shared/types/route-proxy';
 
 function createJsonRequest(
@@ -559,6 +565,7 @@ describe('route-proxy-service endpoint classification', () => {
     vi.mocked(extractModelFromBody).mockReturnValue('gpt-5');
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({
+        clientRouting: { 'profile-test': { mode: 'client' } },
         server: { unifiedApiKey: 'sk-route' },
         cliModelSelections: { claudeCode: null, codex: null, openCode: null, grokBuild: null },
         cliThinkingEffortSelections: {
@@ -608,6 +615,7 @@ describe('route-proxy-service endpoint classification', () => {
     vi.clearAllMocks();
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({
+        clientRouting: { 'profile-test': { mode: 'client' } },
         server: { unifiedApiKey: 'sk-route' },
         modelRegistry: {
           entries: {
@@ -637,6 +645,7 @@ describe('route-proxy-service endpoint classification', () => {
     vi.clearAllMocks();
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({
+        clientRouting: { 'profile-test': { mode: 'client' } },
         server: { unifiedApiKey: 'sk-route' },
         modelRegistry: {
           entries: {
@@ -668,6 +677,7 @@ describe('route-proxy-service endpoint classification', () => {
     vi.clearAllMocks();
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({
+        clientRouting: { 'profile-test': { mode: 'client' } },
         server: { unifiedApiKey: 'sk-route' },
         modelRegistry: {
           entries: {
@@ -829,6 +839,7 @@ describe('route-proxy-service Responses state affinity', () => {
   function setupStatefulRoute(): void {
     vi.clearAllMocks();
     const routing = {
+      clientRouting: { [profile.id]: { mode: 'client' as const } },
       server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
       rules: [rule],
       cliModelSelections: {
@@ -968,7 +979,6 @@ describe('route-proxy-service Responses state affinity', () => {
       'openai-responses',
       'gpt-5'
     );
-    expect(unifiedConfigManager.saveConfig).toHaveBeenCalled();
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({ agentName: 'Codex A' })
     );
@@ -1076,46 +1086,52 @@ describe('route-proxy-service Responses state affinity', () => {
     expect(response.body).toBe(streamBody.toString('utf-8'));
   });
 
-  it('routes a previous_response_id only through its recorded channel', async () => {
-    setupStatefulRoute();
-    vi.mocked(routeStateAffinityService.get).mockResolvedValue({
-      resourceId: 'resp_existing',
-      resourceType: 'response',
-      profileId: profile.id,
-      siteId: channel.siteId,
-      accountId: channel.accountId,
-      apiKeyId: channel.apiKeyId,
-      routeRuleId: rule.id,
-      targetProtocol: 'openai-responses',
-      targetEndpoint: '/v1/responses',
-      createdAt: 1,
-    });
-    vi.mocked(httpRawRequest).mockResolvedValue({
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-      body: Buffer.from(
-        '{"id":"resp_next","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}'
-      ),
-    });
+  it.each(['session', 'client'] as const)(
+    'routes a previous_response_id only through its recorded channel in %s mode',
+    async mode => {
+      setupStatefulRoute();
+      unifiedConfigManager.getRoutingConfig().clientRouting = {
+        [profile.id]: { mode, modelId: 'different-model', reasoningEffort: 'high', pinned: false },
+      };
+      vi.mocked(routeStateAffinityService.get).mockResolvedValue({
+        resourceId: 'resp_existing',
+        resourceType: 'response',
+        profileId: profile.id,
+        siteId: channel.siteId,
+        accountId: channel.accountId,
+        apiKeyId: channel.apiKeyId,
+        routeRuleId: rule.id,
+        targetProtocol: 'openai-responses',
+        targetEndpoint: '/v1/responses',
+        createdAt: 1,
+      });
+      vi.mocked(httpRawRequest).mockResolvedValue({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          '{"id":"resp_next","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}'
+        ),
+      });
 
-    const response = createMockResponse();
-    await handleRequest(
-      createJsonRequest(
-        '/v1/responses',
-        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
-        { model: 'gpt-5', input: 'continue', previous_response_id: 'resp_existing' }
-      ),
-      response
-    );
+      const response = createMockResponse();
+      await handleRequest(
+        createJsonRequest(
+          '/v1/responses',
+          { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+          { model: 'gpt-5', input: 'continue', previous_response_id: 'resp_existing' }
+        ),
+        response
+      );
 
-    expect(routeStateAffinityService.get).toHaveBeenCalledWith('resp_existing', profile.id);
-    expect(resolveChannels).not.toHaveBeenCalled();
-    expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
-    expect(resolveChannelCredentials).toHaveBeenCalledWith('site-a', 'account-a', 'key-a');
-    expect(routeStateAffinityService.bind).toHaveBeenCalledWith(
-      expect.objectContaining({ resourceId: 'resp_next', profileId: profile.id })
-    );
-  });
+      expect(routeStateAffinityService.get).toHaveBeenCalledWith('resp_existing', profile.id);
+      expect(resolveChannels).not.toHaveBeenCalled();
+      expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
+      expect(resolveChannelCredentials).toHaveBeenCalledWith('site-a', 'account-a', 'key-a');
+      expect(routeStateAffinityService.bind).toHaveBeenCalledWith(
+        expect.objectContaining({ resourceId: 'resp_next', profileId: profile.id })
+      );
+    }
+  );
 
   it('removes an affinity record only after a successful delete', async () => {
     setupStatefulRoute();
@@ -1437,14 +1453,19 @@ describe('route-proxy-service session channel binding end to end', () => {
   });
 
   function setupSessionRoute(instances: Record<string, unknown> = {}) {
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
     const routing = {
+      clientRouting: {} as Record<string, RouteClientRoutingConfig>,
       server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
       rules: [rule],
       cliModelSelections: { claudeCode: null, codex: null },
       sessionRouting: {
         instances,
         currentRouteBySlot: {},
-        extractionRules: [],
+        extractionRules: structuredClone(DEFAULT_ROUTE_SESSION_ROUTING_CONFIG.extractionRules),
         overrides: {},
         activeWindowMinutes: 30,
         recentWindowHours: 24,
@@ -1530,6 +1551,492 @@ describe('route-proxy-service session channel binding end to end', () => {
     );
 
   const firstUsedApiKey = () => vi.mocked(resolveChannelCredentials).mock.calls[0]?.[2];
+
+  const dshRequest = (sessionId: string | undefined, apiKey = 'sk-route') =>
+    createJsonRequest(
+      '/v1/messages',
+      {
+        authorization: `Bearer ${apiKey}`,
+        'user-agent':
+          'deepseek-harness/0.2.1-rc.2 (+https://github.com/deepseek-ai/deepseek-harness)',
+        'anthropic-version': '2023-06-01',
+        'x-deepseek-harness-user-id': 'same-user',
+        ...(sessionId === undefined ? {} : { 'x-deepseek-harness-session-id': sessionId }),
+      },
+      { model: 'gpt-4.1-mini', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] }
+    );
+
+  const sessionClients: Array<{
+    name: string;
+    headers: (id: string) => Record<string, string>;
+    body?: (id: string) => Record<string, unknown>;
+  }> = [
+    { name: 'DSH', headers: id => ({ 'x-deepseek-harness-session-id': id }) },
+    { name: 'Codex', headers: id => ({ 'session-id': id }) },
+    { name: 'Claude Code', headers: id => ({ 'x-claude-code-session-id': id }) },
+    {
+      name: 'Claude metadata',
+      headers: () => ({ 'user-agent': 'claude-cli/2.0' }),
+      body: id => ({ metadata: { user_id: JSON.stringify({ session_id: id }) } }),
+    },
+    {
+      name: 'OpenCode',
+      headers: id => ({ 'user-agent': 'OpenCode/2.0', 'x-session-affinity': id }),
+    },
+    { name: 'Grok Build', headers: id => ({ 'x-grok-conv-id': id }) },
+    {
+      name: 'Pi',
+      headers: id => ({ 'user-agent': 'pi-coding-agent/1.0', 'x-session-id': id }),
+    },
+    { name: 'Generic', headers: () => ({}), body: id => ({ session_id: id }) },
+  ];
+
+  it.each(sessionClients)(
+    'isolates sessions and profiles and claims the armed card for $name',
+    async client => {
+      vi.clearAllMocks();
+      const waiting = {
+        id: 'waiting',
+        display: {},
+        modelId: 'waiting-model',
+        reasoningEffort: 'high',
+        routingState: 'armed',
+        presenceState: 'unknown',
+      };
+      const routing = setupSessionRoute({ waiting });
+      vi.mocked(findConfigFileProfileByRouteApiKey).mockImplementation(
+        async key =>
+          ({
+            id: key === 'other-key' ? 'profile-other' : 'profile-test',
+            name: client.name,
+          }) as never
+      );
+      const request = (id: string, key = 'sk-route') =>
+        createJsonRequest(
+          '/v1/messages',
+          { authorization: `Bearer ${key}`, ...client.headers(id) },
+          { model: 'gpt-4.1-mini', max_tokens: 64, messages: [], ...client.body?.(id) }
+        );
+      await handleRequest(request('session-a'), createMockResponse());
+      expect(routing.sessionRouting.instances.waiting).toMatchObject({
+        profileId: 'profile-test',
+        routingState: 'active',
+        modelId: 'waiting-model',
+        reasoningEffort: 'high',
+        routeKey: { sessionId: 'session-a' },
+      });
+      await handleRequest(request('session-b'), createMockResponse());
+      await handleRequest(request('session-a', 'other-key'), createMockResponse());
+      await handleRequest(request('session-a'), createMockResponse());
+      expect(Object.values(routing.sessionRouting.instances)).toHaveLength(3);
+      expect(findMatchingRule).toHaveBeenLastCalledWith(
+        expect.any(Array),
+        'anthropic-messages',
+        'waiting-model'
+      );
+    }
+  );
+
+  it.each(['DSH', 'Codex', 'Claude Code', 'OpenCode', 'Grok Build', 'Pi', 'Generic'])(
+    'rejects a missing session ID for %s without claiming or changing cards',
+    async name => {
+      vi.clearAllMocks();
+      const routing = setupSessionRoute({
+        waiting: { ...liveInstance('waiting'), routingState: 'armed', routeKey: undefined },
+      });
+      vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+        id: 'profile-test',
+        name,
+      } as never);
+      const before = structuredClone(routing.sessionRouting);
+      const response = createMockResponse();
+      await handleRequest(
+        createJsonRequest('/v1/messages', { authorization: 'Bearer sk-route' }, { messages: [] }),
+        response
+      );
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(response.body)).toMatchObject({ error: 'session_identity_required' });
+      expect(httpRawRequest).not.toHaveBeenCalled();
+      expect(routing.sessionRouting).toEqual(before);
+    }
+  );
+
+  it('separates native DSH sessions and reuses each card without taking settings from the old client fallback', async () => {
+    vi.clearAllMocks();
+    const legacy = {
+      ...liveInstance('legacy'),
+      profileId: 'profile-test',
+      pinned: true,
+      modelId: 'old-client-model',
+      routeKey: {
+        agentId: 'profile:profile-test',
+        runtimeSlotId: 'profile:profile-test',
+        sessionId: 'profile:profile-test',
+      },
+    };
+    const routing = setupSessionRoute({ legacy });
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'DSH',
+    } as never);
+    await handleRequest(dshRequest('dsh-first'), createMockResponse());
+    const first = (Object.values(routing.sessionRouting.instances) as RouteInstance[]).find(
+      instance => instance.routeKey?.sessionId === 'dsh-first'
+    )!;
+    expect(first).toBeDefined();
+    first.modelId = 'first-session-model';
+    first.reasoningEffort = 'low';
+    first.pinned = true;
+    await handleRequest(dshRequest('dsh-second'), createMockResponse());
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'anthropic-messages',
+      'gpt-4.1-mini'
+    );
+    await handleRequest(dshRequest('dsh-first'), createMockResponse());
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'anthropic-messages',
+      'first-session-model'
+    );
+    const cards = Object.values(routing.sessionRouting.instances) as RouteInstance[];
+    expect(cards).toHaveLength(3);
+    expect(
+      cards
+        .filter(card => card.routeKey?.agentId === 'deepseekHarness')
+        .map(card => card.routeKey?.sessionId)
+        .sort()
+    ).toEqual(['dsh-first', 'dsh-second']);
+    expect(routing.sessionRouting.instances.legacy).toEqual(legacy);
+    expect(first).toMatchObject({ reasoningEffort: 'low', pinned: true });
+  });
+
+  it('keeps DSH native identities isolated across profiles', async () => {
+    vi.clearAllMocks();
+    const routing = setupSessionRoute();
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockImplementation(
+      async key =>
+        ({ id: key === 'other-key' ? 'other-profile' : 'profile-test', name: 'DSH' }) as never
+    );
+    await handleRequest(dshRequest('same-session'), createMockResponse());
+    await handleRequest(dshRequest('same-session', 'other-key'), createMockResponse());
+    expect(
+      (Object.values(routing.sessionRouting.instances) as RouteInstance[])
+        .map(instance => instance.profileId)
+        .sort()
+    ).toEqual(['other-profile', 'profile-test']);
+  });
+
+  it('keeps DSH client mode shared and does not create session cards', async () => {
+    vi.clearAllMocks();
+    const routing = setupSessionRoute();
+    routing.clientRouting['profile-test'] = {
+      mode: 'client',
+      modelId: 'client-model',
+      reasoningEffort: 'high',
+      pinned: true,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'DSH',
+    } as never);
+    await handleRequest(dshRequest(undefined), createMockResponse());
+    await handleRequest(dshRequest('second'), createMockResponse());
+    expect(routing.sessionRouting.instances).toEqual({});
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'anthropic-messages',
+      'client-model'
+    );
+  });
+
+  it('does not collapse malformed DSH identities into a profile fallback or consume an armed card', async () => {
+    vi.clearAllMocks();
+    const armed = {
+      id: 'waiting',
+      display: {},
+      modelId: 'waiting-model',
+      reasoningEffort: 'high',
+      routingState: 'armed',
+      presenceState: 'unknown',
+    };
+    const routing = setupSessionRoute({ waiting: armed });
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'DSH',
+    } as never);
+    await handleRequest(dshRequest(''), createMockResponse());
+    expect(routing.sessionRouting.instances).toEqual({ waiting: armed });
+  });
+
+  it('rejects the DSH custom Anthropic path without session identity instead of reusing DSH#1', async () => {
+    vi.clearAllMocks();
+    const legacy = {
+      ...liveInstance('legacy'),
+      profileId: 'profile-test',
+      pinned: true,
+      modelId: 'old-client-model',
+      routeKey: {
+        agentId: 'profile:profile-test',
+        runtimeSlotId: 'profile:profile-test',
+        sessionId: 'profile:profile-test',
+      },
+    };
+    const waiting = {
+      id: 'waiting',
+      display: {},
+      modelId: 'waiting-model',
+      reasoningEffort: 'high',
+      routingState: 'armed',
+      presenceState: 'unknown',
+    };
+    const routing = setupSessionRoute({ legacy, waiting });
+    const before = structuredClone(routing.sessionRouting);
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'DSH',
+    } as never);
+    const response = createMockResponse();
+    await handleRequest(dshRequest(undefined), response);
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toMatchObject({ error: 'session_identity_required' });
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(unifiedConfigManager.saveConfig).not.toHaveBeenCalled();
+    expect(routing.sessionRouting).toEqual(before);
+
+    await handleRequest(dshRequest('native-session'), createMockResponse());
+    expect(routing.sessionRouting.instances.waiting).toMatchObject({
+      id: 'waiting',
+      modelId: 'waiting-model',
+      reasoningEffort: 'high',
+      routeKey: { agentId: 'deepseekHarness', sessionId: 'native-session' },
+    });
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'anthropic-messages',
+      'waiting-model'
+    );
+    expect(routing.sessionRouting.instances.legacy).toEqual(legacy);
+  });
+
+  it('uses one client target for multiple sessions without consuming an armed card or session bindings', async () => {
+    vi.clearAllMocks();
+    const armed = {
+      id: 'waiting',
+      display: {},
+      modelId: 'armed-model',
+      reasoningEffort: 'low',
+      routingState: 'armed',
+      presenceState: 'unknown',
+    };
+    const routing = setupSessionRoute({ waiting: armed });
+    routing.clientRouting['profile-test'] = {
+      mode: 'client',
+      modelId: 'client-model',
+      reasoningEffort: 'high',
+      pinned: true,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
+    const getBinding = vi
+      .spyOn(routeSessionBindingService, 'get')
+      .mockReturnValue(bindingOn('site-b', 'acc-b', 'key-b'));
+    const bind = vi.spyOn(routeSessionBindingService, 'bind').mockImplementation(() => undefined);
+    await handleRequest(sessionRequest('one'), createMockResponse());
+    await handleRequest(sessionRequest('two'), createMockResponse());
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'client-model'
+    );
+    expect(firstUsedApiKey()).toBe('key-a');
+    expect(routing.sessionRouting.instances).toEqual({ waiting: armed });
+    expect(getBinding).not.toHaveBeenCalled();
+    expect(bind).not.toHaveBeenCalled();
+    const body = JSON.parse(
+      Buffer.from(vi.mocked(httpRawRequest).mock.calls[0][1].body as Buffer).toString('utf-8')
+    );
+    expect(body.reasoning.effort).toBe('high');
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routingMode: 'client',
+        profileId: 'profile-test',
+        modelSelectionSource: 'client',
+      })
+    );
+  });
+
+  it('accepts a client target without a session ID or a model in the request', async () => {
+    vi.clearAllMocks();
+    const routing = setupSessionRoute();
+    routing.clientRouting['profile-test'] = {
+      mode: 'client',
+      modelId: 'client-model',
+      reasoningEffort: null,
+      pinned: false,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
+    vi.mocked(extractModelFromBody).mockReturnValue(null);
+    const response = createMockResponse();
+    await handleRequest(
+      createJsonRequest('/v1/responses', { authorization: 'Bearer sk-route' }, { input: 'hi' }),
+      response
+    );
+    expect(findMatchingRule).toHaveBeenCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'client-model'
+    );
+    expect(httpRawRequest).toHaveBeenCalled();
+    expect(routing.sessionRouting.instances).toEqual({});
+  });
+
+  it('follows request model and effort when client overrides are empty', async () => {
+    vi.clearAllMocks();
+    const routing = setupSessionRoute();
+    routing.clientRouting['profile-test'] = {
+      mode: 'client',
+      modelId: null,
+      reasoningEffort: null,
+      pinned: false,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
+    await handleRequest(
+      createJsonRequest(
+        '/v1/responses',
+        { authorization: 'Bearer sk-route' },
+        { model: 'gpt-4.1-mini', reasoning: { effort: 'low' }, input: 'hi' }
+      ),
+      createMockResponse()
+    );
+    expect(findMatchingRule).toHaveBeenCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'gpt-4.1-mini'
+    );
+    const body = JSON.parse(
+      Buffer.from(vi.mocked(httpRawRequest).mock.calls[0][1].body as Buffer).toString('utf-8')
+    );
+    expect(body.reasoning.effort).toBe('low');
+    expect(routing.sessionRouting.instances).toEqual({});
+  });
+
+  it('restores an existing session target after switching back and isolates another profile', async () => {
+    vi.clearAllMocks();
+    const existing = {
+      ...liveInstance('resume'),
+      profileId: 'profile-test',
+      modelId: 'session-model',
+    };
+    const routing = setupSessionRoute({ resume: existing });
+    routing.clientRouting['profile-test'] = {
+      mode: 'client',
+      modelId: 'client-model',
+      reasoningEffort: 'high',
+      pinned: false,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
+    await handleRequest(sessionRequest('resume'), createMockResponse());
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'client-model'
+    );
+    expect(routing.sessionRouting.instances.resume).toEqual(existing);
+    routing.clientRouting['profile-test'].mode = 'session';
+    await handleRequest(sessionRequest('resume'), createMockResponse());
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'session-model'
+    );
+    routing.clientRouting['profile-test'].mode = 'client';
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-other',
+      name: 'Other',
+    } as never);
+    await handleRequest(sessionRequest('other-session'), createMockResponse());
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'gpt-4.1-mini'
+    );
+  });
+
+  it('keeps in-flight retries on the captured client settings after switching mode', async () => {
+    vi.clearAllMocks();
+    const routing = setupSessionRoute();
+    routing.clientRouting['profile-test'] = {
+      mode: 'client',
+      modelId: 'client-model',
+      reasoningEffort: 'high',
+      pinned: false,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
+    vi.mocked(httpRawRequest).mockImplementationOnce(async () => {
+      routing.clientRouting['profile-test'] = {
+        mode: 'session',
+        modelId: 'new-model',
+        reasoningEffort: 'low',
+        pinned: false,
+      };
+      return {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"error":"temporary_failure"}'),
+      };
+    });
+    await handleRequest(sessionRequest('in-flight'), createMockResponse());
+    expect(vi.mocked(httpRawRequest).mock.calls.length).toBeGreaterThan(1);
+    for (const [, options] of vi.mocked(httpRawRequest).mock.calls) {
+      expect(
+        JSON.parse(Buffer.from(options.body as Buffer).toString('utf-8')).reasoning.effort
+      ).toBe('high');
+    }
+    expect(routing.sessionRouting.instances).toEqual({});
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'client-model'
+    );
+  });
+
+  it('ignores channel occupancy held by a client currently using client mode', async () => {
+    vi.clearAllMocks();
+    const routing = setupSessionRoute({
+      other: { ...liveInstance('other'), profileId: 'client-other' },
+    });
+    routing.clientRouting['client-other'] = {
+      mode: 'client',
+      modelId: null,
+      reasoningEffort: null,
+      pinned: false,
+    };
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      id: 'profile-test',
+      name: 'Test Client',
+    } as never);
+    vi.spyOn(routeSessionBindingService, 'get').mockReturnValue(undefined);
+    vi.spyOn(routeSessionBindingService, 'listActive').mockReturnValue([
+      { ...bindingOn('site-a', 'acc-a', 'key-a'), instanceId: 'other' },
+    ]);
+    await handleRequest(sessionRequest('fresh'), createMockResponse());
+    expect(firstUsedApiKey()).toBe('key-a');
+  });
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -2558,6 +3065,7 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     patternType: 'exact' as const,
   };
   const routing = {
+    clientRouting: { 'profile-test': { mode: 'client' as const } },
     server: {
       unifiedApiKey: 'sk-route',
       requestTimeoutMs: 1000,
@@ -2950,6 +3458,7 @@ describe('route-proxy-service Responses input_tokens scope', () => {
     };
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({
+        clientRouting: { 'profile-test': { mode: 'client' } },
         server: {
           unifiedApiKey: 'sk-route',
           requestTimeoutMs: 1000,
@@ -3047,6 +3556,7 @@ describe('route-proxy-service client cancellation', () => {
     apiKeyId: 'key-b',
   };
   const routing = {
+    clientRouting: { 'profile-test': { mode: 'client' as const } },
     server: {
       unifiedApiKey: 'sk-route',
       requestTimeoutMs: 1000,
@@ -3529,6 +4039,7 @@ describe('route-proxy-service custom CLI forwarding', () => {
       apiKeyPriority: 0,
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -3663,6 +4174,7 @@ describe('route-proxy-service custom CLI forwarding', () => {
       resolvedModel: 'sensenova-6.7-flash-lite',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -3784,6 +4296,7 @@ describe('route-proxy-service CLI model fallback', () => {
       resolvedModel: 'gpt-5-selected-upstream',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -3918,6 +4431,7 @@ describe('route-proxy-service CLI model fallback', () => {
       resolvedModel: `session-upstream-${index + 1}`,
     }));
     const routing = {
+      clientRouting: {},
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -4099,15 +4613,7 @@ describe('route-proxy-service CLI model fallback', () => {
     ]);
     expect(response.statusCode).toBe(200);
 
-    vi.mocked(httpRawRequest)
-      .mockClear()
-      .mockResolvedValueOnce({
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-        body: Buffer.from(
-          '{"id":"resp_2","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}'
-        ),
-      });
+    vi.mocked(httpRawRequest).mockReset();
     const requestIdOnly = createJsonRequest(
       '/v1/responses',
       {
@@ -4121,21 +4627,11 @@ describe('route-proxy-service CLI model fallback', () => {
 
     await handleRequest(requestIdOnly, requestIdOnlyResponse);
 
-    expect(findMatchingRule).toHaveBeenLastCalledWith(
-      expect.any(Array),
-      'openai-responses',
-      'request-model'
-    );
-    expect(resolveChannels).toHaveBeenLastCalledWith(selectedRule, 'request-model');
-    expect(httpRawRequest).toHaveBeenCalledTimes(1);
-    expect(
-      JSON.parse(
-        Buffer.from(vi.mocked(httpRawRequest).mock.calls[0]?.[1].body as Buffer).toString('utf-8')
-      )
-    ).toMatchObject({
-      reasoning: { effort: 'low' },
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(requestIdOnlyResponse.statusCode).toBe(409);
+    expect(JSON.parse(requestIdOnlyResponse.body)).toMatchObject({
+      error: 'session_identity_required',
     });
-    expect(requestIdOnlyResponse.statusCode).toBe(200);
   });
 });
 
@@ -4477,19 +4973,12 @@ describe('route-proxy-service Codex utility request diagnostics', () => {
       response
     );
 
-    expect(response.statusCode).toBe(200);
-    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(response.statusCode).toBe(409);
+    expect(httpRawRequest).not.toHaveBeenCalled();
     expect(routing.sessionRouting).toEqual(sessionState);
     expect(unifiedConfigManager.saveConfig).not.toHaveBeenCalled();
-    expect(getRouteDiagnostics('RouteInstance identity binding')).toEqual([
-      expect.objectContaining({
-        identitySource: 'none',
-        bindingState: 'rejected',
-        rejectedEvidence: true,
-        isCodexUtility: false,
-      }),
-    ]);
-    expectSingleRequestDiagnostics({ statusCode: 200, attemptCount: 1, termination: 'completed' });
+    expect(JSON.parse(response.body)).toMatchObject({ error: 'session_identity_required' });
+    expectSingleRequestDiagnostics({ statusCode: 409, attemptCount: 0, termination: 'completed' });
   });
 
   it('correlates each failed helper request with its own bounded fallback attempts without creating cards', async () => {
@@ -4554,6 +5043,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     return {
       rule,
       routing: {
+        clientRouting: { 'profile-test': { mode: 'client' as const } },
         server: {
           unifiedApiKey: 'sk-route',
           requestTimeoutMs: 1000,
@@ -4657,6 +5147,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     };
     const routing = {
       ...base.routing,
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       rules: [rule],
       cliModelSelections: {
         ...base.routing.cliModelSelections,
@@ -6066,6 +6557,7 @@ describe('route-proxy-service quota exhaustion failover', () => {
   function setupQuotaFailoverRoute(channels: Array<typeof quotaChannel>): void {
     const now = Date.now();
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -6284,6 +6776,7 @@ describe('route-proxy-service upstream failure classification', () => {
   ): void {
     const now = Date.now();
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
       rules: [rule],
       cliModelSelections: { claudeCode: null, codex: null },
@@ -6709,6 +7202,7 @@ describe('route-proxy-service successful path affinity', () => {
       apiKeyId: 'key-d',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -6880,6 +7374,7 @@ describe('route-proxy-service successful path affinity', () => {
       targetEndpoint: '/v1/responses',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -7013,6 +7508,7 @@ describe('route-proxy-service successful path affinity', () => {
       resolvedModel: 'good-model',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -7200,6 +7696,7 @@ describe('route-proxy-service successful path affinity', () => {
       resolvedModel: 'good-model',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -7357,6 +7854,7 @@ describe('route-proxy-service successful path affinity', () => {
       resolvedModel: 'zero-model',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -7522,6 +8020,7 @@ describe('route-proxy-service successful path affinity', () => {
       apiKeyId: 'key-c',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -7696,6 +8195,7 @@ describe('route-proxy-service disabled path short-circuit', () => {
         resolvedModel: 'disabled-route',
       };
       const routing = {
+        clientRouting: { 'profile-test': { mode: 'client' as const } },
         server: {
           unifiedApiKey: 'sk-route',
           requestTimeoutMs: 1000,
@@ -7831,6 +8331,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -7919,6 +8420,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8043,6 +8545,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8140,6 +8643,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8256,6 +8760,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8357,6 +8862,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8465,6 +8971,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8577,6 +9084,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8680,6 +9188,7 @@ describe('route-proxy-service target lock', () => {
     vi.clearAllMocks();
 
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8775,6 +9284,7 @@ describe('route-proxy-service target lock', () => {
 
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({
+        clientRouting: { 'profile-test': { mode: 'client' } },
         server: {
           unifiedApiKey: 'sk-route',
           requestTimeoutMs: 1000,
@@ -8849,6 +9359,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       targetProtocol: 'native' as const,
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -8928,6 +9439,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'gpt-4.1-mini',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -9389,6 +9901,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'gpt-4.1-mini',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -9523,6 +10036,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'gpt-4.1-mini',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -9654,6 +10168,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'gpt-4.1-mini',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -9781,6 +10296,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       apiKeyId: 'key-openai-fallback',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -9940,6 +10456,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'gpt-4.1-mini',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -10059,6 +10576,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'claude-opus-4-6',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -10225,6 +10743,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'claude-opus-4-6',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -10409,6 +10928,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'claude-opus-4-6',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -10793,6 +11313,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'claude-opus-4-6',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -10956,6 +11477,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'claude-opus-4-6',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
@@ -11116,6 +11638,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       resolvedModel: 'gpt-4.1-mini',
     };
     const routing = {
+      clientRouting: { 'profile-test': { mode: 'client' as const } },
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,

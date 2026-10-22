@@ -33,6 +33,9 @@ describe('AgentLogo', () => {
     ['roo-cline', 'Roo Code legacy name', 'rooCode'],
     ['trae-agent', 'Trae', 'trae'],
     ['codeium-windsurf', 'Windsurf', 'windsurf'],
+    ['kimi-cli', 'Kimi', 'kimi'],
+    ['moonshot-kimi', 'Kimi for Coding', 'kimi'],
+    ['kwai-pilot', 'KwaiPilot', 'kwaipilot'],
   ])('resolves %s to the %s product logo', (agentId, agentName, logo) => {
     const { container } = render(<AgentLogo agentId={agentId} agentName={agentName} />);
 

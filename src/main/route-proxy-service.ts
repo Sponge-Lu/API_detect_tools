@@ -93,6 +93,7 @@ import {
   extractObservedRouteInstanceKey,
   hasObservedRouteInstanceEvidence,
   resolveRouteInstanceForRequest,
+  type RouteInstanceResolution,
 } from './route-session-service';
 import { findConfigFileProfileByRouteApiKey } from './config-file-profile-service';
 import type { ConfigFileProfile } from '../shared/types/config-file-profile';
@@ -1826,7 +1827,12 @@ async function planRuleRouteCandidates(input: RuleRoutePlanInput): Promise<RuleR
       // 占用只统计仍然活跃的会话：已关闭/陈旧的绑定不得把新会话推离其首选通道。
       const liveInstanceIds = new Set(
         Object.values(sessionRouting.instances || {})
-          .filter(instance => instance.routingState === 'active')
+          .filter(
+            instance =>
+              instance.routingState === 'active' &&
+              (!instance.profileId ||
+                routing.clientRouting?.[instance.profileId]?.mode !== 'client')
+          )
           .map(instance => instance.id)
       );
       const occupied = new Set(
@@ -2103,10 +2109,12 @@ export async function handleRequest(
   } catch {
     /* ignore */
   }
+  const clientRouting = routeProfile ? { ...routing.clientRouting?.[routeProfile.id] } : undefined;
+  const routingMode = clientRouting?.mode === 'client' ? 'client' : 'session';
   const sessionRouting =
     routing.sessionRouting ??
     (routing.sessionRouting = structuredClone(DEFAULT_ROUTE_SESSION_ROUTING_CONFIG));
-  let observedRouteInstanceKey = extractObservedRouteInstanceKey(
+  const observedRouteInstanceKey = extractObservedRouteInstanceKey(
     req,
     bodyJson,
     sessionRouting.extractionRules,
@@ -2114,16 +2122,6 @@ export async function handleRequest(
   );
   const hasRejectedRouteInstanceEvidence =
     !observedRouteInstanceKey && hasObservedRouteInstanceEvidence(req, bodyJson);
-  if (!observedRouteInstanceKey && routeProfile && !hasRejectedRouteInstanceEvidence) {
-    const profileSessionKey = `profile:${routeProfile.id}`;
-    observedRouteInstanceKey = {
-      agentId: profileSessionKey,
-      runtimeSlotId: profileSessionKey,
-      sessionId: profileSessionKey,
-      observedAgentName: routeProfile.name,
-      observedRuntimeSlotLabel: '客户端级路由',
-    };
-  }
   ctx.agentId = observedRouteInstanceKey?.agentId;
   ctx.agentName =
     observedRouteInstanceKey?.observedAgentName ||
@@ -2194,6 +2192,31 @@ export async function handleRequest(
     return;
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
+  // A client credential identifies the profile, never the conversation.
+  if (
+    routeProfile &&
+    routingMode === 'session' &&
+    !observedRouteInstanceKey &&
+    endpointOperation.capability === 'generation-convertible' &&
+    !stateAffinityRecord
+  ) {
+    const error = 'session_identity_required';
+    ctx.recordRequest({
+      ...ctx.logContext,
+      requestedModel: rawModel,
+      outcome: 'failure',
+      statusCode: 409,
+      error,
+    });
+    writeRouteProxyJsonError(
+      res,
+      409,
+      error,
+      '会话级路由缺少有效会话 ID。请让客户端随请求发送稳定的会话标识，' +
+        '或在该客户端分组中切换到客户端级路由。'
+    );
+    return;
+  }
   if (
     !observedRouteInstanceKey &&
     Object.values(sessionRouting.instances || {}).some(
@@ -2210,18 +2233,21 @@ export async function handleRequest(
     requestedModel: rawModel,
     reasoningEffort: requestedReasoningEffort,
   });
-  const routeInstanceResolution = resolveRouteInstanceForRequest({
-    config: sessionRouting,
-    profileId:
-      routeProfile?.id ||
-      `__target_lock__:${targetLock?.siteId}:${targetLock?.accountId}:${targetLock?.apiKeyId}`,
-    observedKey: observedRouteInstanceKey,
-    requestedModel: requestedCanonicalModel,
-    requestedReasoningEffort: requestedReasoningEffort || null,
-    defaultModel: '',
-    defaultReasoningEffort: 'medium',
-    requestAt: ctx.startedAt,
-  });
+  const routeInstanceResolution: RouteInstanceResolution =
+    routingMode === 'client'
+      ? { instance: null, changed: false, resolutionPath: 'client' }
+      : resolveRouteInstanceForRequest({
+          config: sessionRouting,
+          profileId:
+            routeProfile?.id ||
+            `__target_lock__:${targetLock?.siteId}:${targetLock?.accountId}:${targetLock?.apiKeyId}`,
+          observedKey: observedRouteInstanceKey,
+          requestedModel: requestedCanonicalModel,
+          requestedReasoningEffort: requestedReasoningEffort || null,
+          defaultModel: '',
+          defaultReasoningEffort: 'medium',
+          requestAt: ctx.startedAt,
+        });
   const identitySource = observedRouteInstanceKey?.lineage?.source
     ? observedRouteInstanceKey.lineage.source
     : observedRouteInstanceKey?.agentId.startsWith('profile:')
@@ -2279,7 +2305,13 @@ export async function handleRequest(
     instanceIdHash: fingerprintRouteIdentity(routeInstanceResolution.instance?.id),
   });
   ctx.instanceLogId = routeInstanceResolution.instance?.id;
-  if (!routeInstanceResolution.instance && !rawModel && !stateAffinityRecord && !targetLock) {
+  if (
+    !routeInstanceResolution.instance &&
+    !(routingMode === 'client' && clientRouting?.modelId) &&
+    !rawModel &&
+    !stateAffinityRecord &&
+    !targetLock
+  ) {
     ctx.recordRequest({
       requestId,
       attempt: 0,
@@ -2315,6 +2347,9 @@ export async function handleRequest(
       routeProfile?.name;
   }
   const selectedThinkingEffort =
+    (routingMode === 'client'
+      ? normalizeRouteThinkingEffort(clientRouting?.reasoningEffort)
+      : null) ??
     normalizeRouteThinkingEffort(routeInstanceResolution.instance?.reasoningEffort) ??
     requestedReasoningEffort ??
     'medium';
@@ -2322,11 +2357,24 @@ export async function handleRequest(
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
   let canonicalModel: string | null =
-    routeInstanceResolution.instance?.modelId.trim() || requestedCanonicalModel;
+    (routingMode === 'client'
+      ? resolveCanonicalModelFromRegistry(routing, clientRouting?.modelId || null)
+      : null) ||
+    routeInstanceResolution.instance?.modelId.trim() ||
+    requestedCanonicalModel;
   Object.assign(ctx.logContext, {
     requestedModel: rawModel,
     reasoningEffort,
     canonicalModel,
+    routingMode,
+    profileId: routeProfile?.id,
+    modelSelectionSource: targetLock
+      ? 'target-lock'
+      : routingMode === 'client' && clientRouting?.modelId
+        ? 'client'
+        : routeInstanceResolution.instance
+          ? 'session'
+          : 'request',
   });
 
   let activeRouteRuleId: string | undefined;

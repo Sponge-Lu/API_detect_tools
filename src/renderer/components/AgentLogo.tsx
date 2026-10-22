@@ -19,6 +19,8 @@ import QwenCodeIcon from '../assets/agent-icons/qwen-color.svg';
 import RooCodeIcon from '../assets/agent-icons/roocode.svg';
 import TraeIcon from '../assets/agent-icons/trae-color.svg';
 import WindsurfIcon from '../assets/agent-icons/windsurf.svg';
+import KimiIcon from '../assets/agent-icons/kimi-color.svg';
+import KwaiPilotIcon from '../assets/agent-icons/kwaipilot-color.svg';
 import ClaudeCodeIcon from '../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../assets/cli-icons/codex.svg';
 import GrokIcon from '../assets/cli-icons/grok.svg';
@@ -61,6 +63,8 @@ const AGENT_LOGOS = {
   rooCode: { label: 'Roo Code', src: RooCodeIcon, darkInvert: true },
   trae: { label: 'Trae', src: TraeIcon },
   windsurf: { label: 'Windsurf', src: WindsurfIcon, darkInvert: true },
+  kimi: { label: 'Kimi', src: KimiIcon },
+  kwaipilot: { label: 'KwaiPilot', src: KwaiPilotIcon },
 } as const satisfies Record<AgentLogoId, { label: string; src: string; darkInvert?: boolean }>;
 
 type KnownAgent = AgentLogoId;
@@ -92,6 +96,8 @@ const AGENT_ALIASES: Record<KnownAgent, readonly string[]> = {
   rooCode: ['roo', 'roocode', 'roocline'],
   trae: ['trae', 'traeagent'],
   windsurf: ['windsurf', 'codeiumwindsurf'],
+  kimi: ['kimi', 'kimicli', 'kimiforcoding', 'moonshotkimi'],
+  kwaipilot: ['kwaipilot', 'kwai', 'kuaishoukwaipilot'],
 };
 
 function compactIdentity(value: string): string {

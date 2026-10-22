@@ -17,6 +17,27 @@ beforeEach(() => {
 });
 
 describe('route server controls', () => {
+  it('keeps client routing settings in the shared store across view remounts', async () => {
+    const saved = {
+      mode: 'client' as const,
+      modelId: 'client-model',
+      reasoningEffort: 'high',
+      pinned: true,
+    };
+    window.electronAPI.route.updateClientRouting = vi
+      .fn()
+      .mockResolvedValue({ success: true, data: saved });
+    await useRouteStore.getState().saveClientRouting('client-a', saved);
+    expect(useRouteStore.getState().config?.clientRouting?.['client-a']).toEqual(saved);
+    window.electronAPI.route.updateClientRouting = vi
+      .fn()
+      .mockResolvedValue({ success: false, error: 'Disk unavailable' });
+    await expect(
+      useRouteStore.getState().saveClientRouting('client-a', { mode: 'session' })
+    ).rejects.toThrow('Disk unavailable');
+    expect(useRouteStore.getState().config?.clientRouting?.['client-a']).toEqual(saved);
+  });
+
   it('updates persisted enablement in the cached config after stopping and starting', async () => {
     await expect(useRouteStore.getState().stopServer()).resolves.toBe(true);
     expect(useRouteStore.getState().serverRunning).toBe(false);

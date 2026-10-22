@@ -62,7 +62,8 @@
 | `src/main/endpoint-test-state-service.ts` | 独立维护端点测试 sidecar 选择与最新结果，不参与 Route runtime / stats / analytics |
 | `src/main/custom-cli-config-service.ts` | 直连接入点持久化与旧四 CLI 上游协议迁移，并为模型注册表生成虚拟通道标识 |
 | `src/main/config-file-profile-service.ts` | v3 配置方案、可用目标与模型域、单卡片 revision、结构化合并/覆盖、真实文件事务及增量对话记录扫描 |
-| `src/main/route-session-service.ts` | 以 `agentId + runtimeSlotId + sessionId` 管理 RouteInstance，解析 Codex/Claude Code/OpenCode 原生父子谱系，按客户端规范化模型共享父卡或创建稳定副编号子卡，并负责 ARMED 原子绑定与生命周期 |
+| `src/main/dsh-integration-service.ts` | DSH 会话级路由接入：状态检测、从路由运行时派生 baseURL/密钥/模型目录、注释保留式 cordis.patch.yml 合并、备份回滚、存量会话 provider 迁移 |
+| `src/main/route-session-service.ts` | 管理 RouteInstance 身份、DSH 原生及兼容会话标识、父子谱系、ARMED 绑定与生命周期；钉住卡片禁止归档，身份合并保留保护状态 |
 | `src/main/route-session-activity-service.ts` | 将 RouteInstance 高频 `lastRequestAt` 从稳定配置拆到有界、合并、原子写 sidecar，支持启动 hydrate 与退出 flush |
 | `src/main/custom-cli-model-service.ts` | 直连配置模型获取服务，通过配置 `modelUrl`（为空时回退 `baseUrl`）拼接 `/v1/models` 拉取模型列表并写回 `CustomCliConfig.models` |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`config-file-profile:*` 等 IPC；配置文件 I/O 和会话规则管理仅由主进程执行 |
@@ -86,7 +87,7 @@
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线，并提供左侧请求量（0–max）与右侧成功率（0–100%）双纵轴及对齐的 0/50/100 参考线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
 | `src/renderer/pages/SitesPage.tsx` | 站点管理主页面；站点与直连配置名称统一调用系统浏览器并保留完整 URL；接入点侧滑面板提供信息、资源和原生端点测试，不再承载 CLI 配置 |
 | `src/renderer/pages/RoutePage.tsx` | 本地路由页：代理服务器区块 + 配置文件卡片区 |
-| `src/renderer/pages/RouteSettingsPage.tsx` | 路由设置页：左列独立 mini 会话路由卡片（`RouteSessionSection mini`，240-280px 三行扁布局：头部/Session/幽灵下拉模型行），右侧独立模型映射工作区（重定向模型列表 + 来源优先级详情） |
+| `src/renderer/pages/RouteSettingsPage.tsx` | 路由设置页：左列按独立客户端分组的双模式路由卡片（240-280px），分组头切换客户端级/会话级、独立折叠并记住状态，两类卡片均支持模型、思考强度和钉住保护；右侧为模型映射工作区 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；按日志中的 Agent 动态筛选并以 Logo + 名称展示首列，Token 固定两行展示输入/输出与缓存写/读 |
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色，条形图右侧内联汇总 48h 请求数与加权成功率 |
@@ -119,6 +120,7 @@
 | `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由与分析统计类型；兼容 re-export 端点测试类型 |
 | `src/shared/config/builtin-client-configs.ts` | Claude Code、Codex、OpenCode、Grok Build 完整配置的共享唯一来源 |
 | `src/shared/types/config-file-profile.ts` | 版本化配置方案、含协议元数据的目标目录、应用模式、文件事务和对话记录诊断类型 |
+| `src/shared/types/dsh-integration.ts` | DSH 接入状态、漂移原因、请求/结果类型与 DSH 侧常量 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` / `Modern` / `Modern Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |
 | `src/shared/utils/customCliRouteId.ts` / `groupLabel.ts` | 自定义 CLI 真实多 Key 路由通道合成 ID helper；数字分组前缀到圆圈数字标签的共享规范化 |

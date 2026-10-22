@@ -1,11 +1,25 @@
-import { Archive, CircleStop, Copy, RefreshCw, RotateCcw, UserRoundPlus, X } from 'lucide-react';
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  CircleStop,
+  Copy,
+  Pin,
+  RefreshCw,
+  RotateCcw,
+  UserRoundPlus,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ROUTE_THINKING_EFFORT_LEVELS,
   isRouteThinkingEffortPreset,
+  normalizeRouteClientRoutingConfig,
+  type RouteClientRoutingConfig,
   type RouteInstance,
   type RouteInstanceUpdate,
 } from '../../../shared/types/route-proxy';
+import type { ConfigFileProfile } from '../../../shared/types/config-file-profile';
 import { useRouteStore } from '../../store/routeStore';
 import { toast } from '../../store/toastStore';
 import { AppButton } from '../AppButton/AppButton';
@@ -35,6 +49,7 @@ const flatInputClassName =
   'h-5 min-w-0 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]';
 const CUSTOM_REASONING_EFFORT = '__custom__';
 const SESSION_SCOPE_LABEL = '会话级路由';
+const COLLAPSED_GROUPS_KEY = 'route-collapsed-client-groups';
 
 function formatTime(value?: number): string {
   if (!value) return '等待首条请求';
@@ -78,20 +93,25 @@ function inputSizeForContent(value: string): number {
 }
 
 interface ReasoningEffortEditorProps {
-  instance: RouteInstance;
+  instance: Pick<RouteInstance, 'id' | 'reasoningEffort'>;
   onSave: (value: string) => Promise<void>;
+  allowFollowRequest?: boolean;
+  disabled?: boolean;
   selectClassName?: string;
   customInputClassName?: string;
 }
 
 function resolveReasoningEffortMode(value: string): string {
   const normalized = value.trim().toLowerCase();
+  if (!normalized) return '';
   return isRouteThinkingEffortPreset(normalized) ? normalized : CUSTOM_REASONING_EFFORT;
 }
 
 function ReasoningEffortEditor({
   instance,
   onSave,
+  allowFollowRequest = false,
+  disabled = false,
   selectClassName: editorSelectClassName = selectClassName,
   customInputClassName: editorCustomInputClassName = inputClassName,
 }: ReasoningEffortEditorProps) {
@@ -142,8 +162,10 @@ function ReasoningEffortEditor({
         className={editorSelectClassName}
         aria-label={`${instance.id} 思考强度`}
         value={mode}
+        disabled={disabled}
         onChange={event => void selectMode(event.target.value)}
       >
+        {allowFollowRequest ? <option value="">跟随请求</option> : null}
         {ROUTE_THINKING_EFFORT_LEVELS.map(effort => (
           <option key={effort} value={effort}>
             {effort}
@@ -157,6 +179,7 @@ function ReasoningEffortEditor({
           className={editorCustomInputClassName}
           aria-label={`${instance.id} 自定义思考强度`}
           value={customValue}
+          disabled={disabled}
           onFocus={() => setEditing(true)}
           onChange={event => setCustomValue(event.target.value)}
           onBlur={() => void saveCustomValue()}
@@ -171,15 +194,41 @@ function ReasoningEffortEditor({
 
 export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
   const config = useRouteStore(state => state.config);
+  const saveClientRouting = useRouteStore(state => state.saveClientRouting);
   const [instances, setInstances] = useState<RouteInstance[]>([]);
+  const [profiles, setProfiles] = useState<ConfigFileProfile[]>([]);
+  const clientRouting = config?.clientRouting;
+  const [savingProfiles, setSavingProfiles] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(COLLAPSED_GROUPS_KEY) || '{}');
+      return saved && typeof saved === 'object' && !Array.isArray(saved)
+        ? Object.fromEntries(Object.entries(saved).filter(([, value]) => value === true))
+        : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(collapsedGroups));
+    } catch {
+      // Storage may be unavailable; expansion still works for this view.
+    }
+  }, [collapsedGroups]);
   // 同一客户端开多个会话窗口时仅靠名称/色点无法区分，用稳定序号标识
   const sessionOrdinals = useMemo(() => buildRouteSessionOrdinals(instances), [instances]);
   // 子卡片（parentInstanceId 存在）不再平铺，而是叠放到其主卡片后方（半透明叠层常驻展示）
   const { rootInstances, childInstancesByParent } = useMemo(() => {
     const roots: RouteInstance[] = [];
     const children = new Map<string, RouteInstance[]>();
+    const byId = new Map(instances.map(instance => [instance.id, instance]));
     for (const instance of instances) {
-      if (instance.parentInstanceId) {
+      if (
+        instance.parentInstanceId &&
+        byId.get(instance.parentInstanceId)?.profileId === instance.profileId &&
+        byId.has(instance.parentInstanceId)
+      ) {
         const siblings = children.get(instance.parentInstanceId) || [];
         siblings.push(instance);
         children.set(instance.parentInstanceId, siblings);
@@ -189,6 +238,35 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
     }
     return { rootInstances: roots, childInstancesByParent: children };
   }, [instances]);
+  const groups = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { id: string; name: string; profile?: ConfigFileProfile; roots: RouteInstance[] }
+    >();
+    for (const profile of profiles) {
+      grouped.set(`profile:${profile.id}`, {
+        id: `profile:${profile.id}`,
+        name: profile.name,
+        profile,
+        roots: [],
+      });
+    }
+    for (const instance of rootInstances) {
+      const id = instance.profileId
+        ? `profile:${instance.profileId}`
+        : instance.routeKey
+          ? `legacy:${instance.routeKey.agentId}`
+          : 'unbound';
+      const group = grouped.get(id) || {
+        id,
+        name: id === 'unbound' ? '待绑定' : effectiveAgentName(instance),
+        roots: [],
+      };
+      group.roots.push(instance);
+      grouped.set(id, group);
+    }
+    return Array.from(grouped.values());
+  }, [profiles, rootInstances]);
   const [loading, setLoading] = useState(false);
   const modelOptions = useMemo(
     () =>
@@ -196,17 +274,22 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
         new Set([
           ...Object.values(config?.modelRegistry.entries || {}).map(entry => entry.canonicalName),
           ...instances.map(instance => instance.modelId),
+          ...Object.values(clientRouting || {}).map(value => value.modelId || ''),
         ])
       ).filter(Boolean),
-    [config?.modelRegistry.entries, instances]
+    [config?.modelRegistry.entries, instances, clientRouting]
   );
 
   const loadInstances = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await window.electronAPI.route?.listRouteInstances?.();
+      const [response, loadedProfiles] = await Promise.all([
+        window.electronAPI.route?.listRouteInstances?.(),
+        window.electronAPI.configFileProfiles.load(),
+      ]);
       if (!response?.success) throw new Error(response?.error || '加载会话路由失败');
       setInstances(response.data || []);
+      setProfiles((loadedProfiles || []).filter(profile => profile.target.kind === 'local-route'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '加载会话路由失败');
     } finally {
@@ -219,6 +302,21 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
     const timer = window.setInterval(() => void loadInstances(), 3000);
     return () => window.clearInterval(timer);
   }, [loadInstances]);
+
+  const updateClient = async (profileId: string, updates: Partial<RouteClientRoutingConfig>) => {
+    setSavingProfiles(current => new Set(current).add(profileId));
+    try {
+      await saveClientRouting(profileId, updates);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存客户端路由失败');
+    } finally {
+      setSavingProfiles(current => {
+        const next = new Set(current);
+        next.delete(profileId);
+        return next;
+      });
+    }
+  };
 
   // 直接创建等待中的 armed 卡片（模型留空、思考强度默认 medium），选择在卡片上就地完成
   const createArmed = async () => {
@@ -276,21 +374,17 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
       >
         <div className="flex min-w-0 items-baseline gap-1.5">
           <h2
-            className={`font-semibold text-[var(--text-primary)] ${mini ? 'text-xs' : 'text-sm'}`}
+            className={`whitespace-nowrap font-semibold text-[var(--text-primary)] ${mini ? 'text-xs' : 'text-sm'}`}
           >
-            会话路由
+            路由卡片
           </h2>
-          {mini ? (
-            <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">
-              {instances.length} 项
-            </span>
-          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <AppButton
             type="button"
             variant="secondary"
             size="sm"
+            className="whitespace-nowrap"
             onClick={() => void createArmed()}
             disabled={instances.some(instance => instance.routingState === 'armed')}
             title={mini ? '为下一个新会话创建路由' : undefined}
@@ -310,7 +404,7 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
         </div>
       </div>
 
-      {instances.length === 0 ? (
+      {groups.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
           暂无会话路由。可以点击上方按钮为下一个新会话创建路由，也可以直接发送请求自动创建。
         </div>
@@ -319,62 +413,231 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
           data-testid="route-session-grid-scroll"
           className={mini ? 'min-h-0 flex-1 overflow-y-auto' : 'overflow-x-auto'}
         >
-          <div
-            data-testid="route-session-grid"
-            className={
-              mini ? 'grid grid-cols-1 gap-1.5 p-1.5' : 'grid min-w-[60rem] grid-cols-3 gap-2 p-2'
-            }
-          >
-            {rootInstances.map(instance => {
-              const bound = Boolean(instance.routeKey);
-              const ordinal = sessionOrdinals[instance.id];
-              // 色点与会话卡片共用同一取色逻辑：客户端+编号共同决定，同会话颜色恒定
-              const sessionColor = sessionColorForSession(
-                instance.routeKey?.agentId ?? instance.id,
-                ordinal
+          <div data-testid="route-session-grid" className="grid grid-cols-1 gap-2 p-1.5">
+            {groups.map(group => {
+              const settings = normalizeRouteClientRoutingConfig(
+                group.profile ? clientRouting?.[group.profile.id] : undefined
               );
-              const childInstances = childInstancesByParent.get(instance.id) || [];
+              const collapsed = collapsedGroups[group.id] === true;
+              const saving = Boolean(group.profile && savingProfiles.has(group.profile.id));
+              const count =
+                settings.mode === 'client'
+                  ? 1
+                  : group.roots.reduce(
+                      (total, root) =>
+                        total + 1 + (childInstancesByParent.get(root.id)?.length || 0),
+                      0
+                    );
               return (
-                <div key={instance.id} className="flex min-w-0 flex-col">
-                  <SessionCard
-                    instance={instance}
-                    bound={bound}
-                    ordinal={ordinal}
-                    sessionColor={sessionColor}
-                    onUpdate={updateInstance}
-                    onRunAction={runAction}
-                    modelOptions={modelOptions}
-                    mini={mini}
-                  />
-                  {childInstances.length > 0 ? (
-                    <div
-                      data-testid={`route-session-children-${instance.id}`}
-                      className="ml-4 flex flex-col"
+                <section
+                  key={group.id}
+                  data-testid={`route-client-group-${group.id}`}
+                  className="min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)]"
+                >
+                  <div className="flex min-w-0 items-center gap-1 px-1.5 py-1">
+                    <button
+                      type="button"
+                      aria-label={`${collapsed ? '展开' : '收起'} ${group.name} 路由`}
+                      aria-expanded={!collapsed}
+                      aria-controls={`route-group-${group.id}`}
+                      onClick={() =>
+                        setCollapsedGroups(current => ({ ...current, [group.id]: !collapsed }))
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-semibold text-[var(--text-primary)]"
                     >
-                      {childInstances.map((child, index) => (
-                        <SessionCard
-                          key={child.id}
-                          instance={child}
-                          bound={Boolean(child.routeKey)}
-                          ordinal={sessionOrdinals[child.id]}
-                          sessionColor={sessionColor}
-                          onUpdate={updateInstance}
-                          onRunAction={runAction}
+                      {collapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span className="truncate" title={group.name}>
+                        {group.name}
+                      </span>
+                    </button>
+                    {group.profile ? (
+                      <AppSelect
+                        size="sm"
+                        containerClassName="w-24 shrink-0"
+                        className={`${ghostSelectClassName} !w-24 shrink-0`}
+                        aria-label={`${group.name} 路由模式`}
+                        value={settings.mode}
+                        disabled={saving}
+                        onChange={event =>
+                          void updateClient(group.profile!.id, {
+                            mode: event.target.value as RouteClientRoutingConfig['mode'],
+                          })
+                        }
+                      >
+                        <option value="client">客户端级</option>
+                        <option value="session">会话级</option>
+                      </AppSelect>
+                    ) : null}
+                    <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
+                      {count} 张
+                    </span>
+                  </div>
+                  {!collapsed ? (
+                    <div
+                      id={`route-group-${group.id}`}
+                      data-testid={`route-client-cards-${group.id}`}
+                      className={
+                        mini
+                          ? 'grid gap-1.5 p-1.5 pt-0'
+                          : 'grid min-w-[60rem] grid-cols-3 gap-2 p-2'
+                      }
+                    >
+                      {settings.mode === 'client' && group.profile ? (
+                        <ClientRouteCard
+                          profile={group.profile}
+                          settings={settings}
                           modelOptions={modelOptions}
-                          isChild
-                          stackLayer={index}
+                          disabled={saving}
                           mini={mini}
+                          onUpdate={updates => updateClient(group.profile!.id, updates)}
                         />
-                      ))}
+                      ) : group.roots.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-[var(--text-tertiary)]">
+                          暂无会话，请求到达后自动创建路由卡片。
+                        </p>
+                      ) : (
+                        group.roots.map(instance => {
+                          const bound = Boolean(instance.routeKey);
+                          const ordinal = sessionOrdinals[instance.id];
+                          // 色点与会话卡片共用同一取色逻辑：客户端+编号共同决定，同会话颜色恒定
+                          const sessionColor = sessionColorForSession(
+                            instance.routeKey?.agentId ?? instance.id,
+                            ordinal
+                          );
+                          const childInstances = childInstancesByParent.get(instance.id) || [];
+                          return (
+                            <div key={instance.id} className="flex min-w-0 flex-col">
+                              <SessionCard
+                                instance={instance}
+                                bound={bound}
+                                ordinal={ordinal}
+                                sessionColor={sessionColor}
+                                onUpdate={updateInstance}
+                                onRunAction={runAction}
+                                modelOptions={modelOptions}
+                                mini={mini}
+                              />
+                              {childInstances.length > 0 ? (
+                                <div
+                                  data-testid={`route-session-children-${instance.id}`}
+                                  className="ml-4 flex flex-col"
+                                >
+                                  {childInstances.map((child, index) => (
+                                    <SessionCard
+                                      key={child.id}
+                                      instance={child}
+                                      bound={Boolean(child.routeKey)}
+                                      ordinal={sessionOrdinals[child.id]}
+                                      sessionColor={sessionColor}
+                                      onUpdate={updateInstance}
+                                      onRunAction={runAction}
+                                      modelOptions={modelOptions}
+                                      isChild
+                                      stackLayer={index}
+                                      mini={mini}
+                                    />
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   ) : null}
-                </div>
+                </section>
               );
             })}
           </div>
         </div>
       )}
     </AppCard>
+  );
+}
+
+function ClientRouteCard({
+  profile,
+  settings,
+  modelOptions,
+  disabled,
+  mini,
+  onUpdate,
+}: {
+  profile: ConfigFileProfile;
+  settings: RouteClientRoutingConfig;
+  modelOptions: string[];
+  disabled: boolean;
+  mini: boolean;
+  onUpdate: (updates: Partial<RouteClientRoutingConfig>) => Promise<void>;
+}) {
+  return (
+    <article
+      data-testid={`route-client-card-${profile.id}`}
+      className="grid min-w-0 gap-1.5 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-2"
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        <AgentLogo
+          logoId={profile.agentLogoId}
+          agentId={profile.builtin?.clientType}
+          agentName={profile.name}
+          className="h-4 w-4 shrink-0"
+        />
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--text-primary)]">
+          {profile.name}
+        </span>
+        <button
+          type="button"
+          aria-label={`${settings.pinned ? '取消钉住' : '钉住'} ${profile.name} 客户端路由`}
+          aria-pressed={settings.pinned}
+          title={settings.pinned ? '已钉住，防止误删' : '钉住，防止误删'}
+          disabled={disabled}
+          onClick={() => void onUpdate({ pinned: !settings.pinned })}
+          className={`rounded p-0.5 ${settings.pinned ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'}`}
+        >
+          <Pin className={`h-3.5 w-3.5 ${settings.pinned ? 'fill-current' : ''}`} />
+        </button>
+      </div>
+      <p className="text-[10px] text-[var(--text-tertiary)]">作用于该客户端的所有会话</p>
+      <div className="grid grid-cols-2 gap-1.5 border-t border-[var(--line-soft)] pt-1">
+        <label className="grid min-w-0 gap-0.5 text-[10px] text-[var(--text-tertiary)]">
+          模型
+          <AppSelect
+            size="sm"
+            className={mini ? ghostSelectClassName : selectClassName}
+            aria-label={`${profile.id} 客户端路由模型`}
+            title={settings.modelId || '跟随请求'}
+            value={settings.modelId || ''}
+            disabled={disabled}
+            onChange={event => void onUpdate({ modelId: event.target.value || null })}
+          >
+            <option value="">跟随请求</option>
+            {modelOptions.map(model => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </AppSelect>
+        </label>
+        <div className="grid min-w-0 gap-0.5 text-[10px] text-[var(--text-tertiary)]">
+          思考强度
+          <ReasoningEffortEditor
+            instance={{
+              id: `client:${profile.id}`,
+              reasoningEffort: settings.reasoningEffort || '',
+            }}
+            allowFollowRequest
+            disabled={disabled}
+            onSave={value => onUpdate({ reasoningEffort: value || null })}
+            selectClassName={mini ? ghostSelectClassName : selectClassName}
+            customInputClassName={mini ? flatInputClassName : inputClassName}
+          />
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -416,6 +679,16 @@ function SessionCard({
 
   const actionButtons = (
     <div className="ml-auto flex shrink-0 items-center">
+      <button
+        type="button"
+        aria-label={`${instance.pinned ? '取消钉住' : '钉住'} ${instance.routeKey?.sessionId || '等待'} 路由`}
+        aria-pressed={instance.pinned === true}
+        title={instance.pinned ? '已钉住，防止误删' : '钉住，防止误删'}
+        onClick={() => void onUpdate(instance.id, { pinned: !instance.pinned })}
+        className={`${actionButtonClassName} ${instance.pinned ? 'text-[var(--accent)]' : ''}`}
+      >
+        <Pin className={`h-3.5 w-3.5 ${instance.pinned ? 'fill-current' : ''}`} />
+      </button>
       {instance.routingState === 'armed' ? (
         <button
           type="button"
@@ -453,9 +726,16 @@ function SessionCard({
           <button
             type="button"
             aria-label={`归档 ${instance.routeKey?.sessionId || '已取消'} 路由`}
-            title={mini ? `归档 ${instance.routeKey?.sessionId || '已取消'} 路由` : undefined}
+            title={
+              instance.pinned
+                ? '请先取消钉住'
+                : mini
+                  ? `归档 ${instance.routeKey?.sessionId || '已取消'} 路由`
+                  : undefined
+            }
+            disabled={instance.pinned === true}
             onClick={() => void onRunAction('archive', instance.id)}
-            className={`${actionButtonClassName} hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]`}
+            className={`${actionButtonClassName} disabled:cursor-not-allowed disabled:opacity-40 hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]`}
           >
             <Archive className="h-3.5 w-3.5" />
             {mini ? null : '归档'}

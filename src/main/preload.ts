@@ -20,6 +20,7 @@ import type {
   RouteSessionOverride,
   RouteSessionRoutingConfig,
   RouteInstanceUpdate,
+  RouteClientRoutingConfig,
 } from '../shared/types/route-proxy';
 import type { EndpointTestSelectionInput, EndpointTestTarget } from '../shared/types/endpoint-test';
 import type { BrowserProfileOptionId } from '../shared/types/site';
@@ -38,6 +39,7 @@ import type {
   UpsertConfigFileProfileInput,
   ValidateSessionRecordConnectorInput,
 } from '../shared/types/config-file-profile';
+import type { EnableDshSessionRoutingInput } from '../shared/types/dsh-integration';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -382,6 +384,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('config-file-profile:validate-session-record', input),
   },
 
+  // DeepSeek Harness 会话级路由接入
+  dshIntegration: {
+    status: () => ipcRenderer.invoke('dsh-integration:status'),
+    modelSources: () => ipcRenderer.invoke('dsh-integration:model-sources'),
+    enable: (input: EnableDshSessionRoutingInput) =>
+      ipcRenderer.invoke('dsh-integration:enable', input),
+    rollback: () => ipcRenderer.invoke('dsh-integration:rollback'),
+    migrateSessions: () => ipcRenderer.invoke('dsh-integration:migrate-sessions'),
+  },
+
   // 多账户管理 API
   accounts: {
     list: (siteId: string) => ipcRenderer.invoke('accounts:list', siteId),
@@ -490,6 +502,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listSessions: (scope?: 'active' | 'recent' | 'history' | 'all') =>
       ipcRenderer.invoke('route:list-sessions', scope),
     listRouteInstances: () => ipcRenderer.invoke('route:list-route-instances'),
+    updateClientRouting: (profileId: string, updates: Partial<RouteClientRoutingConfig>) =>
+      ipcRenderer.invoke('route:update-client-routing', profileId, updates),
     createArmedRouteInstance: (input: { modelId?: string; reasoningEffort?: string }) =>
       ipcRenderer.invoke('route:create-armed-route-instance', input),
     updateRouteInstance: (instanceId: string, updates: RouteInstanceUpdate) =>

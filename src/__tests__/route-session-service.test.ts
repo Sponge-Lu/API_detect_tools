@@ -8,6 +8,7 @@ import {
   type RouteSessionRoutingConfig,
 } from '../shared/types/route-proxy';
 import {
+  archiveRouteInstance,
   cancelArmedRouteInstance,
   closeRouteInstance,
   createArmedRouteInstance,
@@ -107,6 +108,132 @@ function codexTurnRequest(
 }
 
 describe('route instance identity boundary', () => {
+  it('extracts Claude metadata session IDs and rejects conflicts with native headers', () => {
+    const sessionId = '12345678-1234-1234-1234-123456789abc';
+    for (const userId of [
+      `user_${'a'.repeat(64)}_account__session_${sessionId}`,
+      JSON.stringify({ device_id: 'device', account_uuid: '', session_id: sessionId }),
+    ]) {
+      expect(
+        extractObservedRouteInstanceKey({ headers: {} }, { metadata: { user_id: userId } })
+      ).toMatchObject({ agentId: 'claudeCode', sessionId, runtimeSlotId: sessionId });
+      expect(
+        extractObservedRouteInstanceKey(
+          { headers: { 'x-claude-code-session-id': 'different' } },
+          { metadata: { user_id: userId } }
+        )
+      ).toBeNull();
+    }
+    expect(
+      extractObservedRouteInstanceKey({ headers: {} }, { metadata: { user_id: 'account-only' } })
+    ).toBeNull();
+  });
+
+  it('uses the Grok conversation ID and ignores shared user and request identifiers', () => {
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-grok-conv-id': 'conversation-1',
+          'x-grok-session-id': 'shared-terminal',
+          'x-grok-user-id': 'shared-user',
+          'x-request-id': 'request-1',
+        },
+      })
+    ).toMatchObject({ agentId: 'grokBuild', sessionId: 'conversation-1' });
+    expect(
+      extractObservedRouteInstanceKey({ headers: { 'x-grok-conv-id': 'bad\u0001' } })
+    ).toBeNull();
+  });
+  const dshUserAgent =
+    'deepseek-harness/0.2.1-rc.2 (+https://github.com/deepseek-ai/deepseek-harness)';
+
+  it.each([
+    ['anthropic-messages', { 'x-deepseek-harness-session-id': 'dsh-session' }],
+    ['anthropic-messages', { 'x-session-affinity': 'dsh-session' }],
+    ['openai-chat-completions', { 'x-session-id': 'dsh-session' }],
+    ['openai-responses', { session_id: 'dsh-session', 'x-client-request-id': 'dsh-session' }],
+    ['openai-responses', { 'x-client-request-id': 'dsh-session' }],
+  ] as const)('extracts DSH 0.2.1 session identity for %s (%#)', (protocol, headers) => {
+    const request = { headers: { 'user-agent': dshUserAgent, ...headers } };
+    expect(extractObservedRouteInstanceKey(request, {}, [], protocol)).toEqual({
+      agentId: 'deepseekHarness',
+      runtimeSlotId: 'dsh-session',
+      sessionId: 'dsh-session',
+      observedAgentName: 'DeepSeek Harness',
+      observedRuntimeSlotLabel: '会话级路由',
+    });
+    expect(hasObservedRouteInstanceEvidence(request)).toBe(true);
+  });
+
+  it('accepts the native DSH header without attribution and gives it precedence over generic IDs', () => {
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-deepseek-harness-session-id': 'native-dsh-session',
+          'x-session-id': 'generic-id',
+        },
+      })
+    ).toMatchObject({ agentId: 'deepseekHarness', sessionId: 'native-dsh-session' });
+  });
+
+  it.each(['', '   ', 'bad\nvalue', 'x'.repeat(513)])(
+    'rejects invalid native DSH identity without permitting a profile fallback (%#)',
+    value => {
+      const request = { headers: { 'x-deepseek-harness-session-id': value } };
+      expect(extractObservedRouteInstanceKey(request)).toBeNull();
+      expect(hasObservedRouteInstanceEvidence(request)).toBe(true);
+    }
+  );
+
+  it('rejects conflicting DSH compatibility identities', () => {
+    const request = {
+      headers: { 'user-agent': dshUserAgent, session_id: 'first', 'x-client-request-id': 'second' },
+    };
+    expect(extractObservedRouteInstanceKey(request, {}, [], 'openai-responses')).toBeNull();
+    expect(hasObservedRouteInstanceEvidence(request)).toBe(true);
+  });
+
+  it('does not interpret generic request IDs or cache keys as session identities', () => {
+    expect(
+      extractObservedRouteInstanceKey(
+        { headers: { 'user-agent': 'OtherClient/1', 'x-client-request-id': 'per-request-id' } },
+        { prompt_cache_key: 'shared-cache' }
+      )
+    ).toBeNull();
+    expect(
+      extractObservedRouteInstanceKey(
+        { headers: { 'user-agent': dshUserAgent, 'x-client-request-id': 'request-id' } },
+        {},
+        [],
+        'anthropic-messages'
+      )
+    ).toBeNull();
+  });
+
+  it('keeps generic extraction and explicit route keys available to DSH', () => {
+    expect(
+      extractObservedRouteInstanceKey(
+        { headers: { 'user-agent': dshUserAgent } },
+        { session_id: 'custom-session' }
+      )
+    ).toMatchObject({ sessionId: 'custom-session', observedAgentName: 'DeepSeek Harness' });
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'user-agent': dshUserAgent,
+          [ROUTE_AGENT_ID_HEADER]: 'custom-agent',
+          [ROUTE_RUNTIME_SLOT_ID_HEADER]: 'custom-slot',
+          [ROUTE_SESSION_ID_HEADER]: 'custom-session',
+          'x-deepseek-harness-session-id': 'native-session',
+        },
+      })
+    ).toMatchObject({
+      agentId: 'custom-agent',
+      runtimeSlotId: 'custom-slot',
+      sessionId: 'custom-session',
+    });
+  });
+
   it('bounds and expires high-cardinality session candidate observations', () => {
     clearRouteSessionCandidates();
     const headers = Object.fromEntries(
@@ -1095,13 +1222,16 @@ describe('route instance identity boundary', () => {
     });
   });
 
-  it('rejects incomplete or ambiguous native identity without synthetic fallbacks', () => {
+  it('accepts a native session ID without requiring a window ID', () => {
     expect(
       extractObservedRouteInstanceKey(
         { headers: {} },
         { client_metadata: { session_id: 'session-only' } }
       )
-    ).toBeNull();
+    ).toMatchObject({ agentId: 'codex', runtimeSlotId: 'session-only', sessionId: 'session-only' });
+  });
+
+  it('rejects incomplete or ambiguous native identity without synthetic fallbacks', () => {
     expect(
       extractObservedRouteInstanceKey(
         { headers: {} },
@@ -1728,6 +1858,32 @@ describe('route instance lifecycle', () => {
     expect(restored).not.toHaveProperty('closedAt');
     expect(restored).not.toHaveProperty('closedReason');
     expect(restored).not.toHaveProperty('createdAt');
+  });
+
+  it('protects pinned cards through close, restore, and serialization until explicitly unpinned', () => {
+    const config = baseConfig();
+    const instance = resolve(config, 'session-pinned', 1_000).instance!;
+    updateRouteInstance(config, instance.id, { pinned: true });
+    closeRouteInstance(config, instance.id, 2_000);
+    const reloaded = JSON.parse(JSON.stringify(config)) as RouteSessionRoutingConfig;
+    expect(() => archiveRouteInstance(reloaded, instance.id)).toThrow('请先取消钉住');
+    restoreRouteInstance(reloaded, instance.id, 3_000);
+    expect(reloaded.instances[instance.id].pinned).toBe(true);
+    updateRouteInstance(reloaded, instance.id, { modelId: 'another-model' });
+    closeRouteInstance(reloaded, instance.id, 4_000);
+    updateRouteInstance(reloaded, instance.id, { pinned: false });
+    expect(archiveRouteInstance(reloaded, instance.id)).toBe(true);
+    expect(reloaded.instances[instance.id]).toBeUndefined();
+  });
+
+  it('does not unpin a card when another supplied setting is rejected', () => {
+    const config = baseConfig();
+    const instance = resolve(config, 'session-pinned', 1_000).instance!;
+    updateRouteInstance(config, instance.id, { pinned: true });
+    expect(() => updateRouteInstance(config, instance.id, { pinned: false, modelId: '' })).toThrow(
+      '模型不能为空'
+    );
+    expect(instance.pinned).toBe(true);
   });
 
   it('rejects restoring active, armed, or missing route instances', () => {

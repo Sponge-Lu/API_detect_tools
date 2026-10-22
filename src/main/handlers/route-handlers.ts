@@ -33,7 +33,6 @@ import {
   normalizeRouteInstanceCollections,
   restoreRouteInstance,
   rollbackRouteSessionRule,
-  updateRouteInstance,
   type RouteSessionListScope,
 } from '../route-session-service';
 import type {
@@ -46,12 +45,16 @@ import type {
   RouteSessionOverride,
   RouteSessionExtractionRule,
   RouteInstanceUpdate,
+  RouteClientRoutingConfig,
 } from '../../shared/types/route-proxy';
 import type {
   EndpointTestSelectionInput,
   EndpointTestTarget,
 } from '../../shared/types/endpoint-test';
-import { scanSavedSessionRecordsWithDiagnostics } from '../config-file-profile-service';
+import {
+  loadConfigFileProfiles,
+  scanSavedSessionRecordsWithDiagnostics,
+} from '../config-file-profile-service';
 import { routeStateAffinityService } from '../route-state-affinity-service';
 import { broadcastRendererEvent } from '../app-data-events';
 
@@ -73,6 +76,7 @@ export function registerRouteHandlers() {
         cliModelSelections: routing.cliModelSelections,
         cliThinkingEffortSelections: routing.cliThinkingEffortSelections,
         sessionRouting: routing.sessionRouting,
+        clientRouting: routing.clientRouting,
         stats: routing.stats,
         routePathStates: routing.routePathStates,
         health: routing.health,
@@ -219,6 +223,25 @@ export function registerRouteHandlers() {
     }
   });
 
+  ipcMain.handle(
+    'route:update-client-routing',
+    async (_, profileId: string, updates: Partial<RouteClientRoutingConfig>) => {
+      try {
+        const profiles = await loadConfigFileProfiles();
+        if (
+          !profiles.some(
+            profile => profile.id === profileId && profile.target.kind === 'local-route'
+          )
+        ) {
+          throw new Error('本地路由客户端不存在');
+        }
+        return ok(await unifiedConfigManager.updateRouteClientRouting(profileId, updates));
+      } catch (e: any) {
+        return err(e.message);
+      }
+    }
+  );
+
   ipcMain.handle('route:list-sessions', async (_, scope?: RouteSessionListScope) => {
     try {
       const validScopes: RouteSessionListScope[] = ['active', 'recent', 'history', 'all'];
@@ -284,11 +307,7 @@ export function registerRouteHandlers() {
     'route:update-route-instance',
     async (_, instanceId: string, updates: RouteInstanceUpdate) => {
       try {
-        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-        if (!config) throw new Error('会话路由配置不可用');
-        const instance = updateRouteInstance(config, instanceId, updates);
-        await unifiedConfigManager.saveConfig();
-        return ok(instance);
+        return ok(await unifiedConfigManager.updateRouteInstance(instanceId, updates));
       } catch (e: any) {
         return err(e.message);
       }

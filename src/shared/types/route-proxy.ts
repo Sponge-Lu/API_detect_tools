@@ -66,6 +66,7 @@ export type RouteInstanceClosedReason = 'replaced' | 'explicit' | 'lifecycle';
 
 export interface RouteInstance {
   id: string;
+  pinned?: boolean;
   /** Profile namespace that owns this bound generation. ARMED and legacy records may be unscoped. */
   profileId?: string;
   routeKey?: RouteInstanceKey;
@@ -108,6 +109,7 @@ export interface RouteSessionChannelBinding {
 }
 
 export interface RouteInstanceUpdate {
+  pinned?: boolean;
   modelId?: string;
   reasoningEffort?: RouteThinkingEffort;
   customAgentName?: string | null;
@@ -769,6 +771,9 @@ export type RouteRequestKind = 'inference' | 'token-count';
 export type RouteTokenUsageSource = 'upstream' | 'local-estimate';
 
 export interface RouteRequestLogItem {
+  routingMode?: RouteRoutingMode;
+  profileId?: string;
+  modelSelectionSource?: 'client' | 'session' | 'request' | 'target-lock';
   id: string;
   requestId: string;
   requestSelectionStartedAt?: number;
@@ -891,8 +896,30 @@ export interface RouteAnalyticsObjectStatsItem {
 
 // ============= 顶层配置 =============
 
+export type RouteRoutingMode = 'client' | 'session';
+
+export interface RouteClientRoutingConfig {
+  mode: RouteRoutingMode;
+  modelId: string | null;
+  reasoningEffort: RouteThinkingEffort | null;
+  pinned: boolean;
+}
+
+export function normalizeRouteClientRoutingConfig(value: unknown): RouteClientRoutingConfig {
+  const input = (
+    value && typeof value === 'object' ? value : {}
+  ) as Partial<RouteClientRoutingConfig>;
+  return {
+    mode: input.mode === 'client' ? 'client' : 'session',
+    modelId: typeof input.modelId === 'string' ? input.modelId.trim() || null : null,
+    reasoningEffort: normalizeRouteThinkingEffort(input.reasoningEffort),
+    pinned: input.pinned === true,
+  };
+}
+
 /** 路由模块配置（持久化到 config.json.routing） */
 export interface RoutingConfig {
+  clientRouting?: Record<string, RouteClientRoutingConfig>;
   server: RouteProxyServerConfig;
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
@@ -949,6 +976,7 @@ export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
 };
 
 export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
+  clientRouting: {},
   server: DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   rules: [],
   cliModelSelections: { claudeCode: null, codex: null, openCode: null, grokBuild: null },
