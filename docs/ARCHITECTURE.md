@@ -15,6 +15,7 @@
 - 本地路由升级为按 pathname 分派的三协议通用网关，客户端身份不参与基础协议和通道选择
 - 接入点侧滑面板只提供三端点原生测试；顶部上游协议字段仅供真实路由使用
 - 路由运行态、端点测试最新结果、分析桶和模型来源快照拆分到 bounded sidecar 文件
+- 新增 DSH 会话级接入：把 DeepSeek Harness 的 provider 指向本地路由并迁移存量会话
 - UI 原语迁移到 `App*` 中性命名体系
 - 主题系统支持 `Light` / `Dark` / `Modern` / `Modern Dark` 四套预设
 
@@ -74,7 +75,7 @@ src/
 
 ```ts
 interface UnifiedConfig {
-  version: '3.0';
+  version: string; // 当前为 '3.0'
   sites: UnifiedSite[];
   accounts: AccountCredential[];
   siteGroups: SiteGroup[];
@@ -113,13 +114,13 @@ interface UnifiedConfig {
 - `VerticalSidebar`：一级导航
 - `GlobalCommandBar`：全局操作区
 - `PageHeader`：当前页标题与说明
-- 页面工作台：
-  - `DataOverviewPage`
-  - `SitesPage`
-  - `RoutePage`
-  - `LogsPage`
-  - `RouteSettingsPage`
-  - `SettingsPage`
+- 页面工作台（顺序与 `APP_PAGE_ORDER` 一致）：
+  - `DataOverviewPage`（数据总览）
+  - `SitesPage`（站点管理）
+  - `RoutePage`（本地路由）
+  - `RouteSettingsPage`（路由模型）
+  - `LogsPage`（路由日志）
+  - `SettingsPage`（设置）
 
 ### 设计系统
 
@@ -163,8 +164,11 @@ interface UnifiedConfig {
 | `ChromeManager` | 多槽位检测浏览器池、独立登录浏览器、页面复用与清理 |
 | `UnifiedConfigManager` | 配置加载、迁移、原子写入、备份恢复、路由配置持久化 |
 | `EndpointTestService` | 解析托管/直连目标，绕过协议转换执行三协议原生测试并保存最新时间 |
+| `EndpointTestStateService` | 独立维护端点测试选择与最新结果的 sidecar，不参与路由运行态、统计或分析 |
 | `ConfigFileProfileService` | 配置卡片持久化、文件授权、预览事务、原子写入/回滚和会话记录扫描 |
 | `RouteSessionService` | 会话规则提取、候选发现、活动生命周期、连接器关联和覆盖查询 |
+| `RouteProxyService` | 三协议通用网关的调度层：监听启停、请求分类、凭证与会话解析、选路与尝试循环、终结响应 |
+| `DshIntegrationService` | DSH（DeepSeek Harness）会话级接入：状态检测、模型来源派生、注释保留式 YAML 合并、回滚与存量会话迁移 |
 | `UpdateService` | 版本检查、应用内下载、安装 |
 
 ### 端点测试执行路径
@@ -203,12 +207,18 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 - `route-proxy-service.ts`：三协议 pathname 分派、模型发现/根探测、代理启停、规则选路与尝试循环调度
 - `route-upstream-forwarder.ts`：单次上游尝试的传输、SSE 校验/转换与提交窗口
 - `route-request-context.ts`：单请求生命周期（取消传播、尝试计数、日志上下文、终结错误诊断）
+- `route-usage.ts`：上游响应体 / SSE 用量与思考强度解析（纯函数）
+- `route-proxy-shared.ts`：路径与协议推断小工具
 - `route-channel-resolver.ts`：通道路由决策
+- `route-upstream-failure.ts`：上游失败分类（请求侧 / 通道侧 / 瞬时 / 配额耗尽）与确证不可用原因解析
 - `upstream-credential-resolver.ts`：中性解析托管/直连真实上游凭证；路由与端点测试共享解析结果，但不共享传输执行
 - `api-key-identity.ts`：生成稳定 API Key 标识，不属于路由选择或端点传输
 - `endpoint-test-state-service.ts`：独立维护端点测试 sidecar；路由状态管理器不再加载或保存端点测试结果
 - `route-session-service.ts`：基于 `agentId + runtimeSlotId + sessionId` 的 RouteInstance 生命周期、ARMED 原子绑定、槽位切换和配置覆盖
-- `route-rule-engine.ts`：规则匹配
+- `route-session-binding-service.ts`：会话-通道绑定 sidecar，让并发会话各自粘在不同上游通道（通道级绑定，换模型仍保住 prompt cache 亲和）
+- `route-session-activity-service.ts`：`lastRequestAt` 高频写入的有界 sidecar（合并写入、TTL/容量压缩、退出 flush）
+- `route-state-affinity-service.ts`：Stateful Responses 本地亲和映射与按 profile / site / account / API Key 的实体清理
+- `route-rule-engine.ts`：规则匹配与命中解释
 - `route-model-registry-service.ts`：模型注册表与覆盖项
 - `endpoint-test-service.ts`：三协议手动测试与最新结果持久化
 - `route-analytics-service.ts`：聚合分析统计
@@ -217,28 +227,86 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 
 ### 渲染层页面
 
-- `RoutePage`：本地网关服务 + 配置文件卡片区（配置方案摘要卡片、规则详情、模板应用与本地文件保存、行级 diff 预览和对话记录路径）
-- `RouteSettingsPage`：mini 会话路由卡片（`RouteSessionSection mini`）与模型映射工作区（`ModelRedirectionTab` leadingPane 布局）单页合并；重定向模型列表行内编辑/图标删除，原始模型列移入编辑弹窗
+- `RoutePage`：本地网关服务 + DSH 接入状态条 + 配置文件卡片区（配置方案摘要卡片、规则详情、模板应用与本地文件保存、行级 diff 预览和对话记录路径）
+- `RouteSettingsPage`（导航名 `路由模型`）：mini 会话路由卡片（`RouteSessionSection mini`）与模型映射工作区（`ModelRedirectionTab` leadingPane 布局）单页合并；重定向模型列表行内编辑/图标删除，原始模型列移入编辑弹窗
 - `DataOverviewPage`：数据总览页；路由数据子页展示 KPI、趋势、模型热力、通道散点与 Sankey；趋势图在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴
 - `LogsPage`：日志页；路由日志按实际 Agent 动态筛选，首列纯文本展示 Agent，Token 固定两行展示输入/输出与缓存写/读
 - `EndpointTestPanel`：接入点侧滑面板的独立测试页，每端点单独选择 Key/模型并显示最近测试时间
 
 ### IPC 命名空间
 
-Route 功能统一挂在 `route:*`：
+Route 与 DSH 功能分别挂在 `route:*`、`endpoint-test:*`、`config-file-profile:*`、`dsh-integration:*`：
 
-- `route:get-config`
-- `route:save-server-config`
-- `route:start-server` / `route:stop-server`
+**服务与配置**
+
+- `route:get-config` / `route:save-server-config`
+- `route:start-server` / `route:stop-server` / `route:get-runtime-status`
+- `route:regenerate-api-key`
+
+**规则与模型**
+
 - `route:list-rules` / `route:upsert-rule` / `route:delete-rule`
-- `route:get-model-registry` / `route:rebuild-model-registry`
+- `route:get-model-registry` / `route:rebuild-model-registry` / `route:sync-model-registry-sources` / `route:refresh-model-metadata`
+- `route:upsert-model-display-item` / `route:upsert-model-mapping-override` / `route:delete-model-mapping-override`
+- `route:save-cli-model-selections` / `route:save-cli-thinking-effort-selections`
+
+**统计与日志**
+
+- `route:get-analytics-overview` / `route:get-analytics-summary` / `route:get-analytics-distribution`
+- `route:get-object-stats` / `route:list-stats` / `route:reset-stats` / `route:reset-analytics`
+- `route:get-request-logs` / `route:clear-request-logs` / `route:fetch-latest-log`
+- `route:getHistoryBuckets` / `route:reset-path-states`
+
+**会话实例与规则**
+
+- `route:list-route-instances` / `route:create-armed-route-instance` / `route:update-route-instance` / `route:archive-route-instance` / `route:restore-route-instance` / `route:close-route-instance` / `route:cancel-armed-route-instance`
+- `route:update-session-settings` / `route:update-client-routing` / `route:clear-session-activity`
+- `route:list-sessions` / `route:list-session-rules` / `route:upsert-session-rule` / `route:delete-session-rule` / `route:rollback-session-rule` / `route:list-session-candidates`
+- `route:upsert-session-override` / `route:delete-session-override`
+- `route:preview-profile-state-clear` / `route:clear-profile-state`
+
+**端点测试**
+
 - `endpoint-test:get-state` / `endpoint-test:save-selection` / `endpoint-test:run`
-- `route:get-analytics-summary` / `route:get-analytics-distribution`
-- `route:get-request-logs`
-- `route:get-object-stats`
-- `route:list-sessions` / `route:upsert-session-override` / `route:upsert-session-rule`
+
+**配置文件卡片**
+
 - `config-file-profile:load` / `config-file-profile:upsert` / `config-file-profile:delete`
 - `config-file-profile:target-catalog` / `config-file-profile:preview` / `config-file-profile:preview-direct-edit` / `config-file-profile:commit`
+- `config-file-profile:read-files` / `config-file-profile:list-backups` / `config-file-profile:preview-backup-restore`
+- `config-file-profile:generate-route-key` / `config-file-profile:preview-route-key-rotation` / `config-file-profile:switch-auth-mode`
+- `config-file-profile:restore-builtin` / `config-file-profile:restore-missing-builtins` / `config-file-profile:validate-session-record`
+
+**DSH 接入**
+
+- `dsh-integration:status` / `dsh-integration:model-sources`
+- `dsh-integration:enable` / `dsh-integration:rollback` / `dsh-integration:migrate-sessions`
+
+---
+
+## DSH 会话级接入
+
+DSH（DeepSeek Harness）默认走 `llm-pi-ai` 的 `anthropic-messages` 通道，该适配器的 compat gate 会 withhold `sendSessionAffinityHeaders` / `sessionAffinityFormat`，代理侧拿不到会话身份，所有窗口会共用一张路由卡片。**没有零配置退路**：`dsh-llm-pi-ai` 对 gate 表里出现的 compat 字段直接抛错，因此只能把 provider 换成会发送会话头的 `dsh-llm-deepseek-api-key`。
+
+### 模块边界
+
+- `src/main/dsh-integration-service.ts`：唯一直接读写 DSH 文件的模块，导出 `detectDshRouting` / `enableDshSessionRouting` / `rollbackDshSessionRouting` / `migrateDshSessionProviders` / `listDshModelSources`
+- `src/main/handlers/dsh-integration-handlers.ts`：`dsh-integration:*` IPC，统一返回 `{ ok, data } | { ok:false, error }`
+- `src/renderer/components/Route/DshIntegrationBanner.tsx`：挂在 `RoutePage` 的状态条；DSH 未安装或 IPC 不可用时静默不渲染
+- `src/shared/types/dsh-integration.ts`：状态、漂移原因、模型来源与结果类型
+
+### 写入策略
+
+- **不硬编码用户数据**：`baseURL` 取 `getRoutingConfig().server`，API Key 取匹配 `^(dsh|deepseek[\s_-]*harness)$` 的配置方案凭证（否则新建仅凭证方案），模型列表取 `getConfigFileTargetCatalog()` 的对应目标
+- **注释保留式改写**：用 `yaml` 的 `parseDocument()` 读写 `cordis.patch.yml`，不做 parse + stringify，保留用户注释与 `!!js` 标签
+- **条目 id 必须是 `llm-deepseek`**：patch 层按 id 合并，写错 id 会让 `deepseek-official` 重复注册并导致 settings 命名空间错位
+- **保守合并**：`agent-default-model` 仅在缺失或仍为 `local` 时改写；`allowedModels` 仅在整表都是 `local` 时替换；已存在的 route 条目保留用户自定义字段
+- **回滚按 id 撤销**：`revertManagedPatchEntries()` / `revertCredentialRef()` 只还原应用写过的三个条目，用户手改内容保留；manifest 丢失时回退到同目录最新的 `.apidetect-*.bak`
+- **会话迁移需 DSH 已退出**：改写 `~/.dsh/storages/session_projcache/sessions/*.json` 的 `modelSelection.lastUsed` 与 `subagentModelSelectionPolicy` 两处 provider 引用
+
+### 状态判定
+
+`drift` 是状态机，`ok` 是唯一「无需处理」的取值；其余取值（`dsh-not-installed`、`patch-entry-missing`、`models-out-of-sync`、`no-model-source`、`sessionsOnLegacyProvider` 等）驱动状态条的警告态与操作按钮。`no-model-source` 优先于 `patch-file-missing`，避免没建过 patch 时掩盖真正的病因。
 
 ---
 
@@ -253,7 +321,10 @@ Route 功能统一挂在 `route:*`：
 | 自定义配置卡片 | `${userData}/config-file-profiles.json` |
 | 直连接入点 | `${userData}/custom-cli-configs.json` |
 | 会话规则与覆盖 | `config.json` 的 `routing.sessionRouting`（活动记录仅在内存） |
+| 路由运行态 / 分析桶 / 模型来源 | `${userData}/state/route-runtime.json`、`route-analytics.json`、`route-model-sources.json` |
+| 会话活动 / 会话-通道绑定 / 亲和映射 | `${userData}/state/route-session-activity.json`、`route-session-bindings.json`、`route-state-affinity.json` |
 | 端点测试最新状态 | `${userData}/state/route-endpoint-tests.json` |
+| DSH 接入清单 | `${userData}/.api-detect-dsh-integration.json`（记录写入哈希与备份基线） |
 
 ### 当前策略
 

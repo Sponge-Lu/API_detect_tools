@@ -23,12 +23,12 @@
 | **useSiteDetection.ts** | 站点检测；刷新失败写入站点结果，由名称旁的异常图标展示详情 | `{ results, isDetecting, detect, ... }` |
 | **useTokenManagement.ts** | Token 管理，支持站点 API Key 列表刷新、单个 API Key 状态刷新、创建与删除 | `{ refreshSiteApiKeys, handleRefreshToken, handleCreateTokenSubmit, handleDeleteToken }` |
 | **useCheckIn.ts** | 签到逻辑，基于已保存站点/账户配置生成批量签到目标，跳过 `unavailable` 分组，按站点类型打开手动签到页 | `{ canSignIn, isSigningIn, signIn, ... }` |
-| **useCliCompatTest.ts** | 站点级 CLI 兼容性测试，仅为 Claude Code / Codex 构造探测请求 | `{ results, isTesting, test, ... }` |
 | **useDataLoader.ts** | 数据加载，支持站点状态持久化、签到能力缓存回填与账户级 CLI 配置按 card key 回填 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
-| **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |
-| **useUpdate.ts** | 应用更新检查 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
+| **useTheme.ts** | 主题管理（四套预设：Light / Dark / Modern / Modern Dark） | `{ theme, setTheme, ... }` |
+| **useUpdate.ts** | 应用更新检查与下载 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
 | **useConfigDetection.ts** | CLI 配置检测 | `{ detection, isLoading, refresh, detect }` |
+| **useDateString.ts** | 返回当前本地日期字符串，用于「今日已签/今日已刷新」跨零点判断 | `string` |
 ---
 ## 🎣 Hooks 详解
 ### useSiteGroups
@@ -162,75 +162,78 @@ interface UseSiteDragReturn {
 - 放置处理
 - 排序保存
 ### useTheme
-**职责**: 管理应用主题
+**职责**: 管理应用主题（四套预设）
 **返回值**:
 ```typescript
-interface UseThemeReturn {
-  theme: 'light' | 'dark' | 'system';
-  setTheme: (theme: 'light' | 'dark' | 'system') => void;
-  isDark: boolean;
-  systemIsDark: boolean;
-}
+// theme: 'light-b' | 'dark' | 'modern' | 'modern-dark'（旧值加载时归一化）
+const { theme, setTheme, ... } = useTheme();
 ```
 **特点**:
-- 主题切换
-- 系统主题检测
-- 主题持久化
-- 实时更新
+- 主题切换与持久化（`theme:load` / `theme:save`）
+- 旧主题值自动归一化到当前四套预设
+- 通过 CSS 变量驱动 `App*` 原语，不依赖 Tailwind `dark:` 前缀
 ### useUpdate
-**职责**: 检查应用更新
+**职责**: 检查应用更新、下载与安装
 **返回值**:
 ```typescript
 interface UseUpdateReturn {
-  hasUpdate: boolean;
+  currentVersion: string;
+  updateInfo: UpdateCheckResult | null;
   isChecking: boolean;
-  latestVersion: string;
-  checkUpdate: () => Promise<void>;
-  downloadUpdate: () => Promise<void>;
+  error: string | null;
+  settings: UpdateSettings;
+  downloadProgress: DownloadProgress | null;
+  downloadPhase: DownloadPhase;
+  downloadedFilePath: string | null;
+  downloadError: string | null;
+  checkForUpdates: () => Promise<void>;
+  checkForUpdatesInBackground: () => Promise<void>;
+  openDownloadUrl: () => Promise<void>;
+  updateSettings: (settings: Partial<UpdateSettings>) => Promise<void>;
+  startDownload: (url: string) => Promise<void>;
+  // install / cancel 等见源码
 }
 ```
 **特点**:
-- 更新检查
-- 版本比较
-- 下载更新
-- 更新提示
+- 前台检查与后台静默检查两条路径
+- 下载进度来自 `update:download-progress` 推送
+- 更新源与代理等设置持久化在 `update-settings.json`
 ---
 ## 🔄 Hook 通信模式
+
 ### IPC 通信
+
+渲染进程不直接使用 `ipcRenderer`，统一通过 preload 暴露的 `window.electronAPI`：
 
 ```typescript
 // Hook 中调用 IPC
-const getToken = async (siteId: string) => {
-  const result = await window.ipcRenderer.invoke('token:get', { site: siteId });
-  if (result.success) {
-    return result.data;
-  } else {
-    throw new Error(result.error);
-  }
-};
+const result = await window.electronAPI.token.validate(account);
+if (!result.ok) throw new Error(result.error);
 ```
+
 ### Store 集成
 
 ```typescript
 // Hook 中使用 Store
-const { sites, setSites } = useConfigStore();
+const { config, saveConfig } = useConfigStore();
 
-const addSite = async (site: Site) => {
-  await window.ipcRenderer.invoke('config:addSite', { site });
-  setSites([...sites, site]);
+const addSite = async (site: UnifiedSite) => {
+  await window.electronAPI.sites.add(site);
+  await saveConfig();
 };
 ```
+
 ### 错误处理
 
+主进程把异常收敛成结构化结果（`{ ok: false, error }` 或 `{ success: false, error }`），Hook 负责转成 UI 状态：
+
 ```typescript
-// Hook 中的错误处理
 const [error, setError] = useState<Error | null>(null);
 
 const detect = async () => {
   try {
     setError(null);
-    const results = await window.ipcRenderer.invoke('api:detect');
-    return results;
+    return await window.electronAPI.detectSingle(site, false, config);
   } catch (err) {
     setError(err as Error);
     throw err;
@@ -312,5 +315,5 @@ export function useNewFeature(): UseNewFeatureReturn {
 
 当此文件夹中的文件变化时，更新本索引、src/renderer/FOLDER_INDEX.md 和 PROJECT_INDEX.md
 ---
-**版本**: 3.0.5
-**更新日期**: 2026-06-01
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

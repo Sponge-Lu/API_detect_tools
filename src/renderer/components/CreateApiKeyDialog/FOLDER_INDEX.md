@@ -2,18 +2,16 @@
 
 ## 架构说明
 
-**职责**: 提供 API Key 创建和管理对话框
+**职责**: 新建 API Key（New API 令牌）的对话框。
 
 **特点**:
-- 表单验证
-- 错误提示
-- 加载状态
-- 成功反馈
+- 表单字段：名称、配额、过期时间、分组等
+- 提交前做必填与数值校验，失败在对话框内提示
+- 提交中禁用按钮并显示加载态，成功后关闭并回调刷新列表
 
 **依赖关系**:
-- 被 `App.tsx` 使用
-- 依赖 `hooks/useTokenManagement` 管理 Token
-- 依赖 `store/` 管理状态
+- 被站点卡片 / API Key 管理入口调用
+- 依赖 `hooks/useTokenManagement` 与主进程 `token:*` IPC
 
 ---
 
@@ -21,9 +19,8 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **CreateApiKeyDialog.tsx** | API Key 创建对话框 | `CreateApiKeyDialog` 组件 |
-| **ApiKeyForm.tsx** | API Key 表单 | `ApiKeyForm` 组件 |
-| **ApiKeyList.tsx** | API Key 列表 | `ApiKeyList` 组件 |
+| **CreateApiKeyDialog.tsx** | 对话框本体与表单 | `CreateApiKeyDialog`, `NewApiTokenForm` |
+| **index.ts** | 桶文件 | re-export `CreateApiKeyDialog` 与表单类型 |
 
 ---
 
@@ -33,5 +30,5 @@
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

@@ -2,18 +2,16 @@
 
 ## 架构说明
 
-**职责**: 提供加载占位符骨架屏组件
+**职责**: 提供加载占位符骨架屏组件。
 
 **特点**:
-- 加载状态显示
-- 动画效果
-- 响应式设计
-- 支持深色模式
+- 三种粒度：通用块、站点卡片、站点列表
+- 纯 CSS 动画（Tailwind），无额外依赖
+- 跟随主题 token，深浅色表现一致
 
 **依赖关系**:
-- 被 `App.tsx` 和其他组件使用
-- 依赖 `store/uiStore` 管理加载状态
-- 依赖 Tailwind CSS 样式
+- 被站点页与数据总览页使用
+- 不依赖 store，纯展示组件
 
 ---
 
@@ -21,9 +19,8 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SkeletonLoader.tsx** | 通用骨架屏加载器 | `SkeletonLoader` 组件 |
-| **SkeletonCard.tsx** | 卡片骨架屏 | `SkeletonCard` 组件 |
-| **SkeletonTable.tsx** | 表格骨架屏 | `SkeletonTable` 组件 |
+| **Skeleton.tsx** | 通用骨架块 + 站点卡片 / 站点列表两种预设 | `Skeleton`, `SiteCardSkeleton`, `SiteListSkeleton` |
+| **index.ts** | 桶文件 | re-export 上述组件 |
 
 ---
 
@@ -33,5 +30,5 @@
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

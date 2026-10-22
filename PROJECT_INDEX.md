@@ -2,7 +2,7 @@
 
 ## 项目概览
 
-**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.0.5**。
+**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.3**。
 
 **技术栈**
 
@@ -66,33 +66,44 @@
 | `src/main/route-session-service.ts` | 管理 RouteInstance 身份、DSH 原生及兼容会话标识、父子谱系、ARMED 绑定与生命周期；钉住卡片禁止归档，身份合并保留保护状态 |
 | `src/main/route-session-activity-service.ts` | 将 RouteInstance 高频 `lastRequestAt` 从稳定配置拆到有界、合并、原子写 sidecar，支持启动 hydrate 与退出 flush |
 | `src/main/custom-cli-model-service.ts` | 直连配置模型获取服务，通过配置 `modelUrl`（为空时回退 `baseUrl`）拼接 `/v1/models` 拉取模型列表并写回 `CustomCliConfig.models` |
-| `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`config-file-profile:*` 等 IPC；配置文件 I/O 和会话规则管理仅由主进程执行 |
+| `src/main/handlers/*.ts` | 按域注册 IPC：`sites:*` / `accounts:*` / `storage:*` / `token:*` / `route:*` / `config-file-profile:*` / `endpoint-test:*` / `dsh-integration:*` / `overview:*` / `detection:*` / `cli-compat:*` / `custom-cli-config:*` / `anyrouter:*` / `close-behavior:*` / `backup:*` / `webdav:*` / `update:*` / `theme:*` / `browser-profile:*`，另有 `load-config` / `save-config` / `open-url` / `fetch-with-cookies` 等扁平通道；配置文件 I/O 和会话规则管理仅由主进程执行 |
 | `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 按入站 pathname 接收 Messages、Chat Completions 与 Responses 的通用本地网关，在请求体解析后关联运行时会话身份，并执行模型映射、会话覆盖、故障转移和必要的双向协议转换；上游失败按类别记账（仅请求侧致命记 `neutral`，不改变转移行为），凭证/模型/配额确证不可用时按阶梯时长首次即禁用该路径，全通道失败吸收为可重试 503；隐藏提供模型发现、CORS 预检、根探测和精确 Token 计数契约 |
 | `src/main/protocol-sse-transformer.ts` | 独立的跨协议增量 SSE 状态机，负责六个有向协议转换的分片解析、事件生命周期、工具/usage/error/terminal 透传 |
 | `src/main/streaming-protocol-validator.ts` | 三标准协议的有界增量 SSE 校验器，按实际下游字节验证帧、生命周期、输出、usage 与工具参数，不重建完整响应体 |
 | `src/main/endpoint-test-service.ts` | 通过中性凭证层直连上游执行 Messages、Responses 与 Chat Completions 非流式生成测试，不依赖任何路由模块，并保存每个接入目标/端点的最新选择、结果与测试时间 |
 | `src/main/route-history-service.ts` | 站点管理 History 列时间桶聚合服务，按实际请求端点分别聚合 48h / 2h 成功率轨道，并规范化 Messages、Responses 与 Chat Completions 路径 |
-| `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
+| `src/main/route-upstream-forwarder.ts` | 单次上游尝试的传输层：上游 URL / 请求头构造、增量流校验与协议转换、原生 Anthropic 流延迟提交窗口与截断降级、SSE 错误补发 |
+| `src/main/route-request-context.ts` | 单个下游请求的生命周期状态：客户端取消传播、尝试计数、请求日志上下文与终结错误码诊断 |
+| `src/main/route-usage.ts` | 上游响应体 / SSE 用量与思考强度解析（纯函数），供代理与日志共用 |
+| `src/main/route-proxy-shared.ts` | 路由代理模块间共享的路径与协议推断小工具 |
+| `src/main/route-upstream-failure.ts` | 上游失败分类（请求侧 / 通道侧 / 瞬时 / 配额耗尽）、确证不可用原因解析、`Retry-After` 解析与响应体摘要归一化 |
+| `src/main/route-rule-engine.ts` | 路由规则匹配与命中解释，规则选路与单次请求改写抽为独立函数 |
+| `src/main/route-session-binding-service.ts` | 会话-通道绑定 sidecar，让并发会话各自粘在不同上游通道；通道级绑定使换模型仍保住 prompt cache 亲和性 |
+| `src/main/route-state-affinity-service.ts` | Stateful Responses 本地亲和映射、非敏感 profile 分类摘要，以及按 profile / site / account / API Key 的实体清理 |
+| `src/main/route-state-manager.ts` | 路由运行态文件管理，只维护 `route-runtime.json`、`route-analytics.json` 与模型来源快照；端点测试状态由独立 sidecar 管理，避免高频状态写入 `config.json` |
+| `src/main/local-api-key-service.ts` | Access Token 无效时仍可独立管理本地 API Key，并按 Key 刷新 / 保留模型快照 |
+| `src/main/config-field-crypto.ts` | 配置字段 AES-256-GCM 加解密，在磁盘 I/O 边界透明处理 `api_key` / `access_token` / `apiKey` 等敏感字段 |
+| `src/main/anyrouter-hash-extractor.ts` | AnyRouter 页面哈希指纹提取，配合请求改写器完成上游校验 |
 | `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV/导出使用 plaintext portable 2 文件包；恢复后 reconcile 隔离 Profile slot |
 
 ### 渲染进程
 
 | 模块 | 作用 |
 |------|------|
-| `src/renderer/App.tsx` | 侧边栏外壳与页面切换，注册并行的本地路由、模型映射、路由设置页面 |
+| `src/renderer/App.tsx` | 侧边栏外壳与页面切换，懒加载 6 个一级页面（数据总览 / 站点管理 / 本地路由 / 路由模型 / 路由日志 / 设置） |
 | `src/renderer/components/AppErrorBoundary.tsx` | React 根错误边界，防止未捕获渲染异常留下白屏，并提供可见的重新加载操作 |
-| `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面元数据，包含并行的本地路由、模型映射、路由设置和路由日志入口 |
+| `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面元数据（`overview` / `sites` / `route` / `config-files` / `logs` / `settings`）与 `数据总览` 两个子页 |
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面与 `数据总览` 子页入口 |
 | `src/renderer/components/LoadingState.tsx` / `ErrorState.tsx` / `AppSwitch.tsx` / `AppSelect.tsx` / `PageContainer.tsx` | 统一加载/错误/开关/下拉/页面容器原语；配合 `App*`/`DataTable` 收敛全 App 三态与同类控件视觉 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线，并提供左侧请求量（0–max）与右侧成功率（0–100%）双纵轴及对齐的 0/50/100 参考线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
 | `src/renderer/pages/SitesPage.tsx` | 站点管理主页面；站点与直连配置名称统一调用系统浏览器并保留完整 URL；接入点侧滑面板提供信息、资源和原生端点测试，不再承载 CLI 配置 |
-| `src/renderer/pages/RoutePage.tsx` | 本地路由页：代理服务器区块 + 配置文件卡片区 |
-| `src/renderer/pages/RouteSettingsPage.tsx` | 路由设置页：左列按独立客户端分组的双模式路由卡片（240-280px），分组头切换客户端级/会话级、独立折叠并记住状态，两类卡片均支持模型、思考强度和钉住保护；右侧为模型映射工作区 |
+| `src/renderer/pages/RoutePage.tsx` | 本地路由页：服务器区块 + DSH 接入状态条 + 配置文件卡片区 |
+| `src/renderer/pages/RouteSettingsPage.tsx` | 路由模型页（`config-files`）：左列按独立客户端分组的双模式路由卡片（240-280px），分组头切换客户端级/会话级、独立折叠并记住状态，两类卡片均支持模型、思考强度和钉住保护；右侧为模型映射工作区 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；按日志中的 Agent 动态筛选并以 Logo + 名称展示首列，Token 固定两行展示输入/输出与缓存写/读 |
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色，条形图右侧内联汇总 48h 请求数与加权成功率 |
 | `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab1 信息表单、Tab2 资源布局与 Tab3 端点测试共享紧凑视觉规格、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
-| `src/renderer/components/Route/*` | 路由页内部区块（含 `#N` / `#N.M` 父子会话编号、模型重定向优先级色点、服务器/统计面板及 History 条形图） |
+| `src/renderer/components/Route/*` | 路由页内部区块（`DshIntegrationBanner` 接入状态条、`ConfigProfilesSection` 配置卡片、`RouteSessionSection` 双模式会话卡片、`ProxyStats/` 服务器与 CLI 模型区块、`Redirection/` 模型映射、`Usability/` History 条形图） |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
 | `src/renderer/store/toastStore.ts` | 管理可见 Toast 队列与当前会话内事件历史 |
@@ -120,10 +131,13 @@
 | `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由与分析统计类型；兼容 re-export 端点测试类型 |
 | `src/shared/config/builtin-client-configs.ts` | Claude Code、Codex、OpenCode、Grok Build 完整配置的共享唯一来源 |
 | `src/shared/types/config-file-profile.ts` | 版本化配置方案、含协议元数据的目标目录、应用模式、文件事务和对话记录诊断类型 |
-| `src/shared/types/dsh-integration.ts` | DSH 接入状态、漂移原因、请求/结果类型与 DSH 侧常量 |
+| `src/shared/types/dsh-integration.ts` | DSH 接入状态、漂移原因、请求/结果类型与 DSH 侧常量（条目 id `llm-deepseek`、provider id `deepseek-official`、凭据引用名） |
+| `src/shared/types/cli-config.ts` / `custom-cli-config.ts` / `config-detection.ts` | CLI 配置模型与内置模板类型；直连接入点配置与模型；本地 CLI 配置静态检测结果 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` / `Modern` / `Modern Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |
+| `src/shared/utils/apiConfig.ts` | 站点密钥来源、认证方式与 API 地址的共享解析 |
 | `src/shared/utils/customCliRouteId.ts` / `groupLabel.ts` | 自定义 CLI 真实多 Key 路由通道合成 ID helper；数字分组前缀到圆圈数字标签的共享规范化 |
+| `src/shared/utils/modelPricing.ts` / `url-matcher.ts` / `headers.ts` / `log-filter.ts` | 模型计费解析；URL 匹配；协议 Header 处理；日志筛选的跨进程共享实现 |
 | `src/shared/utils/date.ts` | 本地时区"同一天"判断 `isSameLocalDay()`，"今日已签/今日已刷新"类判断的跨进程单一收敛点 |
 
 ---
@@ -135,17 +149,17 @@
 - `数据总览`
 - `站点管理`
 - `本地路由`
-- `模型映射`
-- `路由设置`
+- `路由模型`
 - `路由日志`
 - `设置`
 
 说明：
 
-- `数据总览` 是新的默认首页，排在第一个入口，承载路由健康、站点余额/消费、历史快照和异常请求。
+- `数据总览` 是默认首页，排在第一个入口，承载路由健康、站点余额/消费、历史快照和异常请求。
 - 左侧导航会在 `数据总览` 下显示两个子页：`站点数据` 与 `路由数据`；`路由日志` 是单一主入口，直接显示路由日志。
 - `App.tsx` 会结合 `pageMeta.ts` 与 `uiStore.overviewSubtab` 在 Header 中显示当前标题和简洁说明；Header 右侧操作由 `DataOverviewPage` 注入，站点子页显示 `刷新`，路由子页显示 `24h / 7d / 刷新`。
-- `本地路由` 承载网关与配置文件卡片区；`路由设置`（`config-files`）单页合并 mini 会话路由卡片与模型映射工作区，原 `model-mapping` 一级页面已下线（旧持久化 id 映射到 `config-files`）。
+- `本地路由`（`route`）承载网关与配置文件卡片区；`路由模型`（`config-files`，组件为 `RouteSettingsPage`）单页合并 mini 会话路由卡片与模型映射工作区，原 `model-mapping` 一级页面已下线（旧持久化 id 映射到 `config-files`）。
+- `TabId` 全集为 `overview | sites | route | config-files | logs | settings`，其中 `route` 与 `config-files` 同属 `ROUTE_TAB_IDS`。
 - 直连配置作为站点管理中的接入点展示；侧滑测试页始终原生探测三个协议，顶部上游协议选择仅保存真实路由策略。
 
 ---
@@ -173,14 +187,21 @@
 
 ### Route 工作台
 
-1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / analytics`，通过 `endpoint-test:*` IPC 读写手动端点测试状态。
+1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / analytics`，通过 `endpoint-test:*` IPC 读写手动端点测试状态，通过 `dsh-integration:*` IPC 检测并应用 DSH 会话级接入。
 2. 主进程由 `route-proxy-service`、`endpoint-test-service`、`route-analytics-service` 与 `route-history-service` 负责运行时行为。代理监听按请求顺序串行启停，启动失败清理监听实例。端点测试通过中性 `upstream-credential-resolver` 获取真实目标后直接请求上游；不导入路由通道/代理/target-lock 模块，不发送 CLI marker/User-Agent/originator，也不写入路由统计与 History。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
+
+### DSH 会话级接入
+
+1. 渲染进程 `RoutePage` 顶部的 `DshIntegrationBanner` 调用 `dsh-integration:status` 获取接入状态、漂移原因、可用模型来源与仍钉在旧 provider 的会话数。
+2. `dsh-integration-service` 从路由运行时派生 `baseURL`、API Key 与模型目录（不硬编码），用 `yaml` 的 `parseDocument()` 对 `~/.dsh/profiles/<profile>/cordis.patch.yml` 做注释保留式合并，并把凭据引用写入 `~/.dsh/.credentials.yaml`。
+3. `dsh-integration:enable` 只写配置（DSH 运行时跳过会话迁移）；`dsh-integration:migrate-sessions` 在 DSH 已退出时改写存量会话的 `modelSelection.lastUsed` 与 `subagentModelSelectionPolicy`。
+4. `dsh-integration:rollback` 按条目 id 撤销写入（保留用户手改内容），必要时回退到同目录最新的 `.apidetect-*.bak`；`writtenHashes` 清单记录在 `.api-detect-dsh-integration.json`。
 
 ### 数据总览
 
 1. 渲染进程站点子页通过 `overview:get-site-daily-snapshots` 拉取每日快照并结合 configStore 缓存聚合站点余额/消费榜单。
-2. 路由子页通过 `route:get-analytics-summary`、`route:get-analytics-distribution`、`route:get-config` 拉取路由汇总、桶级分布与运行态；前端按 `scope` 在桶级做过滤后驱动「运行趋势」「模型热力 treemap」「通道散点矩阵」「模型 → 通道 Sankey」四块视图，其中运行趋势会为 `24h` 固定生成 24 个小时点、为 `7d` 固定生成 7 个日期点，并将缺失桶归零。
+2. 路由子页通过 `route:get-analytics-overview`、`route:get-analytics-summary`、`route:get-analytics-distribution`、`route:get-config` 拉取路由汇总、桶级分布与运行态；前端按 `scope` 在桶级做过滤后驱动「运行趋势」「模型热力 treemap」「通道散点矩阵」「模型 → 通道 Sankey」四块视图，其中运行趋势会为 `24h` 固定生成 24 个小时点、为 `7d` 固定生成 7 个日期点，并将缺失桶归零。
 3. selectedModel 由模型热力 treemap 控制，仅影响散点高亮；Sankey 始终按当前 scope 独立展示模型到通道流向，不参与模型联动。切换 scope 自动重置 selectedModel。
 4. `ApiService` 在检测缓存保存成功后触发 `overview-service` 采集当日快照，重启应用后仍可看到站点历史趋势。
 
@@ -192,7 +213,31 @@
 
 ---
 
-## 近期结构变化（v3.0.5 相对 v2.1.24）
+## 近期结构变化
+
+### v3.1.3
+
+- **DSH 会话级接入**：新增 `src/main/dsh-integration-service.ts`、`src/main/handlers/dsh-integration-handlers.ts`、`src/shared/types/dsh-integration.ts`、`src/renderer/components/Route/DshIntegrationBanner.tsx` 与 `dsh-integration-service.test.ts` / `dsh-integration-banner.test.tsx`；`RoutePage` 在服务器区块与配置卡片区之间挂载接入状态条
+- **路由代理拆分**：`route-proxy-service.ts` 拆出 `route-upstream-forwarder.ts`（单次上游传输）、`route-request-context.ts`（请求生命周期）、`route-usage.ts`（用量解析）、`route-proxy-shared.ts`；新增 `route-upstream-failure.ts` 失败分类与 `route-upstream-forwarder.socket.test.ts` 真实 socket 集成测试
+- **会话与状态 sidecar**：新增 `route-session-binding-service.ts`（会话-通道绑定）与 `route-state-affinity-service.ts`（Stateful Responses 亲和映射）
+- **熔断模型**：`route-stats-service.ts` 改为三态熔断（2/10/30 分钟阶梯打开 → 半开单探测 → 成功闭合）并新增站点级熔断；移除 `route-health-service.ts` 及 `route:get-health` / `route:run-health-check` IPC
+- **热路径写入**：路径状态改为内存写入 + 延迟落盘，分析桶落盘间隔 5s → 30s，`state/` 下状态文件改为紧凑 JSON
+- **终结响应**：全部路径挂起从 400 改为 503 + `Retry-After`，终结分支错误码写入主日志 `Route request completed`
+- 客户端 Logo 补齐 `kimi` / `kwaipilot`，`AgentLogo` 别名表同步
+
+### v3.1.2
+
+- 中性上游凭证解析 `upstream-credential-resolver.ts` 与稳定 Key 标识 `api-key-identity.ts`
+- 端点测试状态独立到 `endpoint-test-state-service.ts`（`state/route-endpoint-tests.json`）
+- 会话色板 `sessionColorForSession()`（`src/renderer/utils/routeSessionOrdinal.ts`）
+- Linux Do Credit（LDC）积分子系统整体移除：删除 `credit-service.ts`、`credit-handlers.ts`、`types/credit.ts`、`CreditPage`、`CreditPanel/`、`useCredit` / `useLdcSites`、站点检测中的 LDC 支付探测与站点列表 LDC 列；`credit:*` IPC、`LDC_UI_VISIBILITY`、`LDC_PAYMENT_NAMES` 一并清理，旧持久化 `'credit'` 标签页回退到站点管理
+
+### v3.1.1
+
+- 会话父子谱系与 `#N` / `#N.M` 编号、上游失败分类与阶梯禁用、会话-通道绑定侧车、直连多 Key 表单、本地 API Key 管理、分组标签圆圈数字规范化
+- 页面架构拆分：原 `配置文件` 页并入 `本地路由`，新增一级页承载会话路由卡片区（当前导航名为 `路由模型`，`TabId` 为 `config-files`）
+
+### v3.0.5 相对 v2.1.24
 
 - 新增 `src/main/endpoint-test-service.ts`、`src/main/upstream-credential-resolver.ts`、`src/main/api-key-identity.ts`、`src/main/route-target-lock.ts`
 - 新增 `src/main/custom-cli-config-service.ts`
@@ -203,7 +248,6 @@
 - 新增 `src/__tests__/route-rule-engine.test.ts`
 - 新增 `src/main/route-analytics-service.ts`
 - 新增 `src/main/route-channel-resolver.ts`
-- 新增 `src/main/route-health-service.ts`
 - 新增 `src/main/route-model-registry-service.ts`
 - 新增 `src/main/route-proxy-service.ts`
 - 新增 `src/main/cli-protocol-adapter.ts`
@@ -231,7 +275,6 @@
 - 新增 `src/renderer/utils/routeRulePresentation.ts`
 - 新增 `src/__tests__/data-overview-page.test.tsx`
 - 新增 `src/__tests__/unified-cli-config-dialog.test.tsx`
-- Linux Do Credit（LDC）积分子系统已整体移除：删除 `credit-service.ts`、`credit-handlers.ts`、`types/credit.ts`、`CreditPage`、`CreditPanel/`、`useCredit` / `useLdcSites`、站点检测中的 LDC 支付探测（`/api/user/topup/info`、`/api/user/amount`）与站点列表 LDC 列；`credit:*` IPC、`LDC_UI_VISIBILITY`、`LDC_PAYMENT_NAMES` 一并清理，旧持久化 `'credit'` 标签页回退到站点管理
 - 新增 `scripts/dev-cleanup.cjs`、`scripts/dev-main.cjs`、`scripts/dev.cjs`、`scripts/run-node-module.cjs`、`scripts/repair-legacy-accounts.cjs`，并保留 `scripts/migrate-config-v224-to-v301.cjs` 用于将 v2.1.24 配置拆分为 clean config、runtime-cache 与 route state 文件
 - 旧版 iOS 命名原语目录已全部退出主线设计系统
 - `ApiKeyInfo` 新增 `status_str / state / enabled` 兼容字段，并通过 `getApiKeyAvailability()` / `isApiKeyActive()` 统一判断 API Key 是否可用
@@ -252,7 +295,8 @@
 - [开发指南](docs/DEVELOPMENT.md)
 - [架构文档](docs/ARCHITECTURE.md)
 - [API 参考](docs/API_REFERENCE.md)
-- [站点检测参考](docs/METAPI_SITE_DETECTION_REFERENCE.md)
+- [DSH 会话级接入设计](docs/DSH_SESSION_ROUTING_INTEGRATION.md)
+- [客户端会话身份审计](docs/CLIENT_SESSION_IDENTITY_AUDIT.md)
 - [CLI 请求结构调研](docs/CLI_request.md)
 - [更新日志](CHANGELOG.md)
 
@@ -273,6 +317,6 @@
 
 ---
 
-**版本**：3.0.5
-**更新日期**：2026-06-17
+**版本**：3.1.3
+**更新日期**：2026-10-22
 **维护者**：API Hub Team

@@ -23,24 +23,24 @@
 
 | 文件 | 职责 | 关键事件 |
 |------|------|--------|
-| **index.ts** | 处理器注册入口 | `registerAllHandlers()` |
-| **close-behavior-handlers.ts** | 窗口关闭行为处理 | `close-behavior:get-settings`, `close-behavior:save-settings` 等 |
-| **api.handler.ts** | API 请求处理 | `api:request`, `api:checkBalance` 等 |
-| **token.handler.ts** | Token 管理处理 | `token:get`, `token:save`, `token:delete` 等 |
-| **config.handler.ts** | 配置管理处理 | `config:load`, `config:save`, `config:export` 等 |
-| **backup.handler.ts** | 备份管理处理 | `backup:create`, `backup:restore`, `backup:upload` 等 |
-| **cli.handler.ts** | CLI 兼容性处理 | `cli:test`, `cli:generateConfig` 等 |
-| **browser.handler.ts** | 浏览器管理处理 | `browser:launch`, `browser:login` 等 |
-| **account-handlers.ts** | 多账户查询、创建、更新与删除 | `accounts:list`, `accounts:add`, `accounts:update`, `accounts:delete` |
-| **browser-profile-handlers.ts** | 账户浏览器 Profile 登录、列举、显式绑定、打开站点与签到 | `browser-profile:list-account-options`, `browser-profile:bind-account`, `browser-profile:login-main`, `browser-profile:login-isolated` |
-| **detection-handlers.ts** | 站点检测、签到与刷新处理，多账户刷新按 `site_type` 选择 token 续期路径，签到按 `accountId` 解析账户凭证 | `detect-site`, `checkin-and-refresh` |
-| **overview-handlers.ts** | 数据总览处理 | `overview:get-site-daily-snapshots` |
-| **route-handlers.ts** | 路由代理、统计、会话活动/覆盖/规则、生命周期设置及 profile 状态映射预览/清理 | `route:get-config`, `route:list-sessions`, `route:upsert-session-rule`, `route:preview-profile-state-clear`, `route:clear-profile-state` |
-| **config-file-profile-handlers.ts** | 单卡片持久化、权威目标目录、模板应用/真实文件事务和对话记录路径验证 | `config-file-profile:upsert`, `config-file-profile:target-catalog`, `config-file-profile:preview-direct-edit`, `config-file-profile:commit` |
+| **index.ts** | 处理器注册入口，按依赖注入顺序注册全部域 | `registerAllHandlers()` |
+| **unified-config-handlers.ts** | 配置读写、站点 CRUD、账户存储导入导出 | `load-config`, `save-config`, `sites:*`, `storage:*`, `get-all-accounts` |
+| **account-handlers.ts** | 多账户查询、创建、更新与删除（含站点级 `cli_config` 更新） | `accounts:list`, `accounts:add`, `accounts:update`, `accounts:delete` |
+| **token-handlers.ts** | Token 校验/初始化、API Key 增删查、本地 API Key 管理与模型刷新 | `token:validate`, `token:initialize-site`, `token:create-api-token`, `token:*local-api-key*` |
+| **detection-handlers.ts** | 站点检测、签到与刷新（多账户刷新按 `site_type` 选择 token 续期路径），以及本地 CLI 配置静态检测与缓存清理 | `detect-site`, `checkin-and-refresh`, `site:checkinAll`, `site:refreshAll`, `detection:detect-cli-config`, `detection:detect-all-cli-config` |
+| **browser-profile-handlers.ts** | 浏览器 Profile 登录、列举、显式绑定、打开站点与签到 | `browser-profile:list-account-options`, `browser-profile:bind-account`, `browser-profile:login-main`, `browser-profile:login-isolated` |
+| **overview-handlers.ts** | 数据总览站点每日快照 | `overview:get-site-daily-snapshots` |
+| **route-handlers.ts** | 路由服务、规则、模型注册表、统计/日志、会话实例与规则、profile 状态、端点测试 | `route:get-config`, `route:list-route-instances`, `route:upsert-session-rule`, `route:preview-profile-state-clear`, `endpoint-test:run` |
+| **config-file-profile-handlers.ts** | 单卡片持久化、权威目标目录、模板应用/真实文件事务、凭证轮换与对话记录校验 | `config-file-profile:upsert`, `config-file-profile:target-catalog`, `config-file-profile:preview-direct-edit`, `config-file-profile:commit` |
 | **dsh-integration-handlers.ts** | DSH 会话级路由接入：状态检测、一键接入、回滚、存量会话迁移 | `dsh-integration:status`, `dsh-integration:enable`, `dsh-integration:rollback`, `dsh-integration:migrate-sessions` |
 | **cli-compat-handlers.ts** | 本地 CLI 配置读取、写入与托管站点 CLI 配置保存；站点级 `cli_config` 仅作 legacy fallback | `cli-compat:save-config`, `cli-compat:write-config` |
-| **custom-cli-config-handlers.ts** | 自定义 CLI 配置处理；保存后强制同步路由模型 registry，避免旧自定义 CLI 模型继续出现在路由模型选择中 | `custom-cli-config:load`, `custom-cli-config:save`, `custom-cli-config:fetch-models` |
-| **token-handlers.ts** | Token 与本地 API Key 管理；本地 Key 增删改和模型刷新后同步路由模型 registry | `token:add-local-api-key`, `token:update-local-api-key`, `token:refresh-local-api-keys` |
+| **custom-cli-config-handlers.ts** | 直连接入点配置；保存后强制同步路由模型 registry | `custom-cli-config:load`, `custom-cli-config:save`, `custom-cli-config:fetch-models` |
+| **backup-handlers.ts** | 本地备份、配置包导入导出、备份目录打开 | `backup:manual`, `backup:list`, `backup:restore-config`, `backup:export-config-package`, `backup:import-config-package` |
+| **webdav-handlers.ts** | WebDAV 配置、连通性测试与云端备份管理 | `webdav:get-config`, `webdav:test-connection`, `webdav:upload-backup`, `webdav:restore-backup` |
+| **update-handlers.ts** | 应用更新检查、下载、安装与更新设置 | `update:check`, `update:start-download`, `update:install`, `update:get-settings` |
+| **theme-handlers.ts** | 主题读取与保存 | `theme:load`, `theme:save` |
+| **close-behavior-handlers.ts** | 窗口关闭行为与托盘确认弹窗 | `close-behavior:get-settings`, `close-behavior:save-settings`, `close-behavior:quit-app` |
+| **anyrouter-handlers.ts** | AnyRouter 站点用户哈希提取 | `anyrouter:extractUserHash`, `anyrouter:extractAllUserHashes` |
 
 ---
 
@@ -49,97 +49,86 @@
 ### 基础结构
 
 ```typescript
-// src/main/handlers/api.handler.ts
+// src/main/handlers/dsh-integration-handlers.ts
 
 import { ipcMain } from 'electron';
-import { ApiService } from '../api-service';
+import { detectDshRouting, enableDshSessionRouting } from '../dsh-integration-service';
 
-export function registerApiHandlers(apiService: ApiService) {
-  // 处理 API 请求
-  ipcMain.handle('api:request', async (event, config) => {
-    try {
-      const result = await apiService.request(config);
-      return { success: true, data: result };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  });
+// 统一把异常收敛成 { ok, data } | { ok:false, error }
+async function toResult<T>(operation: () => Promise<T>) {
+  try {
+    return { ok: true as const, data: await operation() };
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
-  // 处理查询余额
-  ipcMain.handle('api:checkBalance', async (event, site) => {
-    try {
-      const balance = await apiService.checkBalance(site);
-      return { success: true, data: balance };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  });
-
-  // ... 其他处理器
+export function registerDshIntegrationHandlers(): void {
+  ipcMain.handle('dsh-integration:status', () => toResult(() => detectDshRouting()));
+  ipcMain.handle('dsh-integration:enable', (_, input) =>
+    toResult(() => enableDshSessionRouting(input ?? {}))
+  );
 }
 ```
 
 ### 错误处理
 
+Electron 只透传异常的 `message`，所以新式处理器（如 `dsh-integration-handlers.ts`）统一返回结构化结果：
+
 ```typescript
-// 统一的错误处理模式
-try {
-  const result = await service.method(params);
-  return { success: true, data: result };
-} catch (error) {
-  Logger.error(`[Handler] 错误: ${error.message}`);
-  return { 
-    success: false, 
-    error: error.message,
-    code: error.code || 'UNKNOWN_ERROR'
-  };
-}
+return { ok: false, error: '...' };
 ```
+
+旧式处理器（如 `cli-compat-handlers.ts`）保留 `{ success, error }` 形状。两种形状都要求：**不把异常抛给渲染进程**，避免丢失错误分类信息。
 
 ---
 
 ## 📋 IPC 事件详解
 
-### API 处理器 (api.handler.ts)
+### 配置与站点处理器 (unified-config-handlers.ts)
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `api:request` | `{ site, endpoint, method, data }` | API 响应 | 发送 API 请求 |
-| `api:checkBalance` | `{ site }` | `{ balance, currency }` | 查询余额 |
-| `api:checkStatus` | `{ site }` | `{ status, message }` | 检测站点状态 |
-| `api:checkSignIn` | `{ site }` | `{ canSignIn, lastSignIn }` | 检测签到状态 |
-| `api:signIn` | `{ site }` | `{ success, reward }` | 执行签到 |
+| `load-config` | 无 | `UnifiedConfig` | 加载并规范化 v3 配置 |
+| `save-config` | `config` | `{ success }` | 原子保存配置（含加密字段） |
+| `sites:add` | `site` | `UnifiedSite` | 新增站点 |
+| `sites:update` | `id, updates` | `UnifiedSite` | 更新站点字段 |
+| `sites:delete` / `sites:get-by-id` / `sites:get-by-url` / `sites:get-all` / `sites:update-token` | 站点标识 / 令牌 | 对应结果 | 站点 CRUD 与令牌写回 |
+| `accounts:list` / `accounts:add` / `accounts:update` / `accounts:delete` | `accountId` / `data` | 账户或结果 | 账户 CRUD |
+| `storage:export` / `storage:import` / `storage:get-account` / `storage:save-account` / `storage:update-token` / `storage:delete-account` | 账户数据 | 结果 | 账户级存储读写 |
+| `get-all-accounts` | 无 | `AccountCredential[]` | 汇总全部账户 |
 
-### Token 处理器 (token.handler.ts)
-
-| 事件 | 请求参数 | 响应数据 | 职责 |
-|------|---------|--------|------|
-| `token:get` | `{ site }` | `{ token, expiresAt }` | 获取 Token |
-| `token:save` | `{ site, token, expiresAt }` | `{ success }` | 保存 Token |
-| `token:delete` | `{ site }` | `{ success }` | 删除 Token |
-| `token:refresh` | `{ site }` | `{ token, expiresAt }` | 刷新 Token |
-| `token:list` | `{}` | `{ tokens: [...] }` | 列出所有 Token |
-
-### 配置处理器 (config.handler.ts)
+### Token 处理器 (token-handlers.ts)
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `config:load` | `{}` | `{ config }` | 加载配置 |
-| `config:save` | `{ config }` | `{ success }` | 保存配置 |
-| `config:export` | `{ format }` | `{ data }` | 导出配置 |
-| `config:import` | `{ data, format }` | `{ success }` | 导入配置 |
-| `config:reset` | `{}` | `{ success }` | 重置配置 |
+| `token:validate` | `account` | 校验结果 | 校验账户凭证有效性 |
+| `token:initialize-site` | `baseUrl` | 初始化结果 | 站点登录初始化并补建令牌 |
+| `token:check-in` | 站点/账户 | 签到结果 | 执行签到 |
+| `token:refresh-display-data` / `token:refresh-account-basic-info` | `accountId` | 缓存 | 刷新展示数据 / 基础账号信息 |
+| `token:create-api-token` / `token:delete-api-token` / `token:fetch-api-tokens` | 令牌参数 | 令牌列表 | API Key 增删查 |
+| `token:resolve-api-key-value` / `token:fetch-user-groups` / `token:fetch-model-pricing` | 站点/Key | 解析结果 | 明文 Key 解析、分组与定价 |
+| `token:list-local-api-keys` / `token:add-local-api-key` / `token:update-local-api-key` / `token:delete-local-api-key` / `token:reveal-local-api-key` / `token:refresh-local-api-keys` | 本地 Key | 本地 Key 列表 | 本地 API Key 管理（Access Token 失效时仍可用） |
 
-### 备份处理器 (backup.handler.ts)
+### 备份处理器 (backup-handlers.ts)
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `backup:create` | `{}` | `{ backupPath }` | 创建本地备份 |
-| `backup:restore` | `{ backupPath }` | `{ success }` | 恢复本地备份 |
-| `backup:list` | `{}` | `{ backups: [...] }` | 列出备份列表 |
-| `backup:delete` | `{ backupPath }` | `{ success }` | 删除备份 |
-| `backup:upload` | `{}` | `{ success, url }` | 上传到云端 |
-| `backup:download` | `{}` | `{ success }` | 从云端下载 |
+| `backup:manual` | 无 | `{ backupPath }` | 创建手动 portable 配置包备份 |
+| `backup:list` | 无 | 备份列表 | 列出本地备份 |
+| `backup:restore-config` | `backupFileName` | `{ success }` | 恢复指定备份 |
+| `backup:export-config-package` / `backup:import-config-package` | 路径 / 包内容 | 结果 | 配置包导出与导入 |
+| `backup:get-dir` / `backup:open-dir` / `backup:get-latest-time` | 无 | 路径 / 时间 | 备份目录与最新备份时间 |
+
+### 浏览器 Profile 处理器 (browser-profile-handlers.ts)
+
+| 事件 | 请求参数 | 响应数据 | 职责 |
+|------|---------|--------|------|
+| `browser-profile:list-account-options` | 无 | Profile 选项 | 列出可绑定 Profile |
+| `browser-profile:bind-account` | `accountId, profileId` | 结果 | 显式绑定账户 Profile |
+| `browser-profile:login-main` / `browser-profile:login-isolated` | 站点信息 | 登录结果 | 主 / 隔离浏览器登录 |
+| `browser-profile:open-site` / `browser-profile:open-site-for-checkin` | 站点 + Profile | 结果 | 用指定 Profile 打开站点 / 签到页 |
+| `browser-profile:detect` / `browser-profile:delete-profile` / `browser-profile:is-chrome-running` | 无 / `profileId` | 结果 | Profile 探测、删除与 Chrome 运行状态 |
 
 ### CLI 处理器 (cli-compat-handlers.ts)
 
@@ -169,13 +158,27 @@ try {
 - **嵌套 section**（如 `model_providers.XXX`）：如果新配置有同一父级的 section，则移除旧的子 section，只保留新配置中的子 section
 - **空白行清理**：合并后自动清理多余的连续空白行
 
-### 浏览器处理器 (browser.handler.ts)
+### 路由处理器 (route-handlers.ts)
+
+| 分组 | 事件 | 职责 |
+|------|------|------|
+| 服务 | `route:get-config` / `route:save-server-config` / `route:start-server` / `route:stop-server` / `route:get-runtime-status` / `route:regenerate-api-key` | 网关配置与启停 |
+| 规则与模型 | `route:list-rules` / `route:upsert-rule` / `route:delete-rule` / `route:get-model-registry` / `route:rebuild-model-registry` / `route:sync-model-registry-sources` / `route:refresh-model-metadata` / `route:upsert-model-display-item` / `route:delete-model-display-item` / `route:upsert-model-mapping-override` / `route:delete-model-mapping-override` / `route:save-cli-model-selections` / `route:save-cli-thinking-effort-selections` | 规则与模型注册表 |
+| 统计与日志 | `route:get-analytics-overview` / `route:get-analytics-summary` / `route:get-analytics-distribution` / `route:get-object-stats` / `route:list-stats` / `route:reset-stats` / `route:reset-analytics` / `route:get-request-logs` / `route:clear-request-logs` / `route:fetch-latest-log` / `route:getHistoryBuckets` / `route:reset-path-states` | 分析、日志与 History |
+| 会话实例 | `route:list-route-instances` / `route:create-armed-route-instance` / `route:update-route-instance` / `route:archive-route-instance` / `route:restore-route-instance` / `route:close-route-instance` / `route:cancel-armed-route-instance` / `route:update-session-settings` / `route:update-client-routing` / `route:clear-session-activity` | 会话卡片生命周期 |
+| 会话规则与覆盖 | `route:list-sessions` / `route:list-session-rules` / `route:upsert-session-rule` / `route:delete-session-rule` / `route:rollback-session-rule` / `route:list-session-candidates` / `route:upsert-session-override` / `route:delete-session-override` | 扫描候选与手工覆盖 |
+| profile 状态 | `route:preview-profile-state-clear` / `route:clear-profile-state` | 删除配置方案前的状态影响预览与清理 |
+| 端点测试 | `endpoint-test:get-state` / `endpoint-test:save-selection` / `endpoint-test:run` | 三协议原生测试 |
+
+### DSH 处理器 (dsh-integration-handlers.ts)
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `browser:launch` | `{ headless }` | `{ success, port }` | 启动浏览器 |
-| `browser:login` | `{ site, url }` | `{ token }` | 自动登录 |
-| `browser:close` | `{}` | `{ success }` | 关闭浏览器 |
+| `dsh-integration:status` | 无 | `DshRoutingStatus` | 检测 DSH 安装、patch / 凭据状态与漂移原因 |
+| `dsh-integration:model-sources` | 无 | `DshModelSource[]` | 列出可注入 DSH 的模型来源 |
+| `dsh-integration:enable` | `{ modelSourceId?, migrateSessions? }` | `EnableDshSessionRoutingResult` | 写入 patch 与凭据引用（DSH 运行时跳过迁移） |
+| `dsh-integration:rollback` | 无 | `DshRollbackResult` | 按条目 id 撤销，返回被跳过文件 |
+| `dsh-integration:migrate-sessions` | 无 | `DshSessionMigrationResult` | 迁移存量会话 provider 引用（需 DSH 已退出） |
 
 ### Overview 处理器 (overview-handlers.ts)
 
@@ -187,46 +190,21 @@ try {
 
 ## 🔐 安全考虑
 
-### 1. 输入验证
+### 1. 上下文隔离与最小暴露
 
-```typescript
-// 验证请求参数
-const { site, endpoint } = config;
-if (!site || !endpoint) {
-  throw new Error('Missing required parameters');
-}
-```
+`main.ts` 启用 `contextIsolation`，渲染进程只能通过 `preload.ts` 的 `contextBridge` 白名单调用通道；主进程服务实例不直接暴露给渲染进程。
 
-### 2. 权限检查
+### 2. 敏感字段加密
 
-```typescript
-// 检查用户权限
-if (!user.hasPermission('api:request')) {
-  throw new Error('Permission denied');
-}
-```
+配置与直连配置在磁盘 I/O 边界由 `config-field-crypto.ts` 用 AES-256-GCM 加解密（`api_key` / `access_token` / `apiKey`），明文只在主进程内存中出现。
 
-### 3. 速率限制
+### 3. 文件写入白名单与事务
 
-```typescript
-// 防止滥用
-if (requestCount > MAX_REQUESTS_PER_MINUTE) {
-  throw new Error('Rate limit exceeded');
-}
-```
+`config-file-profile:*` 只允许写入用户显式授权过的路径，写入前校验 revision / 路径 / hash / mtime / 权限；JSON、TOML、ENV 合并失败禁止降级为整文件覆盖。
 
-### 4. 敏感信息过滤
+### 4. 不返回明文凭据
 
-```typescript
-// 不返回敏感信息
-const response = {
-  success: true,
-  data: {
-    balance: result.balance,
-    // 不返回 apiKey、token 等敏感信息
-  }
-};
-```
+列表类响应默认只返回脱敏 Key；需要明文时走独立通道（如 `token:reveal-local-api-key`），由用户主动触发。
 
 ---
 
@@ -236,52 +214,27 @@ const response = {
 
 ```
 渲染进程 (renderer/)
-    ↓ ipcRenderer.invoke('api:request', params)
+    ↓ ipcRenderer.invoke('sites:add', site)
+    ↓
+preload.ts (contextBridge 白名单)
     ↓
 主进程 (main/)
-    ↓ ipcMain.handle('api:request', handler)
+    ↓ ipcMain.handle('sites:add', handler)
     ↓
-处理器 (handlers/api.handler.ts)
-    ↓ 调用 ApiService
+处理器 (handlers/unified-config-handlers.ts)
+    ↓ 调用 UnifiedConfigManager
     ↓
-业务服务 (main/api-service.ts)
-    ↓ 执行业务逻辑
+业务服务 (main/unified-config-manager.ts)
+    ↓ 校验 + 原子写入 + 广播 app-data:changed
     ↓
-返回结果到处理器
-    ↓
-处理器返回结果到渲染进程
-    ↓
-渲染进程接收结果
-    ↓ 更新 UI
+返回结果到处理器 → 渲染进程 → 更新 UI
 ```
 
 ---
 
 ## 🧪 测试
 
-### 处理器测试
-
-```typescript
-// src/__tests__/handlers.test.ts
-
-import { ipcMain } from 'electron';
-import { registerApiHandlers } from '../main/handlers/api.handler';
-
-describe('API Handlers', () => {
-  it('should handle api:request', async () => {
-    const mockApiService = {
-      request: jest.fn().mockResolvedValue({ data: 'test' })
-    };
-    
-    registerApiHandlers(mockApiService);
-    
-    const handler = ipcMain.handle.mock.calls[0][1];
-    const result = await handler({}, { site: 'test' });
-    
-    expect(result.success).toBe(true);
-  });
-});
-```
+处理器测试位于 `src/__tests__/`，按域划分（如 `cli-compat-handlers.test.ts`、`custom-cli-config-handlers.test.ts`）；路由相关逻辑主要覆盖在 `route-handlers` 之上的服务层测试中（`route-proxy-service.test.ts`、`route-session-service.test.ts` 等）。测试框架为 Vitest，`electron` 模块在 `src/__tests__/setup.ts` 中被 mock。
 
 ---
 
@@ -291,5 +244,5 @@ describe('API Handlers', () => {
 
 ---
 
-**版本**: 3.0.3
-**更新日期**: 2026-05-25
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

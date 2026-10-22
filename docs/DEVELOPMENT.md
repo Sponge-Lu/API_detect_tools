@@ -179,7 +179,12 @@ npm run test:coverage
 - `endpoint-test-service.test.ts`
 - `endpoint-test-panel.test.tsx`
 - `route-proxy-service.test.ts`
+- `route-upstream-forwarder.socket.test.ts`（真实 socket：SSE 分帧透传与中途断连）
 - `route-model-registry-service.test.ts`
+- `route-stats-service.test.ts`
+- `route-upstream-failure.test.ts`
+- `route-session-binding-service.test.ts` / `route-state-affinity-service.test.ts`
+- `dsh-integration-service.test.ts` / `dsh-integration-banner.test.tsx`
 - `data-overview-page.test.tsx`
 - `route-workbench-redesign.test.tsx`
 - `sites-page-redesign.test.tsx`

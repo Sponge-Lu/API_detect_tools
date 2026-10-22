@@ -102,7 +102,31 @@
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |
-| **cli-config-priority.property.test.ts** | CLI 配置优先级测试 | CLI 配置优先级逻辑 |
+| **cli-config-test-models.test.ts** | CLI 配置模型字段归一化 | CLI 配置归一化 |
+| **config-field-crypto.test.ts** | 配置字段加解密 | AES-256-GCM 字段级加解密与兼容 |
+| **customCliRouteId.test.ts** | 自定义 CLI 路由 ID | 合成 site/account/apiKey ID 与反解 |
+| **group-label.test.ts** | 分组标签规范化 | 数字前缀到圆圈数字 |
+| **dev-script-orchestrator.test.ts** | 开发脚本编排 | `scripts/dev*.cjs` 进程编排与清理 |
+| **dsh-integration-service.test.ts** | DSH 接入服务 | patch 合并、凭据写入、回滚按 id 撤销、会话迁移、模型来源匹配 |
+| **dsh-integration-banner.test.tsx** | DSH 状态条 | 未安装静默、未接入/待迁移/就绪三态、失败文案与回滚入口 |
+| **route-stats-service.test.ts** | 路由路径状态机 | 三态熔断、站点级熔断与通道统计 |
+| **route-latency.test.ts** | 延迟分位数 | `computeLatencyPercentiles` 桶估算 |
+| **routeTtfb.test.ts** | 首字时间分位数 | `computeFirstBytePercentiles` |
+| **routeLogAxis.test.ts** | 首字响应轴 | `createSegmentedResponseTimeScale` 分段映射 |
+| **routeSankey.test.ts** | 模型→通道 Sankey | `buildRouteSankeyGraph` Top-N 与合并 |
+| **routeScatter.test.ts** | 通道散点 | `buildRouteScatterPoints` 聚合与防重叠布局 |
+| **routeScopeFilter.test.ts** | 路由 scope 过滤 | `filterBucketsByScope` |
+| **site-daily-stats.test.ts** | 站点每日统计 | 快照聚合为趋势序列 |
+| **site-sort-compat.test.ts** | 站点排序兼容 | 旧排序字段兼容 |
+| **app-primitive-entrypoints.test.tsx** | 原语入口一致性 | `App*` 桶文件导出与入口 |
+| **app-shell-redesign.test.tsx** | 壳层重设计 | 侧边栏、页面标题与 Header 操作槽位 |
+| **control-primitives.test.tsx** | 控件原语契约 | `AppSwitch` |
+| **state-primitives.test.tsx** | 状态原语契约 | `LoadingState` / `ErrorState` |
+| **streaming-protocol-validator.test.ts** | 流式协议校验 | 增量 SSE 帧/生命周期/usage 校验 |
+| **test-environment-alert.test.ts** | 测试环境告警 shim | 测试环境下告警降噪 |
+| **theme-visual-consistency.test.tsx** | 主题视觉一致性 | 四套预设下 token 与组件视觉一致 |
+| **vitest-config-format.test.ts** | Vitest 配置格式 | `vitest.config.mts` 结构约束 |
+| **route-workbench-redesign.pristine.test.tsx** | Route 页基线快照 | 重设计前的页面结构基线 |
 | **codex-official-api-detection.property.test.ts** | Codex 官方 API Key 检测测试 | isOfficialOpenAIApiKey 函数 |
 | **theme-token-contract.property.test.tsx** | 主题 token 合约属性测试 | 浅/暗双主题模式、主题归一化、中性 token、AppButton 主题接线 |
 | **app-button.property.test.tsx** | AppButton 原语属性测试 | AppButton 样式、交互、状态 |
@@ -366,5 +390,5 @@ it('should call IPC', async () => {
 
 ---
 
-**版本**: 3.0.5
-**更新日期**: 2026-06-17 - 更新站点管理合并页相关测试索引
+**版本**: 3.1.3
+**更新日期**: 2026-10-22 - 补齐 DSH / 路由拆分 / 页面工具测试索引

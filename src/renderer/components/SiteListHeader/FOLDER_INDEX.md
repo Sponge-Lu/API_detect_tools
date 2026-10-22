@@ -23,10 +23,8 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SiteListHeader.tsx** | 站点列头主组件，显示站点/账户/刷新时间等多列标题、列宽调节、内联排序提示，并在 History 表头按请求端点显示 Anthropic/OpenAI/OpenAI Chat 选择器 | `SiteListHeader` 组件 |
-| **SearchBar.tsx** | 搜索框 | `SearchBar` 组件 |
-| **FilterBar.tsx** | 筛选栏 | `FilterBar` 组件 |
-| **SortMenu.tsx** | 排序菜单 | `SortMenu` 组件 |
+| **SiteListHeader.tsx** | 站点列头主组件：站点/账户/刷新时间等多列标题、列宽调节、内联排序提示，History 表头按请求端点切换 Anthropic / OpenAI / OpenAI Chat 轨道 | `SiteListHeader`, `SiteListHeaderProps`, `SiteTypeFilterValue`, `SiteTypeFilterOption`, `UNKNOWN_SITE_TYPE_FILTER` |
+| **index.ts** | 桶文件 | re-export `SiteListHeader` |
 
 ---
 
@@ -36,5 +34,5 @@
 
 ---
 
-**版本**: 3.0.5
-**更新日期**: 2026-06-18
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

@@ -2,353 +2,49 @@
 
 ## 架构说明
 
-**职责**: 提供主进程使用的工具函数和辅助模块
+**职责**: 主进程共用的底层能力：原子写盘、HTTP/Electron 网络、日志、CLI 配置解析、站点匹配与页面执行串行化。
 
 **特点**:
-- 纯函数，无副作用
-- 可复用的通用逻辑
-- 支持日志、错误处理、文件操作等
-- 被各个服务和处理器使用
+- 以纯函数/单例为主，不持有业务状态
+- 磁盘写入统一走 `atomic-json.ts`，保证同目标串行与 Windows rename 重试
+- 网络请求统一走 `http-client.ts`（内部优先 Electron net，不可用时回退 axios）
+- 无 `index.ts` 桶文件，按模块直接引用
 
 **依赖关系**:
-- 被 `main/` 中的各个服务使用
-- 不依赖 Electron 主进程特定功能
-- 可独立测试
+- 被 `main/` 下各服务与 `handlers/` 使用
+- `logger.ts` 基于 `electron-log`，其余模块基本不依赖 Electron
 
 ---
 
 ## 📂 文件清单
 
-### 核心工具文件
-
-| 文件 | 职责 | 关键函数 |
+| 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **logger.ts** | 日志记录 | `info()`, `warn()`, `error()`, `debug()` |
-| **atomic-json.ts** | 原子文本/JSON 读写，统一配置、运行态缓存、迁移和备份后续写盘基础能力；同目标写入串行化并对 Windows final rename 临时锁重试 | `writeTextFileAtomically()`, `writeJsonFileAtomically()`, `readJsonFile()` |
-| **file-utils.ts** | 文件操作 | `readFile()`, `writeFile()`, `deleteFile()` 等 |
-| **crypto-utils.ts** | 加密解密 | `encrypt()`, `decrypt()`, `hash()` |
-| **retry-utils.ts** | 重试机制 | `retry()`, `withRetry()` |
-| **path-utils.ts** | 路径处理 | `getConfigPath()`, `getBackupPath()` 等 |
-| **time-utils.ts** | 时间处理 | `sleep()`, `timeout()`, `formatTime()` |
-| **validation-utils.ts** | 数据验证 | `validateUrl()`, `validateEmail()` 等 |
-| **toml-parser.ts** | TOML 解析 | `parseTomlFile()`, `parseTomlString()` |
-| **env-parser.ts** | ENV 解析 | `parseEnvFile()`, `parseEnvString()` |
-| **config-parsers.ts** | CLI 配置解析 | `parseClaudeCodeConfig()`, `parseCodexConfig()`, `parseGrokBuildConfig()`, `getEffectiveGrokBuildConfig()` 等 |
-| **site-matcher.ts** | 站点匹配 | `normalizeUrl()`, `matchSite()`, `isOfficialUrl()`, `determineSourceType()` |
-| **page-exec-queue.ts** | 页面执行队列 | `runOnPageQueue()` - 串行化同一 Page 的 evaluate 调用 |
-| **request-manager.ts** | 请求管理 | `RequestManager` - 请求去重和缓存 |
-| **http-client.ts** | HTTP 客户端 | `httpGet()`, `httpPost()`, `httpPostStream()`, `httpRawRequest()`, `httpRawStreamRequest()` - 开发与打包统一使用 Electron net，不可用时回退 axios；支持上游代理、流式首包、SSE 转发、空闲超时与 raw 请求取消 |
-| **electron-fetch.ts** | Electron 网络 | `electronFetch()`, `electronFetchStream()`, `electronFetchRaw()`, `electronFetchRawStream()`, `normalizeProxyUrl()` - Electron net 模块封装；支持流式首包探测、raw SSE 边收边回调、成功流可选关闭完整 body 留存、raw 请求 `AbortSignal` 取消、首包/活跃流分段空闲超时、上游代理 session 与 Chromium 受限请求头过滤 |
+| **atomic-json.ts** | 原子文本/JSON 读写；同目标写入串行化，Windows final rename 临时锁重试，清理残留临时文件 | `writeTextFileAtomically()`, `writeJsonFileAtomically()`, `readJsonFile()`, `cleanupStaleTempFiles()` |
+| **http-client.ts** | 统一 HTTP：GET/POST/流式/raw/删除；支持上游代理、流式首包、SSE 转发、空闲超时与取消 | `httpGet()`, `httpPost()`, `httpPostStream()`, `httpRawRequest()`, `httpRawStreamRequest()`, `httpRequest()` |
+| **electron-fetch.ts** | Electron `net` 封装：首包探测、raw SSE 边收边回调、`AbortSignal` 取消、分段空闲超时、代理 session 与受限 Header 过滤 | `electronFetch()`, `electronFetchStream()`, `electronFetchRawStream()`, `normalizeProxyUrl()`, `isElectronNetAvailable()` |
+| **logger.ts** | 基于 `electron-log` 的统一日志器，主日志与渲染日志共用格式 | `Logger` |
+| **config-parsers.ts** | Claude Code / Codex / OpenCode / Grok Build 配置解析与「生效配置」推导 | `parseClaudeCodeConfig()`, `parseCodexConfig()`, `parseOpenCodeConfig()`, `parseGrokBuildConfig()`, `getEffectiveCodexConfig()`, `checkCodexOAuthStatus()` |
+| **toml-parser.ts** | TOML 解析与内容规范化（Grok Build / Codex 使用） | `parseTomlFile()`, `parseTomlString()`, `normalizeTomlContent()` |
+| **env-parser.ts** | `.env` 解析 | `parseEnvFile()`, `parseEnvString()` |
+| **site-matcher.ts** | URL 归一化、站点匹配与官方站点判定 | `normalizeUrl()`, `urlsEqual()`, `matchSite()`, `isOfficialUrl()`, `determineSourceType()` |
+| **page-exec-queue.ts** | 同一 Puppeteer Page 的 `evaluate` 串行化，避免并发导致的不稳定 | `runOnPageQueue()` |
+| **request-manager.ts** | 请求去重与短期缓存 | `requestManager` |
 
 ---
 
-## 📝 工具函数详解
+## 📝 关键约束
 
-### logger.ts - 日志记录
+### 原子写入
 
-```typescript
-// 日志级别
-enum LogLevel {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-}
+所有配置文件、sidecar、备份的落盘都必须经过 `writeJsonFileAtomically()` / `writeTextFileAtomically()`：
+- 同目标文件写入自动串行（避免并发覆盖）
+- 先写临时文件再 rename，失败重试 Windows 临时锁
+- 读取侧对损坏内容有明确抛错，不静默降级为空对象
 
-// 日志记录
-export class Logger {
-  static debug(message: string, ...args: any[]): void;
-  static info(message: string, ...args: any[]): void;
-  static warn(message: string, ...args: any[]): void;
-  static error(message: string, ...args: any[]): void;
-  
-  // 设置日志级别
-  static setLevel(level: LogLevel): void;
-  
-  // 获取日志文件路径
-  static getLogPath(): string;
-  
-  // 清理旧日志
-  static cleanOldLogs(days: number): void;
-}
+### 网络栈选择
 
-// 使用示例
-Logger.info('应用启动');
-Logger.error('发生错误', error);
-```
-
-### file-utils.ts - 文件操作
-
-```typescript
-// 文件读写
-export async function readFile(path: string): Promise<string>;
-export async function writeFile(path: string, content: string): Promise<void>;
-export async function appendFile(path: string, content: string): Promise<void>;
-export async function deleteFile(path: string): Promise<void>;
-
-// 目录操作
-export async function createDir(path: string): Promise<void>;
-export async function deleteDir(path: string): Promise<void>;
-export async function listFiles(path: string): Promise<string[]>;
-
-// 文件检查
-export async function fileExists(path: string): Promise<boolean>;
-export async function isDirectory(path: string): Promise<boolean>;
-export async function getFileSize(path: string): Promise<number>;
-
-// 使用示例
-const content = await readFile('/path/to/file.txt');
-await writeFile('/path/to/file.txt', 'new content');
-```
-
-### crypto-utils.ts - 加密解密
-
-```typescript
-// 加密解密
-export function encrypt(text: string, key: string): string;
-export function decrypt(encrypted: string, key: string): string;
-
-// 哈希
-export function hash(text: string, algorithm: 'sha256' | 'md5'): string;
-
-// 生成密钥
-export function generateKey(length: number): string;
-
-// 使用示例
-const encrypted = encrypt('sensitive data', 'secret-key');
-const decrypted = decrypt(encrypted, 'secret-key');
-```
-
-### retry-utils.ts - 重试机制
-
-```typescript
-// 重试选项
-interface RetryOptions {
-  maxAttempts: number;
-  delay: number;
-  backoff?: 'linear' | 'exponential';
-  onRetry?: (attempt: number, error: Error) => void;
-}
-
-// 重试函数
-export async function retry<T>(
-  fn: () => Promise<T>,
-  options: RetryOptions
-): Promise<T>;
-
-// 装饰器形式
-export function withRetry(options: RetryOptions) {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    // 装饰器实现
-  };
-}
-
-// 使用示例
-const result = await retry(
-  () => apiService.request(config),
-  { maxAttempts: 3, delay: 1000, backoff: 'exponential' }
-);
-```
-
-### path-utils.ts - 路径处理
-
-```typescript
-// 获取应用路径
-export function getAppPath(): string;
-export function getConfigPath(): string;
-export function getBackupPath(): string;
-export function getLogPath(): string;
-export function getTempPath(): string;
-
-// 路径操作
-export function joinPath(...segments: string[]): string;
-export function resolvePath(path: string): string;
-export function getFileName(path: string): string;
-export function getFileExtension(path: string): string;
-
-// 使用示例
-const configPath = getConfigPath();
-const backupPath = joinPath(getBackupPath(), 'backup-2025-12-24.json');
-```
-
-### time-utils.ts - 时间处理
-
-```typescript
-// 延迟
-export async function sleep(ms: number): Promise<void>;
-
-// 超时
-export async function timeout<T>(
-  promise: Promise<T>,
-  ms: number
-): Promise<T>;
-
-// 时间格式化
-export function formatTime(date: Date, format: string): string;
-export function formatDuration(ms: number): string;
-
-// 时间计算
-export function addDays(date: Date, days: number): Date;
-export function getDaysDiff(date1: Date, date2: Date): number;
-
-// 使用示例
-await sleep(1000);
-const result = await timeout(apiRequest(), 30000);
-const formatted = formatTime(new Date(), 'YYYY-MM-DD HH:mm:ss');
-```
-
-### validation-utils.ts - 数据验证
-
-```typescript
-// URL 验证
-export function validateUrl(url: string): boolean;
-export function isValidHttpUrl(url: string): boolean;
-
-// 邮箱验证
-export function validateEmail(email: string): boolean;
-
-// Token 验证
-export function validateToken(token: string): boolean;
-
-// API Key 验证
-export function validateApiKey(key: string): boolean;
-
-// 使用示例
-if (validateUrl(siteUrl)) {
-  // 处理有效的 URL
-}
-```
-
----
-
-## 🔄 使用示例
-
-### 在服务中使用
-
-```typescript
-// src/main/api-service.ts
-import Logger from './utils/logger';
-import { retry } from './utils/retry-utils';
-import { timeout } from './utils/time-utils';
-
-export class ApiService {
-  async request(config: ApiRequestParams) {
-    Logger.info(`发送请求: ${config.endpoint}`);
-    
-    try {
-      const result = await retry(
-        () => timeout(this.sendRequest(config), 30000),
-        { maxAttempts: 3, delay: 1000 }
-      );
-      
-      Logger.info(`请求成功: ${config.endpoint}`);
-      return result;
-    } catch (error) {
-      Logger.error(`请求失败: ${error.message}`);
-      throw error;
-    }
-  }
-}
-```
-
-### 在处理器中使用
-
-```typescript
-// src/main/handlers/backup.handler.ts
-import { readFile, writeFile } from '../utils/file-utils';
-import { getBackupPath } from '../utils/path-utils';
-import { formatTime } from '../utils/time-utils';
-
-ipcMain.handle('backup:create', async () => {
-  const backupPath = joinPath(
-    getBackupPath(),
-    `backup-${formatTime(new Date(), 'YYYY-MM-DD-HHmmss')}.json`
-  );
-  
-  const config = await readFile(getConfigPath());
-  await writeFile(backupPath, config);
-  
-  return { success: true, backupPath };
-});
-```
-
----
-
-## 🎯 设计原则
-
-### 1. 单一职责
-
-- 每个文件只负责一个方面
-- 函数功能单一明确
-- 易于理解和维护
-
-### 2. 可复用性
-
-- 通用的工具函数
-- 支持多种使用场景
-- 减少代码重复
-
-### 3. 错误处理
-
-- 统一的错误处理
-- 详细的错误日志
-- 支持重试机制
-
-### 4. 性能优化
-
-- 异步操作
-- 缓存机制
-- 资源清理
-
----
-
-## 🧪 测试
-
-### 工具函数测试
-
-```bash
-npm run test -- src/main/utils
-```
-
-### 测试示例
-
-```typescript
-// src/__tests__/utils/retry-utils.test.ts
-describe('retry-utils', () => {
-  it('should retry on failure', async () => {
-    let attempts = 0;
-    const fn = jest.fn(async () => {
-      attempts++;
-      if (attempts < 3) throw new Error('Failed');
-      return 'success';
-    });
-    
-    const result = await retry(fn, { maxAttempts: 3, delay: 10 });
-    expect(result).toBe('success');
-    expect(attempts).toBe(3);
-  });
-});
-```
-
----
-
-## 📈 扩展指南
-
-### 添加新工具函数
-
-1. 在 `utils/` 中创建新文件
-2. 实现函数逻辑
-3. 添加 JSDoc 注释
-4. 编写单元测试
-5. 导出到 `index.ts`
-
-### 最佳实践
-
-- 使用 TypeScript 类型
-- 添加详细的注释
-- 处理边界情况
-- 编写测试用例
-- 避免副作用
+`http-client.ts` 优先使用 Electron `net`（Chromium 网络栈，继承系统代理与 TLS 行为），仅在不可用时回退 axios。涉及流式（SSE）的调用必须使用 `*Stream` 系列，以便保留首包探测与取消能力。
 
 ---
 
@@ -358,5 +54,5 @@ describe('retry-utils', () => {
 
 ---
 
-**版本**: 3.0.3
-**更新日期**: 2026-05-25
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

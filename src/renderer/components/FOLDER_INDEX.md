@@ -30,6 +30,8 @@
 | **DetectionResults.tsx** | 检测结果显示 | `results`, `loading`, `onRetry` |
 | **SettingsPanel.tsx** | 应用设置面板 | 外观与行为、云端备份、软件更新和数据管理；站点刷新参数由 SitesPage 的站点设置弹窗维护 |
 | **SiteEditor.tsx** | 站点编辑对话框 | `site`, `editingAccount`, `initialMode`, `onSave`, `onCancel`；智能首账户回传 `main_profile`，手动凭证回传 `manual`，已有站点浏览器添加使用 `isolated_profile`；支持站点级刷新代理 `proxy_url` 的编辑与格式校验 |
+| **AddAccountDialog.tsx** | 站点内新增账户对话框：启动隔离浏览器登录并保存凭证 | `siteId`, `siteName`, `siteUrl`, `onSuccess`, `onClose` |
+| **AnyRouterConfigSection.tsx** | 账户编辑弹窗内的 AnyRouter 专用配置区（用户哈希提取/复制/手动填写） | `siteId`, `accountId`, `userHash`, `onUserHashChange`, `variant` |
 | **HistoryCell.tsx** | 站点管理 History 列单元格 | `siteId`, `accountId`；按表头共享的实际请求端点显示时间桶条形图 |
 | **AgentLogo.tsx** | 主流 Agent/harness 产品 Logo 识别与未知占位图标 | `agentId`, `agentName`, `className` |
 | **LoadingState.tsx** | 统一加载态原语 | `message`, `size`, `className` |
@@ -42,13 +44,13 @@
 
 | 文件夹 | 职责 | 关键组件 |
 |--------|------|--------|
-| **Header/** | 顶部导航栏 | Header, Menu, ThemeToggle |
-| **AppShell/** | 页面壳层组件 | GlobalCommandBar, PageHeader |
-| **SiteCard/** | 站点列表行；站点与直连配置名称调用系统浏览器打开 | SiteCard, SiteCardHeader, SiteCardActions |
-| **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar；History 固定展示路由请求时间桶 |
-| **Route/** | Route 页面组件 | ModelRedirectionTab, ProxyStatsTab, HistoryBucketBars |
+| **Header/** | 顶部导航栏（标题 + 说明 + 页面注入的操作槽位） | Header |
+| **AppShell/** | 页面壳层组件与页面元数据 | GlobalCommandBar, PageHeader, pageMeta |
+| **SiteCard/** | 站点列表行；站点与直连配置名称调用系统浏览器打开 | SiteCard, SiteCardHeader, SiteCardActions, SiteCardDetails |
+| **SiteListHeader/** | 站点列表头部 | SiteListHeader；History 固定展示路由请求时间桶 |
+| **Route/** | Route 页面组件 | DshIntegrationBanner, ConfigProfilesSection, RouteSessionSection, Redirection/ModelRedirectionTab, ProxyStats/ProxyStatsTab, Usability/HistoryBucketBars |
 | **dialogs/** | 对话框组件 | 各类对话框；接入点侧滑面板承载独立端点测试、CLI 配置及身份维护；操作记录弹窗展示当前会话关键操作；站点设置弹窗维护站点刷新参数 |
-| **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
+| **Skeleton/** | 骨架屏 | Skeleton, SiteCardSkeleton, SiteListSkeleton |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
 | **AppCard/** | 中性卡片原语入口 | AppCard, AppCardDivider, AppCardHeader, AppCardContent, AppCardFooter |
@@ -431,5 +433,5 @@ describe('SiteCard', () => {
 
 ---
 
-**版本**: 3.0.5
-**更新日期**: 2026-06-22
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

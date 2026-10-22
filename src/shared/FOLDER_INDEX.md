@@ -27,7 +27,7 @@
 | **schemas/** | Zod 数据验证规则 | index.ts |
 | **constants/** | 常量定义 | index.ts；含站点列表列宽默认值、列宽版本与最大宽度 |
 | **theme/** | 主题预设与模式归一化 | themePresets.ts |
-| **utils/** | 工具函数 | apiConfig.ts, customCliRouteId.ts, groupLabel.ts, headers.ts, log-filter.ts |
+| **utils/** | 工具函数 | apiConfig.ts, customCliRouteId.ts, groupLabel.ts, date.ts, headers.ts, log-filter.ts, modelPricing.ts, url-matcher.ts |
 
 ---
 
@@ -134,30 +134,28 @@ interface CliConfig {
 
 ### index.ts
 
-**职责**: 使用 Zod 定义数据验证规则
+**职责**: 使用 Zod 定义主进程/渲染进程共用的输入校验规则
 
 **关键 Schema**:
 ```typescript
-const SiteSchema = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  baseUrl: z.string().url(),
-  apiKey: z.string().optional(),
-  // ...
-});
-
-const CliConfigSchema = z.object({
-  tool: z.enum(['claude-code', 'codex', 'chat']),
-  enabled: z.boolean(),
-  // ...
-});
+export const urlSchema;          // 站点 Base URL
+export const siteNameSchema;
+export const apiKeySchema;
+export const systemTokenSchema;
+export const userIdSchema;
+export const siteConfigSchema;   // 站点配置（含派生输入/输出类型）
+export const createApiTokenSchema;
+export const settingsSchema;
+export const siteGroupSchema;
+export const configSchema;
+export type SiteConfigInput  = z.input<typeof siteConfigSchema>;
+export type SiteConfigOutput = z.output<typeof siteConfigSchema>;
 ```
 
 **用途**:
-- 验证 API 响应数据
-- 验证用户输入
-- 运行时类型检查
-- 生成 TypeScript 类型
+- 校验用户输入（添加/编辑站点、创建 API Key）
+- 校验导入的配置文件
+- 推导 TypeScript 类型，避免手写重复定义
 
 ---
 
@@ -165,37 +163,26 @@ const CliConfigSchema = z.object({
 
 ### index.ts
 
-**职责**: 定义应用全局常量
+**职责**: 跨进程共用的时间/端口/换算常量（**不含** API 地址或 CLI 清单）
 
 **关键常量**:
 ```typescript
-// API 端点
-export const API_ENDPOINTS = {
-  ONE_API: 'https://api.one-api.com',
-  NEW_API: 'https://api.new-api.com',
-  // ...
-};
-
-// 超时时间
-export const TIMEOUTS = {
-  API_REQUEST: 30000,
-  BROWSER_LAUNCH: 60000,
-  // ...
-};
-
-// 并发限制
-export const CONCURRENCY = {
-  MAX_PARALLEL_REQUESTS: 5,
-  MAX_BROWSER_INSTANCES: 3,
-};
-
-// CLI 工具列表
-export const CLI_TOOLS = [
-  'claude-code',
-  'codex',
-  'chat',
-];
+export const CHROME_DEBUG_PORT = 9222;
+export const DEFAULT_API_TIMEOUT = 30;        // 秒
+export const PAGE_LOAD_TIMEOUT = 30000;
+export const NETWORK_IDLE_TIMEOUT = 3000;
+export const PORT_READY_TIMEOUT = 5000;
+export const PROTOCOL_TIMEOUT = 60000;
+export const MAX_LOGIN_WAIT_TIME = 600000;
+export const MAX_CLOUDFLARE_WAIT_TIME = 600000;
+export const LOGIN_CHECK_INTERVAL = 2000;
+export const BROWSER_CLEANUP_DELAY = 5000;
+export const QUOTA_CONVERSION_FACTOR = 500000;
+export const DEFAULT_EXCHANGE_RATE = 7.0;
+export const TOAST_DURATION = 3000;
 ```
+
+站点列表列宽默认值、列宽版本与最大宽度等 UI 常量也在本文件中。
 
 ---
 
@@ -242,18 +229,13 @@ filterAndAggregateUsageData(items);
 
 ```typescript
 // src/main/api-service.ts
-import { SiteSchema, API_ENDPOINTS } from '../shared';
+import { siteConfigSchema } from '../shared/schemas';
+import { DEFAULT_API_TIMEOUT } from '../shared/constants';
 
-async function checkBalance(site: Site) {
-  // 验证站点数据
-  const validSite = SiteSchema.parse(site);
-  
-  // 使用常量
-  const url = `${API_ENDPOINTS[validSite.name]}/api/user/info`;
-  
-  // 发送请求
-  const response = await axios.get(url);
-  return response.data;
+async function checkBalance(site: SiteConfig) {
+  const validSite = siteConfigSchema.parse(site);
+  const timeoutMs = DEFAULT_API_TIMEOUT * 1000;
+  // ...
 }
 ```
 
@@ -261,17 +243,16 @@ async function checkBalance(site: Site) {
 
 ```typescript
 // src/renderer/hooks/useSiteGroups.ts
-import { SiteGroup, SiteGroupSchema } from '../../shared';
+import type { SiteGroup } from '../../shared/types/site';
+import { siteGroupSchema } from '../../shared/schemas';
 
-function useSiteGroups() {
-  const [groups, setGroups] = useState<SiteGroup[]>([]);
-  
-  // 验证数据
-  const validGroups = groups.map(g => SiteGroupSchema.parse(g));
-  
-  return { groups: validGroups };
+function useSiteGroups(raw: SiteGroup[]) {
+  const groups = raw.map(g => siteGroupSchema.parse(g));
+  return { groups };
 }
 ```
+
+> 注意：`src/shared/` 下没有 `index.ts` 桶文件，必须按子路径导入（`shared/types/...`、`shared/utils/...`）。
 
 ---
 
@@ -348,23 +329,21 @@ npm run test -- src/shared/utils
 
 ### 添加新类型
 
-1. 在 `types/` 中创建新文件
-2. 定义 TypeScript 接口
-3. 在 `schemas/` 中添加 Zod 验证规则
-4. 导出到 `index.ts`
+1. 在 `types/` 中新建或补充现有文件
+2. 定义 TypeScript 接口/类型
+3. 需要运行期校验时在 `schemas/` 补 Zod schema
+4. 在 `PROJECT_INDEX.md` 与 `types/FOLDER_INDEX.md` 登记
 
 ### 添加新常量
 
-1. 在 `constants/index.ts` 中添加
-2. 使用 `export const` 导出
-3. 添加注释说明用途
+1. 在 `constants/index.ts` 中添加 `export const`
+2. 添加注释说明单位（秒 / 毫秒）
 
 ### 添加新工具函数
 
-1. 在 `utils/` 中创建新文件
-2. 实现函数逻辑
-3. 添加 JSDoc 注释
-4. 导出到 `index.ts`
+1. 在 `utils/` 中新建文件
+2. 实现纯函数并写 JSDoc
+3. 在 `utils/FOLDER_INDEX.md` 登记
 
 ---
 
@@ -374,5 +353,5 @@ npm run test -- src/shared/utils
 
 ---
 
-**版本**: 3.0.3
-**更新日期**: 2026-05-27
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

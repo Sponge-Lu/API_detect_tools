@@ -21,6 +21,8 @@
 | **groupLabel.ts** | 将分组开头的 1–50 数字规范化为圆圈数字标签 | `normalizeCircledGroupLabel()` |
 | **headers.ts** | 生成兼容不同中转站大小写习惯的用户 ID 请求头 | `getAllUserIdHeaders()` |
 | **log-filter.ts** | 判断模型调用日志并聚合 usage / quota 指标 | `isModelLog()`, `aggregateUsageData()`, `filterAndAggregateUsageData()` |
+| **modelPricing.ts** | 模型计费模式（按 token / 按次）与价格换算、费用估算与展示格式 | `isPerCallPricing()`, `resolveModelPricing()`, `estimateModelCostUsd()`, `formatModelPrice()` |
+| **url-matcher.ts** | 判断两个 URL 是否指向同一 API 端点（忽略尾斜杠与 `/v1` 差异） | `isSameApiEndpoint()` |
 
 ---
 
@@ -78,5 +80,5 @@ filterAndAggregateUsageData([
 
 ---
 
-**版本**: 3.0.3
-**更新日期**: 2026-05-27
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

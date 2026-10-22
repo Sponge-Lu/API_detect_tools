@@ -2,19 +2,17 @@
 
 ## 架构说明
 
-**职责**: 提供消息提示 (Toast) 组件
+**职责**: 消息提示 (Toast) 的展示层。
 
 **特点**:
-- 多种消息类型 (成功、错误、警告、信息)
-- 自动关闭
-- 最多显示 3 条
-- 单条消息限制为 2 行摘要
-- 动画效果
+- 四种类型：成功、错误、警告、信息
+- 自动关闭；最多同时显示 3 条；单条摘要限制 2 行
+- 队列与当前会话事件历史由 `store/toastStore` 管理
 
 **依赖关系**:
-- 被 `App.tsx` 使用
-- 依赖 `store/toastStore` 管理可见消息队列与事件历史
-- 依赖 Tailwind CSS 样式
+- 被 `App.tsx` 挂载
+- 依赖 `store/toastStore`
+- 依赖 Tailwind 样式与主题 token
 
 ---
 
@@ -22,7 +20,8 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **Toast.tsx** | 单个消息提示 + 容器 | `Toast`, `ToastContainer`, `ToastItem`, `ToastType` |
+| **Toast.tsx** | 单条提示 + 容器 | `Toast`, `ToastContainer`, `ToastItem`, `ToastType` |
+| **index.ts** | 桶文件 | re-export `Toast` / `ToastType` |
 
 ---
 
@@ -32,5 +31,5 @@
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 3.1.3
+**更新日期**: 2026-10-22

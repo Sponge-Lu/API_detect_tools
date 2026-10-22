@@ -13,7 +13,7 @@ If you add/remove modules, update `PROJECT_INDEX.md` and the relevant `FOLDER_IN
 
 ## Build, Test, and Development Commands
 
-Prereqs: Node.js >= 18 and Chrome installed (used for browser automation flows).
+Prereqs: Node.js `^20.19.0` / `^22.12.0` / `>=24.0.0` (see `package.json` `engines`) and Chrome installed (used for browser automation flows; `npm run dev` also prepares the bundled Chromium).
 
 - `npm install` (or `npm ci` for a clean, lockfile-driven install)
 - `npm run dev`: start renderer (Vite) and main (Electron) together

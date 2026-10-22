@@ -31,6 +31,9 @@
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界；支持 lightweight/full-manifest/portable-config 模式 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
 | **app-storage-bundle.ts** | 配置包创建/恢复；portable-config 仅含 config.json + custom-cli-configs；full-manifest 另含 runtime/settings；兼容 legacy config-only 恢复 | `createAppStorageBundleContent()`, `createPortableAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
 | **config-field-crypto.ts** | 配置字段 AES-256-GCM 加密/解密，应用固定密钥版本化，在磁盘 I/O 边界透明加解密敏感字段（api_key, access_token, apiKey） | `encryptField()`, `decryptField()`, `encryptConfigFields()`, `decryptConfigFields()`, `encryptCustomCliConfigs()`, `decryptCustomCliConfigs()` |
+| **request-rectifier.ts** | 按明确上游错误修复 thinking 签名、思考配置与 opaque 状态，供路由执行单次重试 | `rectifyRejectedRequest()` |
+| **config-file-backups.ts** | CLI 配置集中备份：首次原件与最近十份保留（`CONFIG_BACKUP_RETENTION`）、历史迁移、备份列表与恢复读取 | `backupConfigFile()`, `listConfigFileBackups()`, `readConfigFileBackup()`, `migrateLegacyConfigBackups()` |
+| **model-metadata-service.ts** | models.dev 元数据解析与缓存、启动后台刷新及手动刷新入口 | `getModelMetadata()`, `refreshModelMetadata()` |
 | **api-service.ts** | API 请求服务、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、API Key 分组异常归集、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集；检测/刷新 HTTP 请求透传站点级 `proxy_url` 代理 | `ApiService` 类 |
 | **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
 | **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供 Cookie/UA 投影后的 Electron Session 通用 GET/POST 请求、页面级登录态重读和账户 Profile 签到页复用 | `ChromeManager` 类 |
@@ -72,7 +75,10 @@
 | **route-history-service.ts** | History 时间桶聚合服务，将真实路由请求按 Messages、Responses、Chat Completions 等实际请求端点分轨聚合为 48h / 2h 成功率数据 | `getHistoryBuckets()` |
 | **route-stats-service.ts** | 路径级三态熔断（阶梯打开 2/10/30 分钟 → 半开单探测 → 成功闭合）、站点级熔断（连续传输异常 / 同站点同模型 404 类）、通道统计内存批量 flush；路径状态热路径不等待落盘 | `recordRoutePathOutcome()`, `beginRoutePathAttempt()`, `getRoutePathDisabledUntil()`, `sortChannelsByScore()` |
 | **route-upstream-failure.ts** | 上游失败分类（请求侧/通道侧/瞬时/配额耗尽）、确证不可用原因解析、响应体摘要归一化、Retry-After 解析与聚合响应留存排序 | `classifyUpstreamFailure()`, `resolveRoutePathDisabledReason()`, `failureClassToOutcome()` |
+| **route-rule-engine.ts** | 规则匹配与命中解释；协议/模型提取、规则排序与匹配抽为独立纯函数 | `findMatchingProtocolRule()`, `sortRules()`, `detectSourceProtocolFromPath()`, `extractModelFromBody()` |
 | **route-session-binding-service.ts** | 会话-通道绑定侧车，让并发会话各自粘在不同上游通道；通道级绑定（不含模型）使换模型仍保住 prompt cache 亲和性 | `routeSessionBindingService`, `listActive()` |
+| **runtime-cache-manager.ts** | 运行期缓存持久化：站点共享缓存、账户运行态缓存与 90 天 / 120 条上限的站点每日快照 | `RuntimeCacheManager`, `runtimeCacheManager` |
+| **anyrouter-hash-extractor.ts** | AnyRouter 页面哈希指纹提取，配合 `anyrouter-request-rewriter` 完成上游校验 | `extractUserHash()` |
 | **route-state-manager.ts** | 路由运行态文件管理，只维护 `route-runtime.json`、`route-analytics.json` 与模型来源快照；端点测试状态由独立 sidecar 管理 | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
 | **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 浏览器 Profile 列表与绑定 / 检测 / token 基础信息刷新 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
@@ -229,21 +235,22 @@ main.ts: app.whenReady()
 - `clearCache()` - 清除缓存
 - `clearCacheFor(cliType)` - 清除指定 CLI 缓存
 
-**支持工具**: Claude Code, Codex
+**支持工具**: Claude Code、Codex、OpenCode、Grok Build（Grok Build 仅读取 `~/.grok/config.toml`，不做模型探测）
 
 **缓存机制**: 检测结果缓存 5 分钟，避免重复读取文件
 
-### Route Registry / Probe Services
+### Route Registry / Model Services
 
-**职责**: 为 Route 工作台提供模型来源聚合、厂商优先级排序、CLI wrapper 探测和统计评分能力
+**职责**: 为 Route 工作台提供模型来源聚合、厂商优先级排序、通道路由与统计能力
 
 **关键模块**:
 - `route-model-registry-service.ts` - 聚合站点/账户和自定义 CLI 配置模型来源，来源扫描不自动创建重定向，仅从手工展示项和显式 override 构建 `entries`
-- `route-cli-probe-service.ts` - 按站点下全部活跃账户和自定义 CLI 虚拟配置执行 Claude Code / Codex wrapper 探测，并维护 `history/latest`
 - `route-channel-resolver.ts` - 解析可用路由通道、结合厂商优先级选择实际出口并确定目标协议
 - `upstream-credential-resolver.ts` - 独立解析托管/直连真实上游凭证，供路由代理与端点测试共享
 - `route-stats-service.ts` - 路径/站点级熔断状态机与通道统计；排序只依赖用户配置的优先级，不健康路径由熔断器剔除而非评分下沉
 - `route-upstream-failure.ts` - 纯函数失败分类器；仅 `request_fatal` 记 `neutral` 以避免调用方载荷缺陷误禁用健康通道，故障转移行为不受其影响
+
+> 已移除：`route-health-service.ts` 及 `route:get-health` / `route:run-health-check` IPC（v3.1.3 起由三态熔断取代，见 `route-stats-service.ts`）。
 
 ### PowerManager
 
@@ -303,42 +310,80 @@ main.ts: app.whenReady()
 
 ## 📋 IPC 事件列表
 
-### Token 相关
+以下为 `ipcMain.handle()` / `webContents.send()` 实际注册的通道（按域分组，定义分散在各 `handlers/*.ts` 与 `app-data-events.ts`）。
 
-- `token:get` - 获取 Token
-- `token:save` - 保存 Token
-- `token:delete` - 删除 Token
-- `token:refresh` - 刷新 Token
+### 无命名空间的扁平通道
 
-### API 相关
+- `load-config` / `save-config` - 读取 / 原子保存 v3 配置（`unified-config-handlers`）
+- `get-all-accounts` - 汇总全部账户（`unified-config-handlers`）
+- `detect-site` / `checkin-and-refresh` / `refresh-balance-only` - 单站检测、签到后刷新、轻量余额刷新（`detection-handlers`）
+- `site:checkinAll` / `site:refreshAll` - 批量签到 / 批量刷新
+- `open-url` / `fetch-with-cookies` / `launch-chrome-for-login` / `close-browser` / `close-login-browser` - 浏览器与外部链接（`detection-handlers`）
 
-- `api:request` - 发送 API 请求
-- `api:checkBalance` - 查询余额
-- `api:checkStatus` - 检测状态
-- `api:checkSignIn` - 检测签到
+### 配置与站点
 
-### 配置相关
+- `sites:get-all` / `sites:get-by-id` / `sites:get-by-url` / `sites:add` / `sites:update` / `sites:delete` / `sites:update-token`
+- `accounts:list` / `accounts:add` / `accounts:update` / `accounts:delete`
+- `storage:get-account` / `storage:save-account` / `storage:update-token` / `storage:delete-account` / `storage:export` / `storage:import`
 
-- `config:load` - 加载配置
-- `config:save` - 保存配置
-- `config:export` - 导出配置
-- `config:import` - 导入配置
+### 检测与 Token
 
-### 备份相关
+- `token:initialize-site` / `token:validate` / `token:check-in`
+- `token:refresh-display-data` / `token:refresh-account-basic-info`
+- `token:create-api-token` / `token:delete-api-token` / `token:fetch-api-tokens` / `token:resolve-api-key-value`
+- `token:fetch-user-groups` / `token:fetch-model-pricing`
+- `token:add-local-api-key` / `token:update-local-api-key` / `token:delete-local-api-key` / `token:list-local-api-keys` / `token:reveal-local-api-key` / `token:refresh-local-api-keys`
+- `detection:detect-cli-config` / `detection:detect-all-cli-config` / `detection:read-cli-config-files` / `detection:reset-cli-config` / `detection:clear-cli-config-cache` / `detection:save-cli-config-file`
 
-- `backup:create` - 创建备份
-- `backup:restore` - 恢复备份
-- `backup:upload` - 上传到云端
-- `backup:download` - 从云端下载
+### 浏览器 Profile
 
-### CLI 相关
+- `browser-profile:detect` / `browser-profile:delete-profile` / `browser-profile:is-chrome-running`
+- `browser-profile:list-account-options` / `browser-profile:bind-account`
+- `browser-profile:login-main` / `browser-profile:login-isolated`
+- `browser-profile:open-site` / `browser-profile:open-site-for-checkin` / `browser-profile:persist-checkin-completion`
 
-- `cli:test` - 测试 CLI 兼容性
-- `cli:generateConfig` - 生成 CLI 配置
+### 路由（`route:*`）
 
-### Overview 相关
+- 服务：`route:get-config` / `route:save-server-config` / `route:start-server` / `route:stop-server` / `route:get-runtime-status` / `route:regenerate-api-key`
+- 规则与模型：`route:list-rules` / `route:upsert-rule` / `route:delete-rule` / `route:get-model-registry` / `route:rebuild-model-registry` / `route:sync-model-registry-sources` / `route:refresh-model-metadata` / `route:upsert-model-display-item` / `route:delete-model-display-item` / `route:upsert-model-mapping-override` / `route:delete-model-mapping-override` / `route:save-cli-model-selections` / `route:save-cli-thinking-effort-selections`
+- 统计与日志：`route:get-analytics-overview` / `route:get-analytics-summary` / `route:get-analytics-distribution` / `route:get-object-stats` / `route:list-stats` / `route:reset-stats` / `route:reset-analytics` / `route:get-request-logs` / `route:clear-request-logs` / `route:fetch-latest-log` / `route:getHistoryBuckets` / `route:reset-path-states`
+- 会话实例：`route:list-route-instances` / `route:create-armed-route-instance` / `route:update-route-instance` / `route:archive-route-instance` / `route:restore-route-instance` / `route:close-route-instance` / `route:cancel-armed-route-instance` / `route:update-session-settings` / `route:update-client-routing` / `route:clear-session-activity`
+- 会话规则与覆盖：`route:list-sessions` / `route:list-session-rules` / `route:upsert-session-rule` / `route:delete-session-rule` / `route:rollback-session-rule` / `route:list-session-candidates` / `route:upsert-session-override` / `route:delete-session-override`
+- profile 状态：`route:preview-profile-state-clear` / `route:clear-profile-state`
+- 端点测试：`endpoint-test:get-state` / `endpoint-test:save-selection` / `endpoint-test:run`
 
-- `overview:get-site-daily-snapshots` - 获取站点每日快照历史
+### 配置卡片（`config-file-profile:*`）
+
+- 基础：`load` / `upsert` / `delete` / `target-catalog`
+- 预览与事务：`preview` / `preview-direct-edit` / `commit` / `read-files`
+- 备份：`list-backups` / `preview-backup-restore` / `restore-builtin` / `restore-missing-builtins`
+- 凭证与授权：`generate-route-key` / `preview-route-key-rotation` / `switch-auth-mode` / `resolve-values`
+- 诊断：`validate-session-record`
+
+### DSH 接入
+
+- `dsh-integration:status` / `model-sources` / `enable` / `rollback` / `migrate-sessions`
+
+### 总览 / 备份 / 更新 / 其它
+
+- `overview:get-site-daily-snapshots`
+- `backup:manual` / `backup:list` / `backup:restore-config` / `backup:export-config-package` / `backup:import-config-package` / `backup:get-dir` / `backup:open-dir` / `backup:get-latest-time`
+- `webdav:get-config` / `webdav:save-config` / `webdav:test-connection` / `webdav:upload-backup` / `webdav:list-backups` / `webdav:delete-backup` / `webdav:restore-backup`
+- `update:check` / `update:get-current-version` / `update:get-settings` / `update:save-settings` / `update:start-download` / `update:cancel-download` / `update:install` / `update:open-download`
+- `theme:load` / `theme:save`
+- `cli-compat:save-config` / `cli-compat:write-config`
+- `custom-cli-config:load` / `custom-cli-config:save` / `custom-cli-config:fetch-models`
+- `close-behavior:get-settings` / `save-settings` / `show-dialog` / `dialog-response` / `minimize-to-tray` / `quit-app`
+- `anyrouter:extractUserHash` / `anyrouter:extractAllUserHashes`
+
+### 主进程推送事件（`webContents.send`）
+
+- `app-data:changed` - 按域广播站点配置 / 站点快照 / 路由总览变更（`app-data-events.ts`）
+- `route:request-log-appended` - 路由日志逐条追加
+- `route:model-metadata-updated` - 模型元数据刷新完成
+- `update:download-progress` - 下载进度
+- `site-init-status` - 站点初始化状态
+- `close-behavior:show-dialog` - 关闭行为确认弹窗
 
 ---
 
@@ -366,5 +411,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 3.0.5
-**更新日期**: 2026-06-17
+**版本**: 3.1.3
+**更新日期**: 2026-10-22
