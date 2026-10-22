@@ -78,8 +78,11 @@ const tempDirectories: string[] = [];
 
 async function createTempDirectory(): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'api-detect-config-profile-'));
-  tempDirectories.push(directory);
-  return directory;
+  // macOS 的 os.tmpdir() 位于 /var/folders/...，而 /var 是指向 /private/var 的符号链接；
+  // 被测服务会拒绝任何祖先链上含符号链接的配置路径，因此这里必须回填真实路径。
+  const canonical = await fs.realpath(directory).catch(() => directory);
+  tempDirectories.push(canonical);
+  return canonical;
 }
 
 function profile(
