@@ -1347,10 +1347,14 @@ describe('route workbench redesign', () => {
         expectedRevision: 4,
       })
     );
+    // 预览弹窗由 preview 的 promise resolve 后异步渲染，这里必须用 findBy 等它出现，
+    // 否则在快/慢 runner 上会出现「API 已调用但弹窗尚未渲染」的竞态。
     expect(
-      screen.getByText('此客户端没有关联配置文件；确认后只更新客户端独立凭证。')
+      await screen.findByText('此客户端没有关联配置文件；确认后只更新客户端独立凭证。', undefined, {
+        timeout: 3000,
+      })
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '确认轮换' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认轮换' }, { timeout: 3000 }));
     await waitFor(() =>
       expect(api.commit).toHaveBeenCalledWith({ transactionId: 'credential-only-rotation' })
     );

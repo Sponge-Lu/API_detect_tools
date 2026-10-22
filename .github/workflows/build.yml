@@ -21,6 +21,8 @@ defaults:
 jobs:
   build:
     strategy:
+      # 单个平台失败不再取消其余平台，便于一次看清所有平台的失败点
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
