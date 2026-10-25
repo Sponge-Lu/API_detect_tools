@@ -1,3 +1,42 @@
+import type { ElectronAPI } from '../shared/types/electron-api';
+import type { StateVersion } from '../shared/types/app-storage-contract';
+import { ROUTE_STABLE_COMMAND_CHANNELS } from '../shared/types/route-command-channels';
+
+let routeVersion: StateVersion | undefined;
+async function invokeRoute(channel: string, ...args: unknown[]): Promise<any> {
+  const supplied = args.find(
+    value => value && typeof value === 'object' && 'storageVersion' in value
+  ) as { storageVersion?: StateVersion } | undefined;
+  const expected = supplied?.storageVersion ?? routeVersion;
+  const stable = ROUTE_STABLE_COMMAND_CHANNELS.includes(channel);
+  const values = stable
+    ? args.map(value =>
+        value && typeof value === 'object' && !Array.isArray(value) && 'storageVersion' in value
+          ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'storageVersion'))
+          : value
+      )
+    : args;
+  const result = await ipcRenderer.invoke(
+    channel,
+    ...values,
+    ...(stable ? [{ storageVersion: expected }] : [])
+  );
+  if (result?.storageVersion) {
+    routeVersion = result.storageVersion;
+    if (channel === 'route:get-config' && result.data) {
+      result.data.storageVersion = routeVersion;
+      for (const rule of result.data.rules ?? []) rule.storageVersion = routeVersion;
+    }
+    const registry = Array.isArray(result.data?.displayItems)
+      ? result.data
+      : result.data?.modelRegistry;
+    if (registry && typeof registry === 'object') {
+      registry.storageVersion = routeVersion;
+      for (const item of registry.displayItems ?? []) item.storageVersion = routeVersion;
+    }
+  }
+  return result;
+}
 /**
  * 输入: Electron contextBridge, ipcRenderer
  * 输出: electronAPI 对象 (暴露给渲染进程的 IPC 接口)
@@ -10,6 +49,65 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
+import type { Config } from '../shared/types/renderer-config';
+import { buildConfigCommands } from '../shared/types/config-commands';
+import { generateSiteId } from '../shared/types/site';
+import {
+  buildCustomCliCommands,
+  type CustomCliSnapshot,
+} from '../shared/types/custom-cli-commands';
+
+const directSnapshots = new Map<string, CustomCliSnapshot>();
+async function loadDirectConfigs(): Promise<CustomCliSnapshot> {
+  const data = await ipcRenderer.invoke('custom-cli-config:load');
+  if (data.storageVersion)
+    directSnapshots.set(JSON.stringify(data.storageVersion), structuredClone(data));
+  if (directSnapshots.size > 32) directSnapshots.delete(directSnapshots.keys().next().value!);
+  return data;
+}
+async function saveDirectConfigs(data: CustomCliSnapshot): Promise<unknown> {
+  const before = directSnapshots.get(JSON.stringify(data.storageVersion));
+  if (!before || !data.storageVersion)
+    throw new Error('Direct configuration snapshot expired; reload before saving');
+  const result = await ipcRenderer.invoke('custom-cli-config:commands', {
+    version: data.storageVersion,
+    commands: buildCustomCliCommands(before, data),
+  });
+  if (result.success && result.storageVersion)
+    directSnapshots.set(
+      JSON.stringify(result.storageVersion),
+      structuredClone({ ...data, storageVersion: result.storageVersion })
+    );
+  return result;
+}
+
+const configSnapshots = new Map<string, Config>();
+const snapshotKey = (config: Config) => JSON.stringify(config.storageVersion);
+function rememberConfig(config: Config): Config {
+  if (config.storageVersion) {
+    configSnapshots.set(snapshotKey(config), structuredClone(config));
+    if (configSnapshots.size > 32) configSnapshots.delete(configSnapshots.keys().next().value!);
+  }
+  return config;
+}
+async function saveConfigCommands(config: Config): Promise<Config> {
+  const previous = configSnapshots.get(snapshotKey(config));
+  if (!previous || !config.storageVersion)
+    throw new Error('Configuration snapshot expired; reload before saving');
+  for (const site of config.sites) site.id ||= generateSiteId();
+  const result = await ipcRenderer.invoke('config:commands', {
+    version: config.storageVersion,
+    commands: buildConfigCommands(previous, config),
+  });
+  if (!result.success)
+    throw Object.assign(new Error(result.error.message), {
+      code: result.error.code,
+      currentVersion: result.error.currentVersion,
+    });
+  rememberConfig(result.data);
+  config.storageVersion = result.data.storageVersion;
+  return result.data;
+}
 import type { ThemeMode } from '../shared/theme/themePresets';
 import type {
   RouteAnalyticsWindowQuery,
@@ -44,10 +142,10 @@ import type { EnableDshSessionRoutingInput } from '../shared/types/dsh-integrati
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 
-contextBridge.exposeInMainWorld('electronAPI', {
+const electronAPI = {
   // 原有的API
-  loadConfig: () => ipcRenderer.invoke('load-config'),
-  saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
+  loadConfig: async () => rememberConfig(await ipcRenderer.invoke('load-config')),
+  saveConfig: saveConfigCommands,
   sites: {
     add: (site: any) => ipcRenderer.invoke('sites:add', site),
     update: (id: string, updates: any) => ipcRenderer.invoke('sites:update', id, updates),
@@ -68,6 +166,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback: (payload: {
         domains: Array<'site-config' | 'site-overview' | 'route-overview' | 'config-file-profiles'>;
         emittedAt: number;
+        restored?: boolean;
+        generation?: string;
       }) => void
     ) => {
       const handler = (_event: any, payload: unknown) =>
@@ -341,10 +441,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 自定义 CLI 配置 API
   customCliConfig: {
     // 加载配置
-    load: () => ipcRenderer.invoke('custom-cli-config:load'),
+    load: loadDirectConfigs,
     // 保存配置
-    save: (data: { configs: any[]; activeConfigId: string | null }) =>
-      ipcRenderer.invoke('custom-cli-config:save', data),
+    save: saveDirectConfigs,
     // 拉取模型列表（通过 configId，走 httpGet 接入系统代理）
     fetchModels: (configId: string) =>
       ipcRenderer.invoke('custom-cli-config:fetch-models', configId),
@@ -463,83 +562,82 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 路由代理 API
   route: {
-    getConfig: () => ipcRenderer.invoke('route:get-config'),
-    saveServerConfig: (updates: any) => ipcRenderer.invoke('route:save-server-config', updates),
-    listRules: () => ipcRenderer.invoke('route:list-rules'),
-    upsertRule: (rule: any) => ipcRenderer.invoke('route:upsert-rule', rule),
-    deleteRule: (ruleId: string) => ipcRenderer.invoke('route:delete-rule', ruleId),
-    listStats: () => ipcRenderer.invoke('route:list-stats'),
-    resetStats: (ruleId?: string) => ipcRenderer.invoke('route:reset-stats', ruleId),
+    getConfig: () => invokeRoute('route:get-config'),
+    saveServerConfig: (updates: any) => invokeRoute('route:save-server-config', updates),
+    listRules: () => invokeRoute('route:list-rules'),
+    upsertRule: (rule: any) => invokeRoute('route:upsert-rule', rule),
+    deleteRule: (ruleId: string) => invokeRoute('route:delete-rule', ruleId),
+    listStats: () => invokeRoute('route:list-stats'),
+    resetStats: (ruleId?: string) => invokeRoute('route:reset-stats', ruleId),
     resetPathStates: (params?: RoutePathStateResetParams) =>
-      ipcRenderer.invoke('route:reset-path-states', params),
-    getRuntimeStatus: () => ipcRenderer.invoke('route:get-runtime-status'),
-    startServer: () => ipcRenderer.invoke('route:start-server'),
-    stopServer: () => ipcRenderer.invoke('route:stop-server'),
-    regenerateApiKey: () => ipcRenderer.invoke('route:regenerate-api-key'),
-    getModelRegistry: () => ipcRenderer.invoke('route:get-model-registry'),
-    refreshModelMetadata: () => ipcRenderer.invoke('route:refresh-model-metadata'),
+      invokeRoute('route:reset-path-states', params),
+    getRuntimeStatus: () => invokeRoute('route:get-runtime-status'),
+    startServer: () => invokeRoute('route:start-server'),
+    stopServer: () => invokeRoute('route:stop-server'),
+    regenerateApiKey: () => invokeRoute('route:regenerate-api-key'),
+    getModelRegistry: () => invokeRoute('route:get-model-registry'),
+    refreshModelMetadata: () => invokeRoute('route:refresh-model-metadata'),
     onModelMetadataUpdated: (callback: () => void) => {
       const handler = () => callback();
       ipcRenderer.on('route:model-metadata-updated', handler);
       return () => ipcRenderer.removeListener('route:model-metadata-updated', handler);
     },
     rebuildModelRegistry: (params?: { force?: boolean }) =>
-      ipcRenderer.invoke('route:rebuild-model-registry', params),
+      invokeRoute('route:rebuild-model-registry', params),
     syncModelRegistrySources: (params?: { force?: boolean }) =>
-      ipcRenderer.invoke('route:sync-model-registry-sources', params),
+      invokeRoute('route:sync-model-registry-sources', params),
     upsertModelMappingOverride: (override: any) =>
-      ipcRenderer.invoke('route:upsert-model-mapping-override', override),
+      invokeRoute('route:upsert-model-mapping-override', override),
     upsertModelDisplayItem: (displayItem: any) =>
-      ipcRenderer.invoke('route:upsert-model-display-item', displayItem),
+      invokeRoute('route:upsert-model-display-item', displayItem),
     deleteModelDisplayItem: (displayItemId: string) =>
-      ipcRenderer.invoke('route:delete-model-display-item', { displayItemId }),
+      invokeRoute('route:delete-model-display-item', { displayItemId }),
     deleteModelMappingOverride: (overrideId: string) =>
-      ipcRenderer.invoke('route:delete-model-mapping-override', { overrideId }),
+      invokeRoute('route:delete-model-mapping-override', { overrideId }),
     saveCliModelSelections: (selections: any) =>
-      ipcRenderer.invoke('route:save-cli-model-selections', { selections }),
+      invokeRoute('route:save-cli-model-selections', { selections }),
     saveCliThinkingEffortSelections: (selections: any) =>
-      ipcRenderer.invoke('route:save-cli-thinking-effort-selections', { selections }),
+      invokeRoute('route:save-cli-thinking-effort-selections', { selections }),
     listSessions: (scope?: 'active' | 'recent' | 'history' | 'all') =>
-      ipcRenderer.invoke('route:list-sessions', scope),
-    listRouteInstances: () => ipcRenderer.invoke('route:list-route-instances'),
+      invokeRoute('route:list-sessions', scope),
+    listRouteInstances: () => invokeRoute('route:list-route-instances'),
     updateClientRouting: (profileId: string, updates: Partial<RouteClientRoutingConfig>) =>
-      ipcRenderer.invoke('route:update-client-routing', profileId, updates),
+      invokeRoute('route:update-client-routing', profileId, updates),
     createArmedRouteInstance: (input: { modelId?: string; reasoningEffort?: string }) =>
-      ipcRenderer.invoke('route:create-armed-route-instance', input),
+      invokeRoute('route:create-armed-route-instance', input),
     updateRouteInstance: (instanceId: string, updates: RouteInstanceUpdate) =>
-      ipcRenderer.invoke('route:update-route-instance', instanceId, updates),
+      invokeRoute('route:update-route-instance', instanceId, updates),
     closeRouteInstance: (instanceId: string) =>
-      ipcRenderer.invoke('route:close-route-instance', instanceId),
+      invokeRoute('route:close-route-instance', instanceId),
     cancelArmedRouteInstance: (instanceId: string) =>
-      ipcRenderer.invoke('route:cancel-armed-route-instance', instanceId),
+      invokeRoute('route:cancel-armed-route-instance', instanceId),
     archiveRouteInstance: (instanceId: string) =>
-      ipcRenderer.invoke('route:archive-route-instance', instanceId),
+      invokeRoute('route:archive-route-instance', instanceId),
     restoreRouteInstance: (instanceId: string) =>
-      ipcRenderer.invoke('route:restore-route-instance', instanceId),
+      invokeRoute('route:restore-route-instance', instanceId),
     upsertSessionOverride: (override: RouteSessionOverride) =>
-      ipcRenderer.invoke('route:upsert-session-override', override),
-    deleteSessionOverride: (key: string) =>
-      ipcRenderer.invoke('route:delete-session-override', key),
+      invokeRoute('route:upsert-session-override', override),
+    deleteSessionOverride: (key: string) => invokeRoute('route:delete-session-override', key),
     previewProfileStateClear: (profileId: string) =>
-      ipcRenderer.invoke('route:preview-profile-state-clear', profileId) as Promise<{
+      invokeRoute('route:preview-profile-state-clear', profileId) as Promise<{
         success: boolean;
         data?: RouteStateAffinitySummary;
         error?: string;
       }>,
     clearProfileState: (profileId: string) =>
-      ipcRenderer.invoke('route:clear-profile-state', profileId) as Promise<{
+      invokeRoute('route:clear-profile-state', profileId) as Promise<{
         success: boolean;
         data?: { removed: number };
         error?: string;
       }>,
-    clearSessionActivity: (key?: string) => ipcRenderer.invoke('route:clear-session-activity', key),
-    listSessionRules: () => ipcRenderer.invoke('route:list-session-rules'),
+    clearSessionActivity: (key?: string) => invokeRoute('route:clear-session-activity', key),
+    listSessionRules: () => invokeRoute('route:list-session-rules'),
     upsertSessionRule: (rule: RouteSessionExtractionRule) =>
-      ipcRenderer.invoke('route:upsert-session-rule', rule),
-    deleteSessionRule: (ruleId: string) => ipcRenderer.invoke('route:delete-session-rule', ruleId),
+      invokeRoute('route:upsert-session-rule', rule),
+    deleteSessionRule: (ruleId: string) => invokeRoute('route:delete-session-rule', ruleId),
     rollbackSessionRule: (ruleId: string, version: number) =>
-      ipcRenderer.invoke('route:rollback-session-rule', ruleId, version),
-    listSessionCandidates: () => ipcRenderer.invoke('route:list-session-candidates'),
+      invokeRoute('route:rollback-session-rule', ruleId, version),
+    listSessionCandidates: () => invokeRoute('route:list-session-candidates'),
     updateSessionSettings: (
       settings: Partial<
         Pick<
@@ -550,30 +648,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
           | 'overrideRetentionDays'
         >
       >
-    ) => ipcRenderer.invoke('route:update-session-settings', settings),
+    ) => invokeRoute('route:update-session-settings', settings),
     getAnalyticsSummary: (params: RouteAnalyticsWindowQuery) =>
-      ipcRenderer.invoke('route:get-analytics-summary', params),
+      invokeRoute('route:get-analytics-summary', params),
     getAnalyticsDistribution: (params: RouteAnalyticsWindowQuery) =>
-      ipcRenderer.invoke('route:get-analytics-distribution', params),
+      invokeRoute('route:get-analytics-distribution', params),
     getAnalyticsOverview: (params: RouteAnalyticsWindowQuery) =>
-      ipcRenderer.invoke('route:get-analytics-overview', params),
-    getObjectStats: (params: unknown) => ipcRenderer.invoke('route:get-object-stats', params),
-    resetAnalytics: (params?: any) => ipcRenderer.invoke('route:reset-analytics', params),
-    getRequestLogs: (params?: any) => ipcRenderer.invoke('route:get-request-logs', params),
-    clearRequestLogs: () => ipcRenderer.invoke('route:clear-request-logs'),
+      invokeRoute('route:get-analytics-overview', params),
+    getObjectStats: (params: unknown) => invokeRoute('route:get-object-stats', params),
+    resetAnalytics: (params?: any) => invokeRoute('route:reset-analytics', params),
+    getRequestLogs: (params?: any) => invokeRoute('route:get-request-logs', params),
+    clearRequestLogs: () => invokeRoute('route:clear-request-logs'),
     onRequestLogAppended: (callback: (item: RouteRequestLogItem) => void) => {
       const handler = (_event: any, item: RouteRequestLogItem) => callback(item);
       ipcRenderer.on(ROUTE_REQUEST_LOG_APPENDED_EVENT, handler);
       return () => ipcRenderer.removeListener(ROUTE_REQUEST_LOG_APPENDED_EVENT, handler);
     },
     fetchLatestLog: (params: { siteId: string; model?: string }) =>
-      ipcRenderer.invoke('route:fetch-latest-log', params),
+      invokeRoute('route:fetch-latest-log', params),
     getHistoryBuckets: (query: {
       window: '48h';
       bucketSize: '2h';
       siteId?: string;
       accountId?: string;
-    }) => ipcRenderer.invoke('route:getHistoryBuckets', query),
+    }) => invokeRoute('route:getHistoryBuckets', query),
   },
   overview: {
     getSiteDailySnapshots: (params?: { siteId?: string; days?: number }) =>
@@ -589,4 +687,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     extractAllUserHashes: (params: { siteId: string }) =>
       ipcRenderer.invoke('anyrouter:extractAllUserHashes', params),
   },
-});
+};
+const bridge: ElectronAPI = electronAPI;
+contextBridge.exposeInMainWorld('electronAPI', bridge);

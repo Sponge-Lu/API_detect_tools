@@ -42,7 +42,7 @@ export function OverlayFrame({
 }: OverlayFrameProps) {
   const rootClassName = useShell
     ? joinClasses(
-        'relative flex h-full flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)]',
+        'relative flex h-full flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)]',
         shellClassName
       )
     : joinClasses('flex h-full flex-col', shellClassName);
@@ -53,13 +53,16 @@ export function OverlayFrame({
         <div
           data-testid="overlay-title"
           className={joinClasses(
-            'flex items-center justify-between border-b border-[var(--line-soft)] px-[var(--spacing-2xl)] py-[var(--spacing-lg)]',
+            'flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3',
             headerClassName
           )}
         >
-          <div className="flex min-w-0 items-center gap-[var(--spacing-md)]">
+          <div className="flex min-w-0 items-center gap-2.5">
             {titleIcon ? (
-              <span className="shrink-0 text-[var(--accent)]" aria-hidden="true">
+              <span
+                className="flex shrink-0 items-center text-[var(--accent)] [&>svg]:h-4 [&>svg]:w-4"
+                aria-hidden="true"
+              >
                 {titleIcon}
               </span>
             ) : null}
@@ -67,7 +70,7 @@ export function OverlayFrame({
               <h2
                 id={titleId}
                 className={joinClasses(
-                  'truncate text-lg font-semibold text-[var(--text-primary)]',
+                  'truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]',
                   titleClassName
                 )}
               >
@@ -82,13 +85,13 @@ export function OverlayFrame({
               aria-label={closeButtonLabel}
               title={closeButtonLabel}
               className={joinClasses(
-                '-mr-[var(--spacing-sm)] rounded-[var(--radius-md)] p-[var(--spacing-sm)] text-[var(--text-secondary)]',
-                'hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]',
-                'transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] active:scale-95',
-                'focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2'
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)]',
+                'hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)]',
+                'transition-colors duration-[var(--duration-hover)]',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]'
               )}
             >
-              <X className="w-5 h-5" strokeWidth={2} aria-hidden="true" />
+              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
             </button>
           ) : null}
         </div>
@@ -97,7 +100,7 @@ export function OverlayFrame({
       <div
         id={descriptionId}
         data-testid="overlay-body"
-        className={joinClasses('px-[var(--spacing-2xl)] py-[var(--spacing-lg)]', bodyClassName)}
+        className={joinClasses('min-h-0 px-5 py-4', bodyClassName)}
       >
         {children}
       </div>
@@ -106,8 +109,8 @@ export function OverlayFrame({
         <div
           data-testid="overlay-footer"
           className={joinClasses(
-            'flex items-center justify-end gap-[var(--spacing-md)] px-[var(--spacing-2xl)] py-[var(--spacing-lg)]',
-            'border-t border-[var(--line-soft)] bg-[var(--surface-2)]',
+            'flex shrink-0 items-center justify-end gap-2 px-5 py-3',
+            'border-t border-[var(--line-soft)] bg-[var(--surface-1)]',
             footerClassName
           )}
         >

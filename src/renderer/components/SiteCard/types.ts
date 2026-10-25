@@ -12,8 +12,9 @@
  * - PROJECT_INDEX.md
  */
 
-import type { SiteConfig } from '../../../main/types/token';
-import type { DetectionResult } from '../../App';
+import type { ReactNode } from 'react';
+import type { SiteConfig } from '../../../shared/types/site';
+import type { DetectionResult } from '../../../shared/types/renderer-config';
 import type { CliConfig } from '../../../shared/types/cli-config';
 
 export interface SiteCardProps {
@@ -78,6 +79,8 @@ export interface SiteCardHeaderProps {
   cliConfig?: CliConfig | null;
   onOpenCliConfig?: () => void;
   onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
+  /** 行末操作按钮：作为栅格最后一格渲染，保证与表头右边界严格对齐 */
+  actions?: ReactNode;
 }
 
 export interface SiteCardActionsProps {

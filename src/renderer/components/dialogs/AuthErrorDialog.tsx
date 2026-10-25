@@ -16,7 +16,7 @@
  */
 
 import { Key, Clock, ShieldX, AlertTriangle, type LucideIcon } from 'lucide-react';
-import type { SiteConfig } from '../../App';
+import type { SiteConfig } from '../../../shared/types/renderer-config';
 import { AppModal } from '../AppModal/AppModal';
 import { AppButton } from '../AppButton/AppButton';
 

@@ -52,15 +52,15 @@ export function VerticalSidebar({
   return (
     <aside
       data-testid="vertical-sidebar"
-      className={`flex h-full shrink-0 flex-col border-r border-[var(--line-soft)] bg-[var(--surface-2)]/80 transition-[width] duration-[var(--duration-fast)] ${sidebarWidthClass}`}
+      className={`flex h-full shrink-0 flex-col border-r border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-2)_80%,transparent)] transition-[width] duration-[var(--duration-fast)] ${sidebarWidthClass}`}
     >
       <div
-        className={`flex h-12 shrink-0 items-center ${isIconOnly ? 'justify-center px-2' : 'justify-between px-3'}`}
+        className={`flex h-10 shrink-0 items-center ${isIconOnly ? 'justify-center px-2' : 'justify-between px-3'}`}
         style={{ WebkitAppRegion: 'drag' } as CSSProperties}
       >
         {!isIconOnly ? (
           <div className="flex min-w-0 items-center">
-            <span className="truncate text-[13px] font-semibold text-[var(--text-primary)]">
+            <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">
               API Hub
             </span>
             {saving && (
@@ -75,19 +75,19 @@ export function VerticalSidebar({
           aria-label="切换侧栏显示模式"
           title={isIconOnly ? '切换为图标和文字导航' : '切换为仅图标导航'}
           onClick={toggleSidebarDisplayMode}
-          className={`rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/86 p-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] ${isIconOnly ? 'absolute top-3' : ''}`}
+          className={`flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:border-[var(--line-strong)] hover:text-[var(--text-primary)] ${isIconOnly ? 'absolute top-2' : ''}`}
           style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
         >
           {isIconOnly ? (
-            <PanelLeftOpen className="h-3.5 w-3.5" />
+            <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
           ) : (
-            <PanelLeftClose className="h-3.5 w-3.5" />
+            <PanelLeftClose className="h-3.5 w-3.5" strokeWidth={1.75} />
           )}
         </button>
       </div>
 
       <nav
-        className="flex-1 space-y-0.5 overflow-y-auto px-2 py-1"
+        className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2"
         style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
       >
         {visibleSidebarItems.map(item => {
@@ -101,16 +101,20 @@ export function VerticalSidebar({
                 aria-current={isActive ? 'page' : undefined}
                 title={item.navLabel}
                 onClick={() => onTabChange(item.id)}
-                className={`flex w-full items-center rounded-[var(--radius-sm)] py-2 text-[13px] font-medium transition-colors ${
+                className={`flex h-8 w-full items-center rounded-[var(--radius-sm)] text-[13px] transition-colors duration-[var(--duration-hover)] ${
                   isActive
-                    ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
+                    ? 'bg-[var(--accent-soft)] font-medium text-[var(--accent-strong)] shadow-[inset_2px_0_0_0_var(--accent)]'
                     : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
-                } ${isIconOnly ? 'justify-center px-2' : 'px-3'}`}
+                } ${isIconOnly ? 'justify-center px-2' : 'px-2.5'}`}
               >
-                <item.icon className="w-4 h-4 shrink-0" strokeWidth={isActive ? 2 : 1.5} />
+                <item.icon
+                  className="h-4 w-4 shrink-0"
+                  strokeWidth={isActive ? 1.75 : 1.5}
+                  aria-hidden="true"
+                />
                 <span
                   aria-hidden={isIconOnly}
-                  className={`overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,margin] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] ${
+                  className={`overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,margin] duration-[var(--duration-hover)] ${
                     isIconOnly ? 'ml-0 max-w-0 opacity-0' : 'ml-2 max-w-[84px] opacity-100 delay-75'
                   }`}
                 >
@@ -157,7 +161,7 @@ export function VerticalSidebar({
             </div>
           ) : currentVersion ? (
             <div
-              className="text-center text-[10px] font-medium text-[var(--text-tertiary)]"
+              className="text-center text-[11px] font-medium text-[var(--text-tertiary)]"
               title={versionLabel}
             >
               v{currentVersion}

@@ -1,3 +1,4 @@
+import type { StateVersion } from './app-storage-contract';
 /**
  * 路由代理模块类型定义
  * 输入: 无 (纯类型定义)
@@ -366,6 +367,7 @@ export interface RouteProxyServerConfig {
 
 /** 路由规则 */
 export interface RouteRule {
+  storageVersion?: StateVersion;
   id: string;
   name: string;
   enabled: boolean;
@@ -607,13 +609,21 @@ export interface RouteModelMetadata {
   cost: { input?: number; output?: number; cacheRead?: number; cacheCreation?: number };
 }
 
+/** 用户启用的同类模型收录范围及原始名称排除项 */
+export interface RouteModelAutoCollect {
+  modelKeys: string[];
+  excludedModels: string[];
+}
+
 /** 路由页模型重定向展示项 */
 export interface RouteModelDisplayItem {
+  storageVersion?: StateVersion;
   id: string;
   vendor: RouteModelVendor;
   canonicalName: string;
   sourceKeys: string[];
   originalModelOrder?: string[];
+  autoCollect?: RouteModelAutoCollect;
   priorityConfig?: RouteDisplayItemPriorityConfig;
   runtimeConfig?: RouteRuntimeConfig;
   mode: 'seeded' | 'manual';
@@ -638,6 +648,7 @@ export function parseRouteOverrideDisplayItemId(displayItemId: string): string |
 
 /** 模型注册表配置 */
 export interface RouteModelRegistryConfig {
+  storageVersion?: StateVersion;
   version: number;
   sources: RouteModelSourceRef[];
   entries: Record<string, RouteModelRegistryEntry>;
@@ -919,6 +930,7 @@ export function normalizeRouteClientRoutingConfig(value: unknown): RouteClientRo
 
 /** 路由模块配置（持久化到 config.json.routing） */
 export interface RoutingConfig {
+  storageVersion?: StateVersion;
   clientRouting?: Record<string, RouteClientRoutingConfig>;
   server: RouteProxyServerConfig;
   rules: RouteRule[];

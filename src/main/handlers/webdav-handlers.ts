@@ -1,8 +1,8 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * WebDAV 备份相关 IPC 处理器
  */
 
-import { ipcMain } from 'electron';
 import Logger from '../utils/logger';
 import { webdavManager } from '../webdav-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
@@ -13,12 +13,12 @@ import type { WebDAVConfig } from '../../shared/types/site';
  */
 export function registerWebDAVHandlers() {
   // 测试 WebDAV 连接
-  ipcMain.handle('webdav:test-connection', async (_, config: WebDAVConfig) => {
+  handleStorageIpc('webdav:test-connection', async (_, config: WebDAVConfig) => {
     return webdavManager.testConnection(config);
   });
 
   // 上传备份到 WebDAV
-  ipcMain.handle('webdav:upload-backup', async () => {
+  handleStorageIpc('webdav:upload-backup', async () => {
     const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
@@ -30,7 +30,7 @@ export function registerWebDAVHandlers() {
   });
 
   // 列出 WebDAV 备份
-  ipcMain.handle('webdav:list-backups', async () => {
+  handleStorageIpc('webdav:list-backups', async () => {
     const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
@@ -42,7 +42,7 @@ export function registerWebDAVHandlers() {
   });
 
   // 删除 WebDAV 备份
-  ipcMain.handle('webdav:delete-backup', async (_, filename: string) => {
+  handleStorageIpc('webdav:delete-backup', async (_, filename: string) => {
     const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
@@ -54,7 +54,7 @@ export function registerWebDAVHandlers() {
   });
 
   // 恢复 WebDAV 备份
-  ipcMain.handle('webdav:restore-backup', async (_, filename: string) => {
+  handleStorageIpc('webdav:restore-backup', async (_, filename: string) => {
     const config = await unifiedConfigManager.getConfig();
     const webdavConfig = config.settings?.webdav;
 
@@ -66,15 +66,17 @@ export function registerWebDAVHandlers() {
   });
 
   // 保存 WebDAV 配置
-  ipcMain.handle('webdav:save-config', async (_, webdavConfig: WebDAVConfig) => {
+  handleStorageIpc('webdav:save-config', async (_, webdavConfig: WebDAVConfig) => {
     try {
       Logger.info('💾 [WebDAV] 保存配置:', JSON.stringify({ ...webdavConfig, password: '***' }));
-      const config = await unifiedConfigManager.getConfig();
-      config.settings = {
-        ...config.settings,
-        webdav: webdavConfig,
-      };
-      await unifiedConfigManager.saveConfig(config);
+      await unifiedConfigManager.mutateConfig(async () => {
+        const config = await unifiedConfigManager.getConfig();
+        config.settings = {
+          ...config.settings,
+          webdav: webdavConfig,
+        };
+        await unifiedConfigManager.saveConfig(config);
+      });
       Logger.info('✅ [WebDAV] 配置保存成功');
       return { success: true };
     } catch (error: any) {
@@ -84,7 +86,7 @@ export function registerWebDAVHandlers() {
   });
 
   // 获取 WebDAV 配置
-  ipcMain.handle('webdav:get-config', async () => {
+  handleStorageIpc('webdav:get-config', async () => {
     try {
       const config = await unifiedConfigManager.getConfig();
       const webdavConfig = config.settings?.webdav || null;

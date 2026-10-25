@@ -378,7 +378,10 @@ describe('route session instance cards', () => {
     // 模型与思考强度同一行；卡片头标题与计数与映射工作区工具栏同字号
     expect(screen.getByLabelText('route-1 思考强度').closest('.w-20')).not.toBeNull();
     expect(screen.getByLabelText('route-1 路由模型').closest('.flex-1')).not.toBeNull();
-    expect(screen.getByRole('heading', { name: '路由卡片' })).toHaveClass('text-xs', 'font-semibold');
+    expect(screen.getByRole('heading', { name: '路由卡片' })).toHaveClass(
+      'text-xs',
+      'font-semibold'
+    );
     expect(screen.queryByText(/\d+ 个客户端/)).not.toBeInTheDocument();
     expect(screen.getByText('1 张')).toBeInTheDocument();
 

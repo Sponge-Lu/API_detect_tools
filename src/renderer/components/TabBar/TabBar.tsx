@@ -46,10 +46,10 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
       ref={navRef}
       className="relative flex h-11 shrink-0 items-stretch border-b border-[var(--line-soft)] bg-[var(--surface-1)]"
     >
-      {/* Sliding bottom bar */}
+      {/* Sliding bottom bar：2px 且压住容器 1px 分割线，避免出现"双线" */}
       <div
         aria-hidden="true"
-        className="absolute bottom-0 h-[3px] rounded-full bg-[var(--accent)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)]"
+        className="absolute -bottom-px h-[2px] rounded-full bg-[var(--accent-solid)] transition-[left,width] duration-[var(--duration-hover)]"
         style={{
           left: indicator.left,
           width: indicator.width,
@@ -66,20 +66,20 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
             className={`
               relative flex items-center justify-center gap-1.5
               px-5 text-[13px] font-medium
-              transition-colors duration-200
+              transition-colors duration-[var(--duration-hover)]
               ${
                 isActive
-                  ? 'font-semibold text-[var(--accent)]'
+                  ? 'font-medium text-[var(--text-primary)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}
             style={{ WebkitUserSelect: 'none' } as React.CSSProperties}
           >
             <Icon
-              className={`w-4 h-4 transition-colors duration-200 ${
+              className={`h-4 w-4 transition-colors duration-[var(--duration-hover)] ${
                 isActive ? 'text-[var(--accent)]' : ''
               }`}
-              strokeWidth={isActive ? 2 : 1.5}
+              strokeWidth={isActive ? 1.75 : 1.5}
             />
             {label}
           </button>

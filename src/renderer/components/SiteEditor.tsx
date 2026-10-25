@@ -15,7 +15,7 @@
 import { useState, useEffect } from 'react';
 import { resolveApiKeyForUse } from '../../shared/utils/apiConfig';
 import { X, Loader2, Globe, CheckCircle } from 'lucide-react';
-import { SiteConfig } from '../App';
+import type { SiteConfig } from "../../shared/types/renderer-config";
 import { toast } from '../store/toastStore';
 import { AppInput } from './AppInput';
 import {
@@ -587,7 +587,7 @@ export function SiteEditor({
                 )}
               </div>
               {error && (
-                <div className="rounded-[var(--radius-lg)] border border-[var(--danger)]/35 bg-[var(--danger-soft)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
+                <div className="rounded-[var(--radius-lg)] border border-[color-mix(in_srgb,var(--danger)_35%,transparent)] bg-[var(--danger-soft)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
                   {error}
                 </div>
               )}
@@ -599,7 +599,7 @@ export function SiteEditor({
             <div className="space-y-2">
               {/* 通用错误提示：包括从自动获取流程返回的手动填写提示 */}
               {error && (
-                <div className="whitespace-pre-line rounded-[var(--radius-md)] border border-[var(--danger)]/35 bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]">
+                <div className="whitespace-pre-line rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--danger)_35%,transparent)] bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]">
                   {error}
                 </div>
               )}
@@ -686,7 +686,7 @@ export function SiteEditor({
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2.5 py-1 text-sm font-medium text-[var(--accent)]">
+                        <span className="rounded-full border border-[color-mix(in_srgb,var(--accent)_25%,transparent)] bg-[var(--accent-soft)] px-2.5 py-1 text-sm font-medium text-[var(--accent)]">
                           {SITE_TYPE_LABELS[selectedSiteType]}
                         </span>
                         <button
@@ -720,7 +720,7 @@ export function SiteEditor({
                   )}
                 </div>
                 {site && editingAccount && (
-                  <div className="rounded-[var(--radius-md)] border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-xs text-[var(--accent)]">
+                  <div className="rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--accent)_25%,transparent)] bg-[var(--accent-soft)] px-3 py-2 text-xs text-[var(--accent)]">
                     当前优先编辑账户级凭证：{editingAccount.account_name || editingAccount.id}
                   </div>
                 )}
@@ -804,7 +804,7 @@ export function SiteEditor({
                   </div>
                   {/* 仅在智能添加模式下提示自动获取失败，手动添加模式不再显示此提醒 */}
                   {!autoInfo.systemToken && mode === 'auto' && (
-                    <div className="mt-1.5 rounded-[var(--radius-sm)] border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-2 py-1 text-xs font-medium text-[var(--warning)]">
+                    <div className="mt-1.5 rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] px-2 py-1 text-xs font-medium text-[var(--warning)]">
                       ⚠️ 无法自动获取 Access Token，请点击"重新获取"或手动填入
                     </div>
                   )}
@@ -866,7 +866,7 @@ export function SiteEditor({
 
                 {/* 仅在智能添加模式下展示自动获取状态提示，手动添加模式不显示此文案 */}
                 {!site && mode === 'auto' && (
-                  <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--success)]/30 bg-[var(--success-soft)] px-3 py-2 text-sm text-[var(--success)]">
+                  <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[color-mix(in_srgb,var(--success)_30%,transparent)] bg-[var(--success-soft)] px-3 py-2 text-sm text-[var(--success)]">
                     <CheckCircle className="h-4 w-4 flex-shrink-0" />
                     <span className="font-semibold">
                       {autoInfo.systemToken ? '信息已自动获取' : '请手动填入 Access Token'}

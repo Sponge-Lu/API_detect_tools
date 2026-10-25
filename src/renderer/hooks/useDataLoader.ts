@@ -19,7 +19,7 @@
 
 import { useCallback } from 'react';
 import Logger from '../utils/logger';
-import type { Config } from '../App';
+import type { Config } from '../../shared/types/renderer-config';
 import type { DetectionResult, DetectionCacheData } from '../../shared/types/site';
 import type { CliConfig } from '../store/detectionStore';
 import type { SiteInfo } from '../../shared/types/config-detection';

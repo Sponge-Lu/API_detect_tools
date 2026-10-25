@@ -88,6 +88,7 @@ vi.mock('../main/unified-config-manager', () => ({
 import {
   beginRoutePathAttempt,
   flushToStorage,
+  invalidateRouteStats,
   getRoutePathDisabledUntil,
   isRouteEndpointUnsupported,
   isRoutePathDisabled,
@@ -691,4 +692,28 @@ describe('route-stats-service site-level breaker', () => {
 
     expect(isRoutePathDisabled(keyC, now + 2)).toBe(false);
   });
+});
+it('retains channel counts when a failed batch overlaps new requests', async () => {
+  invalidateRouteStats();
+  mocks.routing.stats = {};
+  mocks.upsertRouteChannelStatsBatch.mockClear();
+  let reject!: (error: Error) => void;
+  mocks.upsertRouteChannelStatsBatch.mockImplementationOnce(
+    () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      })
+  );
+  recordOutcome(routePath, 'success');
+  const failed = flushToStorage();
+  recordOutcome(routePath, 'failure');
+  reject(new Error('Injected channel batch failure'));
+  await expect(failed).rejects.toThrow('Injected channel batch failure');
+  await flushToStorage();
+  expect(mocks.upsertRouteChannelStatsBatch.mock.calls[1][0]).toEqual([
+    expect.objectContaining({ successCount: 1, failureCount: 1, neutralCount: 0 }),
+  ]);
+  await flushToStorage();
+  expect(mocks.upsertRouteChannelStatsBatch).toHaveBeenCalledTimes(2);
+  invalidateRouteStats();
 });

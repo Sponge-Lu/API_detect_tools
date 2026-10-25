@@ -63,6 +63,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../main/unified-config-manager', () => ({
   unifiedConfigManager: {
+    mutateConfig: async <T>(operation: () => Promise<T>) => operation(),
     loadConfig: mockLoadConfig,
     getConfig: mockLoadConfig,
     exportConfigSync: () => state.config,

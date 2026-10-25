@@ -3,7 +3,7 @@
 exports[`AppButton Compatibility Visual Regression > Button Sizes > should render large button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-10 px-4 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-10 gap-2 px-4 text-[13px]"
 >
   Large Button
 </button>
@@ -12,7 +12,7 @@ exports[`AppButton Compatibility Visual Regression > Button Sizes > should rende
 exports[`AppButton Compatibility Visual Regression > Button Sizes > should render medium button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
 >
   Medium Button
 </button>
@@ -21,7 +21,7 @@ exports[`AppButton Compatibility Visual Regression > Button Sizes > should rende
 exports[`AppButton Compatibility Visual Regression > Button Sizes > should render small button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-8 px-3 text-xs"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-8 gap-1.5 px-2.5 text-[12px]"
 >
   Small Button
 </button>
@@ -30,7 +30,7 @@ exports[`AppButton Compatibility Visual Regression > Button Sizes > should rende
 exports[`AppButton Compatibility Visual Regression > Button States > should render disabled button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
   disabled=""
 >
   Disabled Button
@@ -40,13 +40,26 @@ exports[`AppButton Compatibility Visual Regression > Button States > should rend
 exports[`AppButton Compatibility Visual Regression > Button States > should render loading button correctly 1`] = `
 <button
   aria-busy="true"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
   disabled=""
 >
-  <span
+  <svg
     aria-hidden="true"
-    class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-  />
+    class="lucide lucide-loader-circle h-3.5 w-3.5 shrink-0 animate-spin"
+    fill="none"
+    height="24"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="24"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M21 12a9 9 0 1 1-6.219-8.56"
+    />
+  </svg>
   Loading Button
 </button>
 `;
@@ -54,7 +67,7 @@ exports[`AppButton Compatibility Visual Regression > Button States > should rend
 exports[`AppButton Compatibility Visual Regression > Button Variants > should render primary button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
 >
   Primary Button
 </button>
@@ -63,7 +76,7 @@ exports[`AppButton Compatibility Visual Regression > Button Variants > should re
 exports[`AppButton Compatibility Visual Regression > Button Variants > should render secondary button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] min-h-9 px-3.5 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] min-h-9 gap-1.5 px-3 text-[13px]"
 >
   Secondary Button
 </button>
@@ -72,7 +85,7 @@ exports[`AppButton Compatibility Visual Regression > Button Variants > should re
 exports[`AppButton Compatibility Visual Regression > Button Variants > should render tertiary button correctly 1`] = `
 <button
   aria-busy="false"
-  class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-2)] min-h-9 px-3.5 text-sm"
+  class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-transparent text-[var(--text-secondary)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] active:bg-[var(--accent-soft)] min-h-9 gap-1.5 px-3 text-[13px]"
 >
   Tertiary Button
 </button>
@@ -688,25 +701,25 @@ exports[`AppModal Compatibility Visual Regression > Modal Options > should rende
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-md scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-md scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           No Close Button
@@ -714,7 +727,7 @@ exports[`AppModal Compatibility Visual Regression > Modal Options > should rende
       </div>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -733,37 +746,37 @@ exports[`AppModal Compatibility Visual Regression > Modal Options > should rende
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-md scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-md scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       />
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -778,7 +791,7 @@ exports[`AppModal Compatibility Visual Regression > Modal Options > should rende
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-1"
     >
@@ -797,25 +810,25 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-3xl scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-3xl scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Extra Large Modal
@@ -823,19 +836,19 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -850,7 +863,7 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -869,25 +882,25 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-lg scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-lg scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Large Modal
@@ -895,19 +908,19 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -922,7 +935,7 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -941,25 +954,25 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-md scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-md scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Medium Modal
@@ -967,19 +980,19 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -994,7 +1007,7 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -1013,25 +1026,25 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-sm scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-sm scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Small Modal
@@ -1039,19 +1052,19 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -1066,7 +1079,7 @@ exports[`AppModal Compatibility Visual Regression > Modal Sizes > should render 
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -1085,25 +1098,25 @@ exports[`AppModal Compatibility Visual Regression > Modal with Footer > should r
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-md scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-md scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Confirm Action
@@ -1111,19 +1124,19 @@ exports[`AppModal Compatibility Visual Regression > Modal with Footer > should r
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -1138,7 +1151,7 @@ exports[`AppModal Compatibility Visual Regression > Modal with Footer > should r
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -1147,18 +1160,18 @@ exports[`AppModal Compatibility Visual Regression > Modal with Footer > should r
       </p>
     </div>
     <div
-      class="flex items-center justify-end gap-3 border-t border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-4"
+      class="flex items-center justify-end gap-2 border-t border-[var(--line-soft)] bg-[var(--surface-1)] px-5 py-3"
       data-testid="overlay-footer"
     >
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Cancel
       </button>
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Confirm
       </button>
@@ -1174,26 +1187,26 @@ exports[`AppModal Compatibility Visual Regression > Modal with Title Icon > shou
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-md scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-md scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <span
           aria-hidden="true"
-          class="text-[var(--accent)]"
+          class="flex shrink-0 items-center text-[var(--accent)] [&>svg]:h-4 [&>svg]:w-4"
         >
           <svg
             class="lucide lucide-settings"
@@ -1218,7 +1231,7 @@ exports[`AppModal Compatibility Visual Regression > Modal with Title Icon > shou
           </svg>
         </span>
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Settings
@@ -1226,19 +1239,19 @@ exports[`AppModal Compatibility Visual Regression > Modal with Title Icon > shou
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -1253,7 +1266,7 @@ exports[`AppModal Compatibility Visual Regression > Modal with Title Icon > shou
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -1268,8 +1281,7 @@ exports[`AppModal Compatibility Visual Regression > Modal with Title Icon > shou
 exports[`Card Primitive Compatibility Visual Regression > Card States > should render disabled card correctly 1`] = `
 <div
   aria-disabled="true"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] opacity-60 cursor-not-allowed"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] opacity-60 cursor-not-allowed"
   draggable="false"
 >
   <div
@@ -1283,8 +1295,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card States > should r
 exports[`Card Primitive Compatibility Visual Regression > Card States > should render drag-over card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 border-[var(--accent)] scale-[1.02] shadow-[var(--shadow-xl)] [will-change:transform,border-color] cursor-move"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)] !border-[var(--accent)] shadow-[var(--shadow-xl)] bg-[var(--accent-soft)] cursor-move"
   draggable="true"
 >
   <div
@@ -1298,8 +1309,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card States > should r
 exports[`Card Primitive Compatibility Visual Regression > Card States > should render draggable card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 cursor-move"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)] cursor-move"
   draggable="true"
 >
   <div
@@ -1313,8 +1323,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card States > should r
 exports[`Card Primitive Compatibility Visual Regression > Card Variants > should render elevated card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-lg)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-lg)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1328,8 +1337,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card Variants > should
 exports[`Card Primitive Compatibility Visual Regression > Card Variants > should render grouped card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-sm)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1343,8 +1351,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card Variants > should
 exports[`Card Primitive Compatibility Visual Regression > Card Variants > should render standard card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1360,8 +1367,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Expand Conte
   aria-controls=":ra:"
   aria-disabled="false"
   aria-expanded="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1387,8 +1393,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Expand Conte
   aria-controls=":rb:"
   aria-disabled="false"
   aria-expanded="true"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1412,8 +1417,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Expand Conte
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render card with divider correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1437,8 +1441,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render card with footer correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1457,8 +1460,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render card with header correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1477,8 +1479,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render complete card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1512,8 +1513,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Combined Components Visual Regression > Card with Form > should render card with form inputs correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
-  data-perf-monitor="blur"
+  class="relative rounded-[var(--radius-md)] overflow-hidden hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[box-shadow,border-color,background-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] border border-[var(--line-soft)] shadow-[var(--shadow-md)] hover:border-[var(--line-strong)] hover:shadow-[var(--shadow-lg)]"
   draggable="false"
 >
   <div
@@ -1531,7 +1531,7 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
         class="relative "
       >
         <label
-          class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+          class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
           for=":r1h:"
         >
           Name
@@ -1541,7 +1541,7 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
         >
           <input
             aria-invalid="false"
-            class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+            class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
             id=":r1h:"
             placeholder="Enter your name"
             type="text"
@@ -1552,7 +1552,7 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
         class="relative "
       >
         <label
-          class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+          class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
           for=":r1i:"
         >
           Email
@@ -1562,7 +1562,7 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
         >
           <input
             aria-invalid="false"
-            class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+            class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
             id=":r1i:"
             placeholder="Enter your email"
             type="email"
@@ -1573,7 +1573,7 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
         class="relative "
       >
         <label
-          class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+          class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
           for=":r1j:"
         >
           Password
@@ -1583,7 +1583,7 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
         >
           <input
             aria-invalid="false"
-            class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)] pr-10"
+            class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)] pr-9"
             id=":r1j:"
             placeholder="Enter password"
             type="password"
@@ -1591,20 +1591,20 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
           <button
             aria-label="显示密码"
             aria-pressed="false"
-            class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 rounded-[var(--radius-sm)] p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+            class="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
             tabindex="0"
             title="显示密码"
             type="button"
           >
             <svg
               aria-hidden="true"
-              class="lucide lucide-eye w-5 h-5"
+              class="lucide lucide-eye h-4 w-4"
               fill="none"
               height="24"
               stroke="currentColor"
               stroke-linecap="round"
               stroke-linejoin="round"
-              stroke-width="2"
+              stroke-width="1.75"
               viewBox="0 0 24 24"
               width="24"
               xmlns="http://www.w3.org/2000/svg"
@@ -1631,13 +1631,13 @@ exports[`Combined Components Visual Regression > Card with Form > should render 
     >
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Cancel
       </button>
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Save
       </button>
@@ -1653,25 +1653,25 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
 >
   <div
     aria-hidden="true"
-    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200 opacity-0"
+    class="absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200 opacity-0"
   />
   <div
     aria-describedby="snapshot-id-2"
     aria-labelledby="snapshot-id-1"
     aria-modal="true"
-    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 max-w-md scale-95 opacity-0 "
+    class="relative my-auto w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none max-w-md scale-[0.98] opacity-0 "
     role="dialog"
     tabindex="-1"
   >
     <div
-      class="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+      class="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
       data-testid="overlay-title"
     >
       <div
-        class="flex items-center gap-3"
+        class="flex min-w-0 items-center gap-2.5"
       >
         <h2
-          class="text-lg font-semibold text-[var(--text-primary)]"
+          class="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
           id="snapshot-id-1"
         >
           Add New Item
@@ -1679,19 +1679,19 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
       </div>
       <button
         aria-label="关闭弹窗"
-        class="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         title="关闭"
         type="button"
       >
         <svg
           aria-hidden="true"
-          class="lucide lucide-x h-5 w-5"
+          class="lucide lucide-x h-4 w-4"
           fill="none"
           height="24"
           stroke="currentColor"
           stroke-linecap="round"
           stroke-linejoin="round"
-          stroke-width="2"
+          stroke-width="1.75"
           viewBox="0 0 24 24"
           width="24"
           xmlns="http://www.w3.org/2000/svg"
@@ -1706,7 +1706,7 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
       </button>
     </div>
     <div
-      class="max-h-[60vh] overflow-y-auto px-6 py-4"
+      class="min-h-0 flex-1 overflow-y-auto px-5 py-4"
       data-testid="overlay-body"
       id="snapshot-id-2"
     >
@@ -1717,7 +1717,7 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
           class="relative "
         >
           <label
-            class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+            class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
             for=":r1n:"
           >
             Item Name
@@ -1734,7 +1734,7 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
             <input
               aria-invalid="false"
               aria-required="true"
-              class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+              class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
               id="snapshot-id-3"
               placeholder="Enter item name"
               required=""
@@ -1746,7 +1746,7 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
           class="relative "
         >
           <label
-            class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+            class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
             for=":r1o:"
           >
             Description
@@ -1756,7 +1756,7 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
           >
             <input
               aria-invalid="false"
-              class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+              class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
               id="snapshot-id-4"
               placeholder="Enter description"
               type="text"
@@ -1766,18 +1766,18 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
       </div>
     </div>
     <div
-      class="flex items-center justify-end gap-3 border-t border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-4"
+      class="flex items-center justify-end gap-2 border-t border-[var(--line-soft)] bg-[var(--surface-1)] px-5 py-3"
       data-testid="overlay-footer"
     >
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:border-[var(--line-strong)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Cancel
       </button>
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Add
       </button>
@@ -1788,35 +1788,35 @@ exports[`Combined Components Visual Regression > Modal with Form > should render
 
 exports[`Combined Components Visual Regression > Table with Actions > should render table with action buttons correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
-    class="data-table-header px-[var(--spacing-lg)] py-[var(--spacing-md)] bg-[var(--surface-2)]/80 border-b border-[var(--line-soft)] text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em] select-none"
+    class="data-table-header px-[var(--spacing-md)] py-2 bg-[var(--surface-2)] border-b border-[var(--line-soft)] text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em] select-none"
     role="rowgroup"
   >
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em]"
+        class="data-table-cell flex items-center text-left justify-start text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em]"
         role="columnheader"
         style="width: 200px;"
       >
         Name
       </div>
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em]"
+        class="data-table-cell flex items-center text-left justify-start text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em]"
         role="columnheader"
         style="width: 100px;"
       >
         Status
       </div>
       <div
-        class="data-table-cell flex items-center text-right justify-end text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em]"
+        class="data-table-cell flex items-center text-right justify-end text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em]"
         role="columnheader"
         style="width: 100px;"
       >
@@ -1831,23 +1831,23 @@ exports[`Combined Components Visual Regression > Table with Actions > should ren
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Item 1
       </div>
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Active
       </div>
       <div
-        class="data-table-cell flex items-center text-right justify-end text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-right justify-end text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         <div
@@ -1930,23 +1930,23 @@ exports[`Combined Components Visual Regression > Table with Actions > should ren
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Item 2
       </div>
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Inactive
       </div>
       <div
-        class="data-table-cell flex items-center text-right justify-end text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-right justify-end text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         <div
@@ -2032,7 +2032,7 @@ exports[`Combined Components Visual Regression > Table with Actions > should ren
 
 exports[`DataTable Compatibility Visual Regression > Table Cell Alignment > should render cells with different alignments correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
@@ -2042,23 +2042,23 @@ exports[`DataTable Compatibility Visual Regression > Table Cell Alignment > shou
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Left
       </div>
       <div
-        class="data-table-cell flex items-center text-center justify-center text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-center justify-center text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Center
       </div>
       <div
-        class="data-table-cell flex items-center text-right justify-end text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-right justify-end text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Right
@@ -2070,7 +2070,7 @@ exports[`DataTable Compatibility Visual Regression > Table Cell Alignment > shou
 
 exports[`DataTable Compatibility Visual Regression > Table Empty State > should render empty state correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
@@ -2120,7 +2120,7 @@ exports[`DataTable Compatibility Visual Regression > Table Empty State > should 
 
 exports[`DataTable Compatibility Visual Regression > Table Empty State > should render empty state with action correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
@@ -2141,7 +2141,7 @@ exports[`DataTable Compatibility Visual Regression > Table Empty State > should 
     <div>
       <button
         aria-busy="false"
-        class="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)] min-h-9 px-3.5 text-sm"
+        class="inline-flex select-none items-center justify-center whitespace-nowrap rounded-[var(--radius-sm)] font-medium transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 border border-transparent bg-[var(--accent-solid)] text-[var(--text-on-accent)] shadow-[var(--shadow-sm)] hover:bg-[var(--accent-solid-hover)] active:bg-[color-mix(in_srgb,var(--accent-solid)_86%,black)] min-h-9 gap-1.5 px-3 text-[13px]"
       >
         Add Item
       </button>
@@ -2152,7 +2152,7 @@ exports[`DataTable Compatibility Visual Regression > Table Empty State > should 
 
 exports[`DataTable Compatibility Visual Regression > Table Row States > should render disabled row correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
@@ -2162,11 +2162,11 @@ exports[`DataTable Compatibility Visual Regression > Table Row States > should r
     <div
       aria-disabled="true"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] opacity-50 cursor-not-allowed"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] opacity-50 cursor-not-allowed"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Disabled Item
@@ -2178,7 +2178,7 @@ exports[`DataTable Compatibility Visual Regression > Table Row States > should r
 
 exports[`DataTable Compatibility Visual Regression > Table Row States > should render selected row correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
@@ -2188,11 +2188,11 @@ exports[`DataTable Compatibility Visual Regression > Table Row States > should r
     <div
       aria-disabled="false"
       aria-selected="true"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer bg-[var(--accent-soft)]"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer bg-[var(--accent-soft)]"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Selected Item
@@ -2204,7 +2204,7 @@ exports[`DataTable Compatibility Visual Regression > Table Row States > should r
 
 exports[`DataTable Compatibility Visual Regression > Table Variants > should render grouped table correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
@@ -2214,11 +2214,11 @@ exports[`DataTable Compatibility Visual Regression > Table Variants > should ren
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Item 1
@@ -2227,11 +2227,11 @@ exports[`DataTable Compatibility Visual Regression > Table Variants > should ren
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Item 2
@@ -2243,7 +2243,7 @@ exports[`DataTable Compatibility Visual Regression > Table Variants > should ren
 
 exports[`DataTable Compatibility Visual Regression > Table Variants > should render inset table correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-transparent"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-transparent border-transparent"
   role="table"
 >
   <div
@@ -2253,11 +2253,11 @@ exports[`DataTable Compatibility Visual Regression > Table Variants > should ren
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Item 1
@@ -2269,27 +2269,27 @@ exports[`DataTable Compatibility Visual Regression > Table Variants > should ren
 
 exports[`DataTable Compatibility Visual Regression > Table Variants > should render standard table correctly 1`] = `
 <div
-  class="data-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter]"
+  class="data-table relative rounded-[var(--radius-md)] overflow-hidden border border-[var(--line-soft)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)]"
   role="table"
 >
   <div
-    class="data-table-header px-[var(--spacing-lg)] py-[var(--spacing-md)] bg-[var(--surface-2)]/80 border-b border-[var(--line-soft)] text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em] select-none"
+    class="data-table-header px-[var(--spacing-md)] py-2 bg-[var(--surface-2)] border-b border-[var(--line-soft)] text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em] select-none"
     role="rowgroup"
   >
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em]"
+        class="data-table-cell flex items-center text-left justify-start text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em]"
         role="columnheader"
       >
         Name
       </div>
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--text-secondary)] uppercase tracking-[0.08em]"
+        class="data-table-cell flex items-center text-left justify-start text-[11px] font-medium text-[var(--text-secondary)] tracking-[0.01em]"
         role="columnheader"
       >
         Status
@@ -2303,17 +2303,17 @@ exports[`DataTable Compatibility Visual Regression > Table Variants > should ren
     <div
       aria-disabled="false"
       aria-selected="false"
-      class="data-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--line-soft)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--surface-2)] cursor-pointer"
+      class="data-table-row min-h-[40px] px-[var(--spacing-md)] py-2 border-b border-[var(--line-soft)] last:border-b-0 transition-colors duration-[var(--duration-hover)] hover:bg-[var(--surface-2)] cursor-pointer"
       role="row"
     >
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Item 1
       </div>
       <div
-        class="data-table-cell flex items-center text-left justify-start text-[15px] text-[var(--text-primary)]"
+        class="data-table-cell flex items-center text-left justify-start text-[13px] tabular-nums text-[var(--text-primary)]"
         role="cell"
       >
         Active
@@ -2332,7 +2332,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input Sizes > should 
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-lg)] text-lg rounded-[14px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-10 px-[var(--spacing-lg)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":re:"
       placeholder="Large input"
       type="text"
@@ -2350,7 +2350,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input Sizes > should 
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":rd:"
       placeholder="Medium input"
       type="text"
@@ -2368,7 +2368,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input Sizes > should 
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-md)] py-[var(--spacing-sm)] text-sm rounded-[10px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-8 px-[var(--spacing-md)] text-[12px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":rc:"
       placeholder="Small input"
       type="text"
@@ -2386,7 +2386,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input States > should
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)] opacity-50 cursor-not-allowed bg-[var(--surface-1)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)] opacity-60 cursor-not-allowed bg-[var(--surface-2)] text-[var(--text-tertiary)]"
       disabled=""
       id=":ri:"
       placeholder="Disabled input"
@@ -2406,13 +2406,13 @@ exports[`Input Primitive Compatibility Visual Regression > Input States > should
     <input
       aria-describedby=":rh:-error"
       aria-invalid="true"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--danger)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--danger)] [box-shadow:0_0_0_3px_var(--danger-soft)]"
       id=":rh:"
       type="text"
     />
   </div>
   <p
-    class="mt-[var(--spacing-sm)] text-sm text-[var(--danger)]"
+    class="mt-1.5 text-[12px] leading-4 text-[var(--danger)]"
     id=":rh:-error"
     role="alert"
   >
@@ -2431,14 +2431,14 @@ exports[`Input Primitive Compatibility Visual Regression > Input States > should
     <input
       aria-describedby=":rj:-help"
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":rj:"
       placeholder="Name"
       type="text"
     />
   </div>
   <p
-    class="mt-[var(--spacing-sm)] text-sm text-[var(--text-secondary)]"
+    class="mt-1.5 text-[12px] leading-4 text-[var(--text-secondary)]"
     id=":rj:-help"
   >
     Enter your full name
@@ -2455,7 +2455,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Icons > sh
   >
     <div
       aria-hidden="true"
-      class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+      class="pointer-events-none absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
     >
       <svg
         class="lucide lucide-search"
@@ -2481,7 +2481,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Icons > sh
     </div>
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)] pl-10"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)] pl-9"
       id=":rk:"
       placeholder="Search..."
       type="text"
@@ -2499,14 +2499,14 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Icons > sh
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)] pr-10"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)] pr-9"
       id=":rl:"
       placeholder="Verified"
       type="text"
     />
     <div
       aria-hidden="true"
-      class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+      class="pointer-events-none absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
     >
       <svg
         class="lucide lucide-check"
@@ -2534,7 +2534,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Label > sh
   class="relative "
 >
   <label
-    class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+    class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
     for=":rf:"
   >
     Username
@@ -2544,7 +2544,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Label > sh
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":rf:"
       placeholder="Enter username"
       type="text"
@@ -2558,7 +2558,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Label > sh
   class="relative "
 >
   <label
-    class="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+    class="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
     for=":rg:"
   >
     Email
@@ -2575,7 +2575,7 @@ exports[`Input Primitive Compatibility Visual Regression > Input with Label > sh
     <input
       aria-invalid="false"
       aria-required="true"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":rg:"
       placeholder="Enter email"
       required=""
@@ -2594,7 +2594,7 @@ exports[`Input Primitive Compatibility Visual Regression > Password Input > shou
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)]"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
       id=":rm:"
       placeholder="Enter password"
       type="password"
@@ -2612,7 +2612,7 @@ exports[`Input Primitive Compatibility Visual Regression > Password Input > shou
   >
     <input
       aria-invalid="false"
-      class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--line-soft)] pr-10"
+      class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 px-[var(--spacing-md)] text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)] pr-9"
       id=":rn:"
       placeholder="Enter password"
       type="password"
@@ -2620,20 +2620,20 @@ exports[`Input Primitive Compatibility Visual Regression > Password Input > shou
     <button
       aria-label="显示密码"
       aria-pressed="false"
-      class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 rounded-[var(--radius-sm)] p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+      class="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
       tabindex="0"
       title="显示密码"
       type="button"
     >
       <svg
         aria-hidden="true"
-        class="lucide lucide-eye w-5 h-5"
+        class="lucide lucide-eye h-4 w-4"
         fill="none"
         height="24"
         stroke="currentColor"
         stroke-linecap="round"
         stroke-linejoin="round"
-        stroke-width="2"
+        stroke-width="1.75"
         viewBox="0 0 24 24"
         width="24"
         xmlns="http://www.w3.org/2000/svg"
@@ -2657,17 +2657,17 @@ exports[`Search Input Primitive Compatibility Visual Regression > should render 
   class="relative "
 >
   <div
-    class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none"
+    class="pointer-events-none absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
   >
     <svg
       aria-hidden="true"
-      class="lucide lucide-search w-5 h-5"
+      class="lucide lucide-search h-4 w-4"
       fill="none"
       height="24"
       stroke="currentColor"
       stroke-linecap="round"
       stroke-linejoin="round"
-      stroke-width="2"
+      stroke-width="1.75"
       viewBox="0 0 24 24"
       width="24"
       xmlns="http://www.w3.org/2000/svg"
@@ -2683,7 +2683,7 @@ exports[`Search Input Primitive Compatibility Visual Regression > should render 
     </svg>
   </div>
   <input
-    class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-none transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]"
+    class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 pl-9 pr-9 text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
     placeholder="Search..."
     type="search"
     value=""
@@ -2696,17 +2696,17 @@ exports[`Search Input Primitive Compatibility Visual Regression > should render 
   class="relative "
 >
   <div
-    class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none"
+    class="pointer-events-none absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
   >
     <svg
       aria-hidden="true"
-      class="lucide lucide-search w-5 h-5"
+      class="lucide lucide-search h-4 w-4"
       fill="none"
       height="24"
       stroke="currentColor"
       stroke-linecap="round"
       stroke-linejoin="round"
-      stroke-width="2"
+      stroke-width="1.75"
       viewBox="0 0 24 24"
       width="24"
       xmlns="http://www.w3.org/2000/svg"
@@ -2722,27 +2722,27 @@ exports[`Search Input Primitive Compatibility Visual Regression > should render 
     </svg>
   </div>
   <input
-    class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-none transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]"
+    class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 pl-9 pr-9 text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
     placeholder="Search..."
     type="search"
     value="test"
   />
   <button
     aria-label="清除搜索内容"
-    class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 rounded-full p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-secondary)]"
+    class="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-secondary)]"
     tabindex="-1"
     title="清除"
     type="button"
   >
     <svg
       aria-hidden="true"
-      class="lucide lucide-x w-5 h-5"
+      class="lucide lucide-x h-4 w-4"
       fill="none"
       height="24"
       stroke="currentColor"
       stroke-linecap="round"
       stroke-linejoin="round"
-      stroke-width="2"
+      stroke-width="1.75"
       viewBox="0 0 24 24"
       width="24"
       xmlns="http://www.w3.org/2000/svg"
@@ -2763,17 +2763,17 @@ exports[`Search Input Primitive Compatibility Visual Regression > should render 
   class="relative "
 >
   <div
-    class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none"
+    class="pointer-events-none absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
   >
     <svg
       aria-hidden="true"
-      class="lucide lucide-search w-5 h-5"
+      class="lucide lucide-search h-4 w-4"
       fill="none"
       height="24"
       stroke="currentColor"
       stroke-linecap="round"
       stroke-linejoin="round"
-      stroke-width="2"
+      stroke-width="1.75"
       viewBox="0 0 24 24"
       width="24"
       xmlns="http://www.w3.org/2000/svg"
@@ -2789,27 +2789,27 @@ exports[`Search Input Primitive Compatibility Visual Regression > should render 
     </svg>
   </div>
   <input
-    class="w-full bg-[var(--surface-2)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-none transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] outline-none pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]"
+    class="w-full rounded-[var(--radius-sm)] bg-[var(--field-bg)] text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border transition-[box-shadow,border-color] duration-[var(--duration-hover)] outline-none h-9 pl-9 pr-9 text-[13px] border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]"
     placeholder="Search..."
     type="search"
     value="test query"
   />
   <button
     aria-label="清除搜索内容"
-    class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 rounded-full p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-secondary)]"
+    class="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-secondary)]"
     tabindex="-1"
     title="清除"
     type="button"
   >
     <svg
       aria-hidden="true"
-      class="lucide lucide-x w-5 h-5"
+      class="lucide lucide-x h-4 w-4"
       fill="none"
       height="24"
       stroke="currentColor"
       stroke-linecap="round"
       stroke-linejoin="round"
-      stroke-width="2"
+      stroke-width="1.75"
       viewBox="0 0 24 24"
       width="24"
       xmlns="http://www.w3.org/2000/svg"

@@ -182,6 +182,54 @@ describe('route model registry service', () => {
     });
   });
 
+  it('collects only enabled model groups, preserves exclusions and recovers missing sources', async () => {
+    const registry = createRegistryConfig([
+      createSourceOverride({ sourceKey: 'site-1:acc-1:mirror/gpt-5-4', canonicalName: 'my-model' }),
+    ]);
+    registry.displayItems = [
+      {
+        id: 'chosen',
+        vendor: 'gpt',
+        canonicalName: 'my-model',
+        sourceKeys: ['site-1:acc-1:gpt-5.4'],
+        originalModelOrder: ['gpt-5.4'],
+        autoCollect: { modelKeys: ['gpt-5-4'], excludedModels: ['mirror/gpt-5-4'] },
+        mode: 'manual',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    const account = {
+      id: 'acc-1',
+      site_id: 'site-1',
+      account_name: 'Primary',
+      status: 'active',
+      api_key: 'sk-test',
+      cached_data: { models: ['gpt-5.4', 'openai/gpt-5.4', 'mirror/gpt-5-4', 'gpt-5.4-mini'] },
+    };
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', enabled: true }],
+      accounts: [account],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: registry });
+    const collected = await syncModelRegistrySources(true);
+    expect(Object.keys(collected.entries)).toEqual(['my-model']);
+    expect(collected.entries['my-model'].aliases).toEqual(['gpt-5.4', 'openai/gpt-5.4']);
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: collected });
+    const channels = await resolveChannels(createRouteRule(), 'my-model');
+    expect(channels.map(channel => channel.resolvedModel)).toEqual(['gpt-5.4', 'openai/gpt-5.4']);
+
+    account.cached_data.models = [];
+    const missing = await syncModelRegistrySources(true);
+    expect(missing.displayItems).toHaveLength(1);
+    expect(missing.entries).toEqual({});
+    expect(missing.displayItems[0].autoCollect).toEqual(registry.displayItems[0].autoCollect);
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: missing });
+    account.cached_data.models = ['new-provider/gpt-5.4', 'mirror/gpt-5-4'];
+    const recovered = await syncModelRegistrySources(true);
+    expect(recovered.entries['my-model'].aliases).toEqual(['new-provider/gpt-5.4']);
+  });
+
   it('preserves persisted metadata offline and reads current routing after metadata refresh', async () => {
     const registry = createRegistryConfig();
     registry.entries.model = {

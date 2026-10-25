@@ -192,7 +192,7 @@ export function AppModal({
     >
       <div
         className={[
-          'absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[8px] transition-opacity duration-200',
+          'absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[4px] transition-opacity duration-200',
           isAnimating ? 'opacity-100' : 'opacity-0',
         ].join(' ')}
         aria-hidden="true"
@@ -207,9 +207,9 @@ export function AppModal({
           aria-describedby={ariaDescribedBy || descriptionId}
           tabIndex={-1}
           className={[
-            'pointer-events-auto relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-clip rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2',
+            'pointer-events-auto relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-clip rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none',
             sizeStyles[size],
-            isAnimating ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
+            isAnimating ? 'scale-100 opacity-100' : 'scale-[0.98] opacity-0',
             className,
           ].join(' ')}
           onClick={event => event.stopPropagation()}
@@ -217,16 +217,22 @@ export function AppModal({
           {(title || showCloseButton) && (
             <div
               data-testid="overlay-title"
-              className="flex shrink-0 items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+              className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-3"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 items-center gap-2.5">
                 {titleIcon ? (
-                  <span className="text-[var(--accent)]" aria-hidden="true">
+                  <span
+                    className="flex shrink-0 items-center text-[var(--accent)] [&>svg]:h-4 [&>svg]:w-4"
+                    aria-hidden="true"
+                  >
                     {titleIcon}
                   </span>
                 ) : null}
                 {title ? (
-                  <h2 id={titleId} className="text-lg font-semibold text-[var(--text-primary)]">
+                  <h2
+                    id={titleId}
+                    className="truncate text-[15px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
+                  >
                     {title}
                   </h2>
                 ) : null}
@@ -237,9 +243,9 @@ export function AppModal({
                   onClick={onClose}
                   aria-label="关闭弹窗"
                   title="关闭"
-                  className="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
                 >
-                  <X className="h-5 w-5" strokeWidth={2} aria-hidden="true" />
+                  <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
                 </button>
               ) : null}
             </div>
@@ -248,7 +254,7 @@ export function AppModal({
           <div
             id={!ariaDescribedBy ? descriptionId : undefined}
             data-testid="overlay-body"
-            className={['min-h-0 max-h-[60vh] overflow-y-auto px-6 py-4', contentClassName]
+            className={['min-h-0 flex-1 overflow-y-auto px-5 py-4', contentClassName]
               .join(' ')
               .trim()}
           >
@@ -258,7 +264,7 @@ export function AppModal({
           {footer ? (
             <div
               data-testid="overlay-footer"
-              className="flex shrink-0 items-center justify-end gap-3 border-t border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-4"
+              className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--line-soft)] bg-[var(--surface-1)] px-5 py-3"
             >
               {footer}
             </div>

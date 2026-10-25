@@ -1,5 +1,7 @@
 # 📁 src/shared/types/ - 共享类型定义
 ## 架构说明
+
+`app-storage-contract.ts`：SQLite 存储命令结果、稳定 scope、并发版本与纯版本令牌校验；不依赖 Main 或驱动。
 **职责**: 定义主进程和渲染进程共享的 TypeScript 类型
 **特点**:
 - 纯类型定义，无实现代码
@@ -18,7 +20,7 @@
 | **site.ts** | 站点（含站点级 `proxy_url` 刷新代理）、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
 | **endpoint-test.ts** | 手动上游端点测试目标、协议、API Key 选项、选择状态与结果 | EndpointTestTarget, EndpointTestProtocol, EndpointTestResult |
 | **route-proxy.ts** | 通用网关、客户端双模式设置、卡片钉住状态、请求路由来源、Responses affinity、模型映射、会话父子谱系和端点历史类型 | RoutingConfig, RouteClientRoutingConfig, RouteInstance, RouteRequestLogItem, HistoryEndpointTrack |
-| **config-file-profile.ts** | 版本化配置方案、含协议元数据的目标目录、文件事务和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
+| **config-file-profile.ts** | 版本化配置方案、DSH 专用设置、YAML 文件与恢复事务、含协议元数据的目标目录和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
 | **dsh-integration.ts** | DeepSeek Harness 会话级路由接入的状态/漂移原因/请求与结果类型，含 DSH 侧常量（条目 id、provider id、凭据 ref） | DshRoutingStatus, DshDriftReason, EnableDshSessionRoutingInput, EnableDshSessionRoutingResult, DshActionResult |
 | **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
 | **custom-cli-config.ts** | 直连接入点配置、模型列表 URL 及接入点级上游协议 | CustomCliConfig, modelUrl, routeTargetProtocol, manualModels |
@@ -405,3 +407,14 @@ export interface NewType {
 ---
 **版本**: 3.0.3
 **更新日期**: 2026-05-25
+
+## 架构与数据管理重构（2026-10-24）
+
+- [electron-api.ts](electron-api.ts): preload 与 Renderer 共用的 ElectronAPI 类型契约
+- [renderer-config.ts](renderer-config.ts): Renderer 配置/偏好契约，避免反向依赖 App
+- [config-commands.ts](config-commands.ts): 配置保存的按 ID 命令转换与 canonical 响应处理
+- [custom-cli-commands.ts](custom-cli-commands.ts): 直连配置逐 ID 修改/顺序/激活命令
+- [app-storage-contract.ts](app-storage-contract.ts): StateVersion、稳定 scope 和命令结果契约
+- [config-file-profile.ts](config-file-profile.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-command-channels.ts](route-command-channels.ts): 必须携带稳定版本的 route 写通道清单
+- [route-proxy.ts](route-proxy.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为

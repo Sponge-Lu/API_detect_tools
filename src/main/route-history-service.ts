@@ -8,6 +8,7 @@ import {
 } from '../shared/types/route-proxy';
 import { getCliTargetEndpoint } from '../shared/types/cli-config';
 import { unifiedConfigManager } from './unified-config-manager';
+import { getApplicationStorage } from './storage/application-storage';
 
 const WINDOW_48H_MS = 48 * 60 * 60 * 1000;
 const BUCKET_2H_MS = 2 * 60 * 60 * 1000;
@@ -33,7 +34,14 @@ function getRouteAnalyticsBuckets(params: {
 }): RouteAnalyticsBucket[] {
   const routingConfig = unifiedConfigManager.getRoutingConfig();
   const cutoff = Date.now() - params.windowMs;
-  return Object.values(routingConfig.analytics.buckets).filter(bucket => {
+  const storage = getApplicationStorage();
+  const buckets = storage
+    ? (storage.documents.analyticsBuckets(
+        cutoff,
+        Number.MAX_SAFE_INTEGER
+      ) as RouteAnalyticsBucket[])
+    : Object.values(routingConfig.analytics.buckets);
+  return buckets.filter(bucket => {
     if (bucket.bucketStart < cutoff) return false;
     if (params.siteId && bucket.siteId !== params.siteId) return false;
     if (params.accountId && bucket.accountId !== params.accountId) return false;

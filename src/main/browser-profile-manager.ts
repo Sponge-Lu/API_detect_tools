@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 /**
  * 输入: FileSystem, ChromeManager, UnifiedConfigManager
  * 输出: 浏览器 Profile 管理（主 Profile 检测、隔离 Profile 创建、账户显式绑定、恢复后 slot 重绑）
@@ -567,114 +568,116 @@ export class BrowserProfileManager {
     reboundAccounts: number;
     createdSlots: number;
   }> {
-    await unifiedConfigManager.loadConfig();
-    const config = (unifiedConfigManager as any).config as {
-      accounts?: Array<{
-        id: string;
-        site_id: string;
-        auth_source?: string;
-        browser_profile_path?: string;
-        created_at?: number;
-      }>;
-    } | null;
+    if (!getApplicationStorage()) await unifiedConfigManager.loadConfig();
+    return unifiedConfigManager.mutateConfig(async () => {
+      const config = (unifiedConfigManager as any).config as {
+        accounts?: Array<{
+          id: string;
+          site_id: string;
+          auth_source?: string;
+          browser_profile_path?: string;
+          created_at?: number;
+        }>;
+      } | null;
 
-    if (!config?.accounts?.length) {
-      return { reboundAccounts: 0, createdSlots: 0 };
-    }
-
-    const rootDir = this.getIsolatedRootDir();
-    await fsp.mkdir(rootDir, { recursive: true });
-
-    let reboundAccounts = 0;
-    let createdSlots = 0;
-    let dirty = false;
-
-    const accountsBySite = new Map<string, typeof config.accounts>();
-    for (const account of config.accounts) {
-      const list = accountsBySite.get(account.site_id) || [];
-      list.push(account);
-      accountsBySite.set(account.site_id, list);
-    }
-
-    for (const [, siteAccounts] of accountsBySite) {
-      siteAccounts.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
-
-      const claimedSlots = new Set<number>();
-      const plannedSlots = new Map<string, number>();
-
-      // 优先按旧路径 slot-N 认领（同站多账户保持原映射）
-      for (const account of siteAccounts) {
-        if (account.auth_source !== 'isolated_profile') {
-          continue;
-        }
-        const preferred = this.extractSharedProfileSlot(account.browser_profile_path);
-        if (preferred !== null && !claimedSlots.has(preferred)) {
-          claimedSlots.add(preferred);
-          plannedSlots.set(account.id, preferred);
-        }
+      if (!config?.accounts?.length) {
+        return { reboundAccounts: 0, createdSlots: 0 };
       }
 
-      // 无有效旧 slot 或冲突的账户分配下一空闲 slot
-      for (const account of siteAccounts) {
-        if (account.auth_source === 'main_profile') {
-          if (account.browser_profile_path) {
-            const stillValid =
-              fs.existsSync(account.browser_profile_path) &&
-              this.extractSharedProfileSlot(account.browser_profile_path) === null;
-            if (!stillValid) {
-              account.browser_profile_path = undefined;
-              dirty = true;
-              reboundAccounts++;
+      const rootDir = this.getIsolatedRootDir();
+      await fsp.mkdir(rootDir, { recursive: true });
+
+      let reboundAccounts = 0;
+      let createdSlots = 0;
+      let dirty = false;
+
+      const accountsBySite = new Map<string, typeof config.accounts>();
+      for (const account of config.accounts) {
+        const list = accountsBySite.get(account.site_id) || [];
+        list.push(account);
+        accountsBySite.set(account.site_id, list);
+      }
+
+      for (const [, siteAccounts] of accountsBySite) {
+        siteAccounts.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+
+        const claimedSlots = new Set<number>();
+        const plannedSlots = new Map<string, number>();
+
+        // 优先按旧路径 slot-N 认领（同站多账户保持原映射）
+        for (const account of siteAccounts) {
+          if (account.auth_source !== 'isolated_profile') {
+            continue;
+          }
+          const preferred = this.extractSharedProfileSlot(account.browser_profile_path);
+          if (preferred !== null && !claimedSlots.has(preferred)) {
+            claimedSlots.add(preferred);
+            plannedSlots.set(account.id, preferred);
+          }
+        }
+
+        // 无有效旧 slot 或冲突的账户分配下一空闲 slot
+        for (const account of siteAccounts) {
+          if (account.auth_source === 'main_profile') {
+            if (account.browser_profile_path) {
+              const stillValid =
+                fs.existsSync(account.browser_profile_path) &&
+                this.extractSharedProfileSlot(account.browser_profile_path) === null;
+              if (!stillValid) {
+                account.browser_profile_path = undefined;
+                dirty = true;
+                reboundAccounts++;
+              }
             }
+            continue;
           }
-          continue;
-        }
 
-        if (account.auth_source !== 'isolated_profile') {
-          continue;
-        }
-
-        let slot = plannedSlots.get(account.id);
-        if (slot === undefined) {
-          slot = 2;
-          while (claimedSlots.has(slot)) {
-            slot++;
+          if (account.auth_source !== 'isolated_profile') {
+            continue;
           }
-          claimedSlots.add(slot);
-          plannedSlots.set(account.id, slot);
-        }
 
-        const profileDirBefore = path.join(rootDir, `${SHARED_PROFILE_PREFIX}${slot}`);
-        const existed = fs.existsSync(profileDirBefore);
-        const profileDir = await this.ensureIsolatedProfileSlot(slot, account.id);
-        if (!existed) {
-          createdSlots++;
-        }
+          let slot = plannedSlots.get(account.id);
+          if (slot === undefined) {
+            slot = 2;
+            while (claimedSlots.has(slot)) {
+              slot++;
+            }
+            claimedSlots.add(slot);
+            plannedSlots.set(account.id, slot);
+          }
 
-        // 恢复后同步持久化槽位号，检测/签到链路不再按账户列表位置计算
-        const mutableAccount = account as typeof account & { automation_slot?: number };
-        if (mutableAccount.automation_slot !== slot) {
-          mutableAccount.automation_slot = slot;
-          dirty = true;
-          reboundAccounts++;
-        }
+          const profileDirBefore = path.join(rootDir, `${SHARED_PROFILE_PREFIX}${slot}`);
+          const existed = fs.existsSync(profileDirBefore);
+          const profileDir = await this.ensureIsolatedProfileSlot(slot, account.id);
+          if (!existed) {
+            createdSlots++;
+          }
 
-        if (account.browser_profile_path !== profileDir) {
-          account.browser_profile_path = profileDir;
-          dirty = true;
-          reboundAccounts++;
+          // 恢复后同步持久化槽位号，检测/签到链路不再按账户列表位置计算
+          const mutableAccount = account as typeof account & { automation_slot?: number };
+          if (mutableAccount.automation_slot !== slot) {
+            mutableAccount.automation_slot = slot;
+            dirty = true;
+            reboundAccounts++;
+          }
+
+          if (account.browser_profile_path !== profileDir) {
+            account.browser_profile_path = profileDir;
+            dirty = true;
+            reboundAccounts++;
+          }
         }
       }
-    }
 
-    if (dirty) {
-      await unifiedConfigManager.saveConfig();
-      Logger.info(
-        `[BrowserProfile] 恢复后已重绑隔离 Profile: rebound=${reboundAccounts}, createdSlots=${createdSlots}`
-      );
-    }
+      if (dirty) {
+        await unifiedConfigManager.saveConfig();
+        Logger.info(
+          `[BrowserProfile] 恢复后已重绑隔离 Profile: rebound=${reboundAccounts}, createdSlots=${createdSlots}`
+        );
+      }
 
-    return { reboundAccounts, createdSlots };
+      return { reboundAccounts, createdSlots };
+    });
   }
 
   /**

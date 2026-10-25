@@ -24,6 +24,7 @@ import type {
   RouteModelSourceRef,
 } from '../shared/types/route-proxy';
 import { buildRouteApiKeyPriorityKey } from '../shared/types/route-proxy';
+import { expandRouteModelSourceKeys } from '../shared/utils/routeModelGrouping';
 import { isApiKeyActive } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo } from '../shared/types/site';
 import {
@@ -142,30 +143,6 @@ function normalizeOriginalModelOrder(
   }
 
   return normalized;
-}
-
-function expandDisplayItemSourceKeys(
-  item: RouteModelDisplayItem,
-  sourceByKey: Map<string, RouteModelSourceRef>
-): string[] {
-  const selectedModels = new Set(
-    (item.originalModelOrder || []).map(model => model.trim()).filter(model => model.length > 0)
-  );
-
-  for (const sourceKey of item.sourceKeys) {
-    const source = sourceByKey.get(sourceKey);
-    if (source?.originalModel) {
-      selectedModels.add(source.originalModel);
-    }
-  }
-
-  if (selectedModels.size === 0) {
-    return item.sourceKeys.filter(sourceKey => sourceByKey.has(sourceKey));
-  }
-
-  return Array.from(sourceByKey.values())
-    .filter(source => selectedModels.has(source.originalModel))
-    .map(source => source.sourceKey);
 }
 
 function buildCanonicalDisplayItems(
@@ -310,7 +287,7 @@ function buildCanonicalModelChannels(
     const disabledApiKeyPriorityKeys = buildDisabledPrioritySet(
       itemPriorityConfig.disabledApiKeyPriorityKeys
     );
-    const expandedSourceKeys = expandDisplayItemSourceKeys(item, sourceByKey);
+    const expandedSourceKeys = expandRouteModelSourceKeys(item, Array.from(sourceByKey.values()));
     const orderedSourceKeys = expandedSourceKeys.slice().sort((left, right) => {
       const originalOrder = normalizeOriginalModelOrder(
         item.originalModelOrder,

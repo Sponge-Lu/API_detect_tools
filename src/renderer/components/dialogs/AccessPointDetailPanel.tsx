@@ -48,7 +48,7 @@ import {
   type RouteAuthScheme,
 } from '../../../shared/types/site';
 import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
-import type { DetectionResult } from '../../App';
+import type { DetectionResult } from '../../../shared/types/renderer-config';
 import {
   CLI_TARGET_PROTOCOLS,
   CLI_UPSTREAM_PROTOCOLS,

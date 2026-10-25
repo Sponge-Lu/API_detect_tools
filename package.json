@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "3.1.3",
+  "version": "3.1.4",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": {
     "name": "API Hub Team",
@@ -11,13 +11,17 @@
     "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
   },
   "scripts": {
+    "prepare:sqlite": "pwsh -NoProfile -File scripts/prepare-sqlite.ps1",
+    "test:storage": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/run-storage-tests.js",
+    "verify:storage:packaged": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/package-storage-smoke.js",
+    "verify:storage:product": "npm run build && node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/package-product-storage-smoke.js",
     "predev": "node scripts/dev-cleanup.cjs",
     "dev": "node scripts/dev.cjs",
     "dev:main": "node scripts/dev-main.cjs",
     "dev:renderer": "vite --strictPort",
     "preview": "npm run build:renderer && node scripts/dev-main.cjs --preview",
     "build": "npm run build:main && npm run build:renderer",
-    "build:main": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.main.json",
+    "build:main": "node scripts/prepare-native.cjs && node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.main.json && node scripts/build-preload.cjs",
     "build:renderer": "node scripts/run-node-module.cjs typescript/bin/tsc && node scripts/run-node-module.cjs vite/bin/vite.js build",
     "repair:legacy-accounts": "node scripts/repair-legacy-accounts.cjs",
     "migrate:config-v224-to-v301": "node scripts/migrate-config-v224-to-v301.cjs",
@@ -48,6 +52,7 @@
     "@iarna/toml": "^2.2.5",
     "@tanstack/react-virtual": "^3.13.12",
     "axios": "^1.6.0",
+    "better-sqlite3": "11.10.0",
     "electron-log": "^5.4.3",
     "jsonc-parser": "^3.3.1",
     "pinyin-pro": "^3.27.0",
@@ -62,6 +67,7 @@
     "@eslint/js": "^9.39.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
+    "@types/better-sqlite3": "7.6.13",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
@@ -72,6 +78,7 @@
     "clsx": "^2.1.1",
     "electron": "28.3.3",
     "electron-builder": "^24.0.0",
+    "esbuild": "0.21.5",
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
@@ -94,7 +101,7 @@
     "vitest": "^4.0.14"
   },
   "build": {
-    "buildVersion": "3.1.3",
+    "buildVersion": "3.1.4",
     "beforePack": "scripts/before-pack.cjs",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",

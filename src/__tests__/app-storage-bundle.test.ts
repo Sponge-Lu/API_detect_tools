@@ -26,9 +26,41 @@ describe('app storage bundle', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.resetModules();
     vi.clearAllMocks();
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('reads only portable domains while retaining manifest domains in full backups', async () => {
+    const storageModule = await import('../main/storage/application-storage');
+    const { STORAGE_DOCUMENT_PATHS } = await import(
+      '../main/storage/repositories/document-mapping'
+    );
+    const { createAppStorageBundle } = await import('../main/app-storage-bundle');
+    const snapshot = vi.fn().mockResolvedValue({});
+    vi.spyOn(storageModule, 'getApplicationStorage').mockReturnValue({
+      root: userDataDir,
+      documentId: (filename: string) =>
+        Object.entries(STORAGE_DOCUMENT_PATHS).find(
+          ([, relative]) => path.resolve(userDataDir, relative) === path.resolve(filename)
+        )?.[0],
+      snapshotDocuments: snapshot,
+      database: { connection: { pragma: () => 1 } },
+    } as unknown as ReturnType<typeof storageModule.getApplicationStorage>);
+    const roots = { userData: userDataDir, home: homeDir, temp: tempRoot };
+    await createAppStorageBundle({ mode: 'portable-config', roots });
+    expect(snapshot).toHaveBeenLastCalledWith([
+      'stable-config',
+      'custom-cli-configs',
+      'config-file-profiles',
+    ]);
+    await createAppStorageBundle({ mode: 'full-manifest', roots });
+    expect(new Set(snapshot.mock.calls[1][0])).toEqual(
+      new Set(
+        Object.keys(STORAGE_DOCUMENT_PATHS).filter(id => id !== 'model-registry-source-state')
+      )
+    );
   });
 
   it('creates portable bundles with only stable-config and custom-cli-configs', async () => {
@@ -176,7 +208,11 @@ describe('app storage bundle', () => {
     expect(entryIds).not.toContain('credit-settings');
 
     const customCliFile = bundle.files.find(file => file.entryId === 'custom-cli-configs');
-    expect(customCliFile?.content).toContain('"apiKey":"sk"');
+    const { decodePayload } = await import('../main/storage/database/payload-codec');
+    expect(
+      decodePayload<{ apiKey: string }>(JSON.parse(customCliFile!.content).payload).apiKey
+    ).toBe('sk');
+    expect(customCliFile?.content).not.toContain('"apiKey":"sk"');
   });
 
   it('preserves local custom-cli-configs when an older full-manifest bundle omits it', async () => {
@@ -271,7 +307,7 @@ describe('app storage bundle', () => {
 
     const content = await createPortableAppStorageBundleContent(roots, true);
     expect(content).toContain('custom-cli-configs');
-    expect(content).toContain('encrypted:v1:iv:tag:cipher');
+    expect(content).not.toContain('encrypted:v1:iv:tag:cipher');
     expect(content).not.toContain('credit-settings');
     expect(content).not.toContain('runtime-detection-cache');
 

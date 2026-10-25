@@ -317,3 +317,9 @@ export function useNewFeature(): UseNewFeatureReturn {
 ---
 **版本**: 3.1.3
 **更新日期**: 2026-10-22
+
+## 架构与数据管理重构（2026-10-24）
+
+- [useApplicationData.ts](useApplicationData.ts): 应用数据加载、恢复事件和旧响应屏蔽
+- [useSiteDetection.ts](useSiteDetection.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [useManagedAutoRefresh.ts](useManagedAutoRefresh.ts): CLI 管理态自动刷新策略与提交后发布

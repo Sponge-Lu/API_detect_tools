@@ -11,6 +11,7 @@ const WAIT_MAX_ATTEMPTS = 60;
 const projectRoot = path.resolve(__dirname, '..');
 
 function compileMainProcess() {
+  require('./prepare-native.cjs');
   const runner = path.join(__dirname, 'run-node-module.cjs');
   const result = spawnSync(
     process.execPath,
@@ -28,6 +29,7 @@ function compileMainProcess() {
   if ((result.status ?? 0) !== 0) {
     process.exit(result.status ?? 1);
   }
+  require('./build-preload.cjs');
 }
 
 function wait(ms) {

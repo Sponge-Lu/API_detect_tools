@@ -61,6 +61,7 @@ const siteBreakers = new Map<string, SiteBreaker>();
 
 /** 等待 flush 的内存缓冲区 */
 const pendingUpdates = new Map<string, RouteChannelStats>();
+let statsFlush: Promise<void> | undefined;
 /** 路径状态已直接写入内存 routing，仅待落盘 */
 let routePathStatesDirty = false;
 let flushTimer: NodeJS.Timeout | null = null;
@@ -98,32 +99,62 @@ function scheduleFlush() {
   if (flushTimer) return;
   flushTimer = setTimeout(async () => {
     flushTimer = null;
-    await flushToStorage();
+    await flushToStorage().catch(error => log.error('Scheduled stats flush failed', error));
   }, 3000);
 }
 
 /** 将缓冲区写入 unified-config-manager */
 export async function flushToStorage(): Promise<void> {
+  if (statsFlush) {
+    await statsFlush;
+    return flushToStorage();
+  }
+  const operation = persistPendingStats();
+  statsFlush = operation;
+  try {
+    await operation;
+  } finally {
+    if (statsFlush === operation) statsFlush = undefined;
+  }
+}
+
+async function persistPendingStats(): Promise<void> {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
   const pathStatesDirty = routePathStatesDirty;
   routePathStatesDirty = false;
   if (pendingUpdates.size === 0) {
     if (pathStatesDirty) {
       await unifiedConfigManager.persistRouteRuntimeState().catch(err => {
+        routePathStatesDirty = true;
         log.error('flush route path states failed', err);
+        throw err;
       });
     }
     return;
   }
-  const updates = Array.from(pendingUpdates.values());
-  pendingUpdates.clear();
+  const batch = new Map(pendingUpdates);
+  const updates = Array.from(batch.values());
   // 缓冲对象是内存中已聚合的最终计数，整对象覆写；
   // 禁止回退到逐条增量记账（会丢掉首个窗口的计数并虚增 neutralCount）。
   // 该写入同时落盘 routePathStates。
   try {
     await unifiedConfigManager.upsertRouteChannelStatsBatch(updates);
+    for (const [key, value] of batch)
+      if (pendingUpdates.get(key) === value) pendingUpdates.delete(key);
   } catch (err) {
+    routePathStatesDirty ||= pathStatesDirty;
     log.error('flush stats failed', err);
+    throw err;
   }
+}
+
+export function invalidateRouteStats(): void {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  pendingUpdates.clear();
+  siteBreakers.clear();
+  routePathStatesDirty = false;
 }
 
 /**
@@ -138,20 +169,21 @@ export function recordOutcome(
   const now = Date.now();
 
   // 先从内存缓冲或磁盘读取
-  const stats: RouteChannelStats =
-    pendingUpdates.get(k) ||
-    (() => {
-      const routing = unifiedConfigManager.getRoutingConfig();
-      return (
-        routing.stats[k] || {
-          ...key,
-          successCount: 0,
-          failureCount: 0,
-          neutralCount: 0,
-          consecutiveFailures: 0,
-        }
-      );
-    })();
+  const stats: RouteChannelStats = {
+    ...(pendingUpdates.get(k) ||
+      (() => {
+        const routing = unifiedConfigManager.getRoutingConfig();
+        return (
+          routing.stats[k] || {
+            ...key,
+            successCount: 0,
+            failureCount: 0,
+            neutralCount: 0,
+            consecutiveFailures: 0,
+          }
+        );
+      })()),
+  };
 
   if (outcome === 'success') {
     stats.successCount++;
@@ -169,6 +201,7 @@ export function recordOutcome(
   if (meta?.latencyMs !== undefined) stats.lastLatencyMs = meta.latencyMs;
 
   pendingUpdates.set(k, stats);
+  unifiedConfigManager.getRoutingConfig().stats[k] = stats;
   scheduleFlush();
 }
 

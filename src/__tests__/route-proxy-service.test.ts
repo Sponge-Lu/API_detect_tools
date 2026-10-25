@@ -33,6 +33,7 @@ vi.mock('../main/utils/logger', () => ({
 
 vi.mock('../main/unified-config-manager', () => ({
   unifiedConfigManager: {
+    mutateConfig: async <T>(operation: () => Promise<T>) => operation(),
     saveConfig: vi.fn(async () => undefined),
   },
 }));

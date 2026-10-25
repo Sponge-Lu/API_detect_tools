@@ -129,20 +129,14 @@ describe('Primitive Performance Optimization - GPU Accelerated Animations', () =
           if (card) {
             const classList = card.className;
 
-            // Verify GPU acceleration hints are present
-            const hasWillChange = classList.includes('[will-change:');
-            const hasTranslateZ = classList.includes('[transform:translateZ(0)]');
-            const hasBackfaceVisibility = classList.includes('[backface-visibility:');
+            // 卡片不再做 transform 动画，因此不再强制 translateZ / will-change
+            // （无动画时强制分层会让文字发虚且白占显存）
+            expect(classList).not.toContain('[transform:translateZ(0)]');
 
-            // At least one GPU acceleration technique should be present
-            const hasGPUAcceleration = hasWillChange || hasTranslateZ || hasBackfaceVisibility;
-
-            expect(hasGPUAcceleration).toBe(true);
-
-            // Verify transition only uses performant properties
+            // 过渡只允许出现在低成本属性上
             const hasPerformantTransition =
-              classList.includes('transition-[transform') ||
-              classList.includes('transition-[transform,opacity');
+              classList.includes('transition-[box-shadow') ||
+              classList.includes('transition-colors');
 
             expect(hasPerformantTransition).toBe(true);
           }
@@ -170,14 +164,9 @@ describe('Primitive Performance Optimization - GPU Accelerated Animations', () =
         if (table) {
           const classList = table.className;
 
-          // Verify GPU acceleration hints are present
-          const hasWillChange = classList.includes('[will-change:');
-          const hasTranslateZ = classList.includes('[transform:translateZ(0)]');
-
-          // At least one GPU acceleration technique should be present
-          const hasGPUAcceleration = hasWillChange || hasTranslateZ;
-
-          expect(hasGPUAcceleration).toBe(true);
+          // 表格容器只做静态呈现，不强制创建合成层
+          expect(classList).not.toContain('[transform:translateZ(0)]');
+          expect(classList).toContain('transition-[box-shadow,border-color]');
         }
       }),
       { numRuns: 100 }

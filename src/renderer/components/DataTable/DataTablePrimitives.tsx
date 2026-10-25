@@ -11,7 +11,7 @@ export interface DataTableProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function DataTable({
   variant = 'standard',
-  blur = true,
+  blur = false,
   staggerAnimation = false,
   minWidth,
   'aria-label': ariaLabel,
@@ -22,13 +22,12 @@ export function DataTable({
 }: DataTableProps) {
   const baseStyles = `
     relative
-    rounded-[var(--radius-lg)]
+    rounded-[var(--radius-md)]
     overflow-hidden
-    [will-change:transform,opacity]
-    [transform:translateZ(0)]
-    transition-[transform,opacity]
-    duration-[var(--duration-normal)]
-    [transition-timing-function:var(--ease-standard)]
+    border
+    border-[var(--line-soft)]
+    transition-[box-shadow,border-color]
+    duration-[var(--duration-fast)]
   `
     .replace(/\s+/g, ' ')
     .trim();
@@ -46,16 +45,14 @@ export function DataTable({
     `
       .replace(/\s+/g, ' ')
       .trim(),
-    inset: `bg-transparent`.replace(/\s+/g, ' ').trim(),
+    inset: `bg-transparent border-transparent`.replace(/\s+/g, ' ').trim(),
   };
 
   const blurStyles =
     blur && variant !== 'inset'
       ? `
-    backdrop-blur-[12px]
-    [-webkit-backdrop-filter:blur(12px)]
-    bg-opacity-95
-    [will-change:backdrop-filter]
+    backdrop-blur-[8px]
+    [-webkit-backdrop-filter:blur(8px)]
   `
           .replace(/\s+/g, ' ')
           .trim()
@@ -104,16 +101,15 @@ export function DataTableHeader({
   ...props
 }: DataTableHeaderProps) {
   const baseStyles = `
-    px-[var(--spacing-lg)]
-    py-[var(--spacing-md)]
-    bg-[var(--surface-2)]/80
+    px-[var(--spacing-md)]
+    py-2
+    bg-[var(--surface-2)]
     border-b
     border-[var(--line-soft)]
-    text-[13px]
-    font-semibold
+    text-[11px]
+    font-medium
     text-[var(--text-secondary)]
-    uppercase
-    tracking-[0.08em]
+    tracking-[0.01em]
     select-none
   `
     .replace(/\s+/g, ' ')
@@ -124,7 +120,6 @@ export function DataTableHeader({
     sticky
     top-0
     z-[var(--z-sticky)]
-    backdrop-blur-[12px]
   `
         .replace(/\s+/g, ' ')
         .trim()
@@ -179,17 +174,14 @@ export function DataTableRow({
   );
 
   const baseStyles = `
-    min-h-[44px]
-    px-[var(--spacing-lg)]
-    py-[var(--spacing-md)]
+    min-h-[40px]
+    px-[var(--spacing-md)]
+    py-2
     border-b
     border-[var(--line-soft)]
     last:border-b-0
-    [will-change:transform,opacity,background-color]
-    [transform:translateZ(0)]
-    transition-[transform,opacity,background-color]
-    duration-[var(--duration-fast)]
-    [transition-timing-function:var(--ease-standard)]
+    transition-colors
+    duration-[var(--duration-hover)]
   `
     .replace(/\s+/g, ' ')
     .trim();
@@ -283,16 +275,16 @@ export function DataTableCell({
 
   const headerStyles = header
     ? `
-    text-[13px]
-    font-semibold
+    text-[11px]
+    font-medium
     text-[var(--text-secondary)]
-    uppercase
-    tracking-[0.08em]
+    tracking-[0.01em]
   `
         .replace(/\s+/g, ' ')
         .trim()
     : `
-    text-[15px]
+    text-[13px]
+    tabular-nums
     text-[var(--text-primary)]
   `
         .replace(/\s+/g, ' ')

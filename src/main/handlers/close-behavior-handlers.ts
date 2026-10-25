@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 窗口关闭行为相关 IPC 处理器
  *
@@ -11,7 +12,6 @@
  * - PROJECT_INDEX.md
  */
 
-import { ipcMain } from 'electron';
 import Logger from '../utils/logger';
 import type { CloseBehaviorManager, CloseBehaviorSettings } from '../close-behavior-manager';
 
@@ -27,7 +27,7 @@ export const CLOSE_BEHAVIOR_CHANNELS = {
 
 export function registerCloseBehaviorHandlers(closeBehaviorManager: CloseBehaviorManager): void {
   // 获取当前设置
-  ipcMain.handle(CLOSE_BEHAVIOR_CHANNELS.GET_SETTINGS, async () => {
+  handleStorageIpc(CLOSE_BEHAVIOR_CHANNELS.GET_SETTINGS, async () => {
     try {
       const settings = closeBehaviorManager.getSettings();
       return { success: true, data: settings };
@@ -38,7 +38,7 @@ export function registerCloseBehaviorHandlers(closeBehaviorManager: CloseBehavio
   });
 
   // 保存设置
-  ipcMain.handle(
+  handleStorageIpc(
     CLOSE_BEHAVIOR_CHANNELS.SAVE_SETTINGS,
     async (_, settings: CloseBehaviorSettings) => {
       try {
@@ -52,7 +52,7 @@ export function registerCloseBehaviorHandlers(closeBehaviorManager: CloseBehavio
   );
 
   // 处理对话框响应
-  ipcMain.handle(
+  handleStorageIpc(
     CLOSE_BEHAVIOR_CHANNELS.DIALOG_RESPONSE,
     async (_, response: { action: 'quit' | 'minimize'; remember: boolean }) => {
       try {
@@ -66,7 +66,7 @@ export function registerCloseBehaviorHandlers(closeBehaviorManager: CloseBehavio
   );
 
   // 最小化到托盘
-  ipcMain.handle(CLOSE_BEHAVIOR_CHANNELS.MINIMIZE_TO_TRAY, async () => {
+  handleStorageIpc(CLOSE_BEHAVIOR_CHANNELS.MINIMIZE_TO_TRAY, async () => {
     try {
       closeBehaviorManager.minimizeToTray();
       return { success: true };
@@ -77,7 +77,7 @@ export function registerCloseBehaviorHandlers(closeBehaviorManager: CloseBehavio
   });
 
   // 退出应用
-  ipcMain.handle(CLOSE_BEHAVIOR_CHANNELS.QUIT_APP, async () => {
+  handleStorageIpc(CLOSE_BEHAVIOR_CHANNELS.QUIT_APP, async () => {
     try {
       closeBehaviorManager.quitApp();
       return { success: true };

@@ -6,6 +6,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigProfilesSection } from '../renderer/components/Route/ConfigProfilesSection';
+import type { DshRoutingStatus } from '../shared/types/dsh-integration';
+import { parse } from 'yaml';
 
 vi.mock('../renderer/store/toastStore', () => ({
   toast: {
@@ -65,6 +67,219 @@ beforeEach(() => {
   config.previewDirectEdit.mockResolvedValue({ files: [] });
   config.previewRouteKeyRotation.mockResolvedValue({ transactionId: 'rotation-tx', files: [] });
   config.commit.mockResolvedValue(undefined);
+});
+
+describe('DSH builtin configuration card', () => {
+  function setup(overrides: Partial<DshRoutingStatus> = {}) {
+    const card = makeProfile({
+      id: 'legacy-dsh',
+      name: 'DeepSeek Harness',
+      isExample: true,
+      builtin: { clientType: 'deepseekHarness', version: 1, fingerprint: 'test' },
+      dsh: {},
+      files: [
+        {
+          id: 'patch',
+          path: 'C:/test/dsh/cordis.patch.yml',
+          template:
+            '- id: llm-deepseek\n  config:\n    models:\n      - id: "{{MODEL}}"\n        name: "{{MODEL}}"\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: "{{MODEL}}"\n',
+          format: 'yaml',
+        },
+        {
+          id: 'credentials',
+          path: 'C:/test/dsh/.credentials.yaml',
+          template: 'version: 1',
+          format: 'yaml',
+        },
+      ],
+      localRouteCredential: { id: 'key', apiKey: 'sk-dsh-test', createdAt: 1 },
+      revision: 2,
+    });
+    api().load.mockResolvedValue([card]);
+    api().getTargetCatalog.mockResolvedValue([
+      { ...LOCAL_ROUTE_CATALOG[0], allModels: ['local-a', 'local-b'] },
+      {
+        value: 'managed:s:a',
+        kind: 'managed',
+        label: 'Provider',
+        available: true,
+        allModels: ['provider-a'],
+        models: ['provider-a'],
+        apiKeys: [],
+      },
+    ]);
+    const status = {
+      installed: true,
+      configured: true,
+      running: false,
+      drift: ['ok'],
+      expectedBaseUrl: 'http://127.0.0.1:3210',
+      configuredModelCount: 2,
+      sessionsOnLegacyProvider: 2,
+      sessionsTotal: 3,
+      matchedModelSourceId: 'local-route',
+      summary: 'DSH 已接入',
+      ...overrides,
+    };
+    const integration = {
+      status: vi.fn().mockResolvedValue({ ok: true, data: status }),
+      migrateSessions: vi.fn().mockResolvedValue({ ok: true, data: { changedRefs: 2 } }),
+    };
+    Object.assign(window.electronAPI, { dshIntegration: integration });
+    return { card, integration };
+  }
+
+  it('keeps only DSH advanced actions immediately below basic information', async () => {
+    setup();
+    render(<ConfigProfilesSection />);
+    const card = await screen.findByLabelText('DeepSeek Harness 配置卡片');
+    // 卡片只保留配置类字段，DSH 的接入状态与待迁移会话不再在卡片上展示
+    expect(within(card).queryByText('接入状态')).not.toBeInTheDocument();
+    expect(within(card).queryByText('待迁移会话')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('DeepSeek Harness 配置卡片'));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByRole('region', { name: 'DSH 接入设置' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('DSH 模型来源')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('子 Agent 可用模型')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('DSH 已接入')).not.toBeInTheDocument();
+    const basic = within(dialog).getByText('基本信息').closest('section');
+    const advanced = within(dialog).getByLabelText('DSH 高级操作');
+    expect(basic?.nextElementSibling).toBe(advanced);
+    expect(
+      advanced.compareDocumentPosition(within(dialog).getByText('文件规则')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: '官方账号登录' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('group', { name: '预览写入模式' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '添加文件' })).toBeDisabled();
+    expect(within(dialog).getAllByLabelText('DeepSeek Harness 文件路径')[0]).toHaveAttribute(
+      'readonly'
+    );
+  });
+
+  it('persists model source and default model while retaining the local route and previews both files', async () => {
+    const { card } = setup();
+    Object.assign(card, { dsh: { modelSourceId: 'managed:s:a' } });
+    render(<ConfigProfilesSection />);
+    fireEvent.click(await screen.findByLabelText('DeepSeek Harness 配置卡片'));
+    fireEvent.change(screen.getByLabelText('DeepSeek Harness 模型'), {
+      target: { value: 'provider-a' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '预览写入' }));
+    await waitFor(() =>
+      expect(api().preview).toHaveBeenCalledWith({
+        profileId: 'legacy-dsh',
+        expectedRevision: 2,
+        applyMode: 'merge',
+      })
+    );
+    expect(api().upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({
+          target: { kind: 'local-route', model: 'provider-a' },
+          dsh: expect.objectContaining({ modelSourceId: 'managed:s:a' }),
+        }),
+      })
+    );
+  });
+
+  it('updates the model template between all models and one model without changing subagent settings', async () => {
+    setup();
+    render(<ConfigProfilesSection />);
+    await screen.findByLabelText('DeepSeek Harness 配置卡片');
+    fireEvent.click(screen.getByLabelText('DeepSeek Harness 配置卡片'));
+    expect(screen.getByRole('option', { name: '全部模型（2 个）' })).toBeInTheDocument();
+    // 配置模板默认隐藏，点击文件行的开关后才展开为 1 行 3 列
+    expect(screen.queryByLabelText('DeepSeek Harness 文件模板')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('DeepSeek Harness 文件 1 配置模板开关'));
+    const template = screen.getAllByLabelText(
+      'DeepSeek Harness 文件模板'
+    )[0] as HTMLTextAreaElement;
+    const rows = () =>
+      parse(template.value) as Array<{
+        id: string;
+        config: { models?: Array<{ id: string }>; enabled?: boolean; allowedModels?: unknown[] };
+      }>;
+    const models = () =>
+      rows()
+        .find(item => item.id === 'llm-deepseek')
+        ?.config.models?.map(model => model.id);
+    expect(models()).toEqual(['local-a', 'local-b']);
+    expect(template.value).not.toContain('subagent-model-selection-settings');
+    const policy = rows().find(item => item.id === 'subagent-model-selection-settings')?.config;
+    fireEvent.change(screen.getByLabelText('DeepSeek Harness 模型'), {
+      target: { value: 'local-b' },
+    });
+    expect(models()).toEqual(['local-b']);
+    expect(rows().find(item => item.id === 'subagent-model-selection-settings')?.config).toEqual(
+      policy
+    );
+    fireEvent.change(screen.getByLabelText('DeepSeek Harness 模型'), { target: { value: '' } });
+    expect(models()).toEqual(['local-a', 'local-b']);
+  });
+
+  it('previews restoring DSH configuration before committing it', async () => {
+    setup();
+    api().preview.mockResolvedValue({
+      transactionId: 'restore-dsh',
+      operation: 'dsh-rollback',
+      files: [],
+    });
+    render(<ConfigProfilesSection />);
+    fireEvent.click(await screen.findByLabelText('DeepSeek Harness 配置卡片'));
+    fireEvent.click(screen.getByRole('button', { name: '预览恢复接入前配置' }));
+    await waitFor(() =>
+      expect(api().preview).toHaveBeenCalledWith({
+        profileId: 'legacy-dsh',
+        expectedRevision: 2,
+        restoreDsh: true,
+      })
+    );
+    expect(api().commit).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: '确认写入' }));
+    await waitFor(() =>
+      expect(api().commit).toHaveBeenCalledWith({ transactionId: 'restore-dsh' })
+    );
+  });
+
+  it('requires DSH to exit before migrating existing sessions', async () => {
+    const { integration } = setup({ running: true });
+    render(<ConfigProfilesSection />);
+    await screen.findByLabelText('DeepSeek Harness 配置卡片');
+    fireEvent.click(screen.getByLabelText('DeepSeek Harness 配置卡片'));
+    expect(screen.getByRole('button', { name: '迁移旧会话' })).toBeDisabled();
+    expect(integration.migrateSessions).not.toHaveBeenCalled();
+  });
+
+  it('migrates old sessions explicitly and refreshes status', async () => {
+    const { integration } = setup();
+    render(<ConfigProfilesSection />);
+    await screen.findByLabelText('DeepSeek Harness 配置卡片');
+    fireEvent.click(screen.getByLabelText('DeepSeek Harness 配置卡片'));
+    fireEvent.click(screen.getByRole('button', { name: '迁移旧会话' }));
+    await waitFor(() => expect(integration.migrateSessions).toHaveBeenCalledOnce());
+    await waitFor(() => expect(integration.status).toHaveBeenCalledTimes(2));
+  });
+
+  it('refreshes DSH model choices from detection while the configuration card stays open', async () => {
+    const { integration } = setup();
+    render(<ConfigProfilesSection />);
+    await screen.findByLabelText('DeepSeek Harness 配置卡片');
+    fireEvent.click(screen.getByLabelText('DeepSeek Harness 配置卡片'));
+    const previous = (await integration.status.mock.results[0].value).data;
+    integration.status.mockResolvedValue({
+      ok: true,
+      data: {
+        ...previous,
+        modelSources: [
+          { id: 'local-route', kind: 'local-route', label: '本地路由', models: ['new-model'] },
+        ],
+      },
+    });
+    fireEvent(window, new Event('focus'));
+    expect(await screen.findByRole('option', { name: 'new-model' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'local-a' })).not.toBeInTheDocument();
+  });
 });
 
 describe('ConfigProfilesSection UI refresh', () => {
@@ -201,6 +416,11 @@ describe('ConfigProfilesSection UI refresh', () => {
     expect(card).toHaveClass('shadow-[var(--shadow-md)]', 'hover:shadow-[var(--shadow-lg)]');
     expect(card).toHaveClass('bg-[var(--surface-2)]');
     expect(card).toHaveClass('cursor-pointer');
+
+    // 标题下的副标题整行已移除（信息与「配置目标」字段重复），不再占位
+    const cardHeader = card.firstElementChild as HTMLElement;
+    expect(within(cardHeader).queryByText('本地路由')).not.toBeInTheDocument();
+    expect(cardHeader.querySelector('p')).toBeNull();
 
     fireEvent.click(card);
     expect(await screen.findByText('基本信息')).toBeInTheDocument();

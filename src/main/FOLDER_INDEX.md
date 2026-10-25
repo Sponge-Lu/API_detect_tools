@@ -4,6 +4,8 @@
 
 ## 架构说明
 
+`storage/database/`：SQLite schema、注入路径的连接、同步事务与校验快照；未在模块导入时打开数据库。
+
 **职责**: Electron 主进程，处理应用生命周期、窗口管理、IPC 通信、后端业务逻辑
 
 **特点**:
@@ -47,6 +49,7 @@
 | **custom-cli-config-service.ts** | 直连接入点持久化、旧 CLI 协议迁移、虚拟路由标识与删除后的 affinity 清理 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **config-file-profile-service.ts** | v3 配置方案、独立本地路由凭证、可用目标/模型域、结构化合并/覆盖、revision 文件事务、删除 affinity 清理和增量对话记录扫描 | `upsertConfigFileProfile()`, `previewConfigFileProfileRouteKeyRotation()`, `deleteConfigFileProfile()`, `scanSavedSessionRecordsWithDiagnostics()` |
 | **dsh-integration-service.ts** | DSH 接入：检测 profile/patch/凭据状态、从路由运行时派生 baseURL/密钥/模型目录、注释保留式改写 cordis.patch.yml、备份与回滚、存量会话 provider 迁移 | `detectDshRouting()`, `enableDshSessionRouting()`, `rollbackDshSessionRouting()`, `migrateDshSessionProviders()` |
+| **dsh-config-file-profile.ts** | DSH 内置配置卡片：旧凭证方案迁移、专用文件校验、模型来源和独立路由凭据解析 | `createDshConfigFileProfile()`, `migrateDshConfigFileProfiles()`, `resolveDshProfileConfig()` |
 | **route-state-affinity-service.ts** | Stateful Responses 本地亲和映射、非敏感 profile 分类摘要与按 profile/site/account/API Key 实体清理；兼容清理旧 Conversation sidecar 记录 | `summarizeProfile()`, `removeByProfile()`, `removeBySites()`, `removeByAccount()`, `removeByApiKey()` |
 | **route-session-activity-service.ts** | RouteInstance 高频 `lastRequestAt` sidecar，按 instance/profile 合并写入、TTL/容量压缩、启动 hydrate 与退出 flush | `hydrate()`, `touch()`, `flush()`, `removeByProfile()` |
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `modelUrl`（为空时回退 `baseUrl`）获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
@@ -70,7 +73,7 @@
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 之间执行单次无损子集转换，覆盖文本、函数工具、共享 `tool_choice`/并行调用控制、思考强度、流式 SSE 与非流式 JSON；不可等价字段以 `CliProtocolAdapterError` 中立跳过候选 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **protocol-sse-transformer.ts** | 协议对之间的增量 SSE 状态机，处理任意传输/UTF-8 分片、文本/工具/usage/error/terminal 事件与下游生命周期 | `IncrementalProtocolSseTransformer`, `ProtocolSseTransformError` |
 | **streaming-protocol-validator.ts** | Messages、Responses 与 Chat Completions 的有界增量 SSE 协议校验，维护终止、输出、usage 与工具参数状态 | `createIncrementalStreamingValidator()`, `StreamingProtocolValidationError` |
-| **route-model-registry-service.ts** | 模型注册表来源聚合、真实直连多 Key/托管本地 Key 模型候选、手工/显式 override 展示项维护与厂商优先级配置 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
+| **route-model-registry-service.ts** | 模型注册表来源聚合、真实直连多 Key/托管本地 Key 模型候选、已选重定向自动收录与排除、手工/显式 override 展示项维护与厂商优先级配置 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将真实路由请求按 Messages、Responses、Chat Completions 等实际请求端点分轨聚合为 48h / 2h 成功率数据 | `getHistoryBuckets()` |
 | **route-stats-service.ts** | 路径级三态熔断（阶梯打开 2/10/30 分钟 → 半开单探测 → 成功闭合）、站点级熔断（连续传输异常 / 同站点同模型 404 类）、通道统计内存批量 flush；路径状态热路径不等待落盘 | `recordRoutePathOutcome()`, `beginRoutePathAttempt()`, `getRoutePathDisabledUntil()`, `sortChannelsByScore()` |
@@ -413,3 +416,40 @@ main.ts: app.whenReady()
 
 **版本**: 3.1.3
 **更新日期**: 2026-10-22
+
+## 架构与数据管理重构（2026-10-24）
+
+- [main.ts](main.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [preload.ts](preload.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [unified-config-manager.ts](unified-config-manager.ts): 稳定配置事务发布，保留期间更新的运行缓存
+- [runtime-cache-manager.ts](runtime-cache-manager.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [config-file-profile-service.ts](config-file-profile-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [custom-cli-config-service.ts](custom-cli-config-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-state-manager.ts](route-state-manager.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-stats-service.ts](route-stats-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-analytics-service.ts](route-analytics-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-session-activity-service.ts](route-session-activity-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-session-binding-service.ts](route-session-binding-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-state-affinity-service.ts](route-state-affinity-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [endpoint-test-state-service.ts](endpoint-test-state-service.ts): 相关行为回归测试
+- [route-history-service.ts](route-history-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-proxy-service.ts](route-proxy-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [backup-manager.ts](backup-manager.ts): 自动备份先节流后快照，强制备份与内容去重
+- [webdav-manager.ts](webdav-manager.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [close-behavior-manager.ts](close-behavior-manager.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [update-service.ts](update-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [token-service.ts](token-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [chrome-manager.ts](chrome-manager.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [browser-profile-manager.ts](browser-profile-manager.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [app-storage-bundle.ts](app-storage-bundle.ts): portable/full 配置包按所需域读取一致性快照
+- [app-storage-manifest.ts](app-storage-manifest.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [api-service.ts](api-service.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [config-file-backups.ts](config-file-backups.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+
+## 职责子模块（2026-10-24）
+
+- [storage/](storage/FOLDER_INDEX.md)
+- [config/](config/FOLDER_INDEX.md)
+- [auth/](auth/FOLDER_INDEX.md)
+- [clients/](clients/FOLDER_INDEX.md)
+- [browser-runtime/](browser-runtime/FOLDER_INDEX.md)

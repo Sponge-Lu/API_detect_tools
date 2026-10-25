@@ -16,7 +16,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { SiteConfig } from '../App';
+import type { SiteConfig } from '../../shared/types/renderer-config';
 import { DialogState, DialogType, initialDialogState } from '../components/ConfirmDialog';
 import { COLUMN_WIDTHS_VERSION, DEFAULT_COLUMN_WIDTHS } from '../../shared/constants';
 import type { RouteCliType } from '../../shared/types/route-proxy';

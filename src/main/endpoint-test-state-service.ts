@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 /**
  * 端点测试状态服务
  * 输入: 每个接入目标的端点选择与最新结果
@@ -46,6 +47,10 @@ function keepNewestTargets(
 }
 
 export class EndpointTestStateService {
+  invalidate(): void {
+    this.targets = {};
+    this.loaded = false;
+  }
   private readonly statePath: string;
   private targets: Record<string, EndpointTestTargetState> = {};
   private loaded = false;
@@ -64,6 +69,8 @@ export class EndpointTestStateService {
         normalize: normalizeState,
       });
     } catch (error: unknown) {
+      if (getApplicationStorage() && (error as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw error;
       const message = error instanceof Error ? error.message : String(error);
       Logger.warn(`端点测试状态读取失败，改用空状态: ${message}`);
     }

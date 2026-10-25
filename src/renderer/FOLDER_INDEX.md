@@ -216,3 +216,8 @@ SiteCard (站点卡片)
 ---
 **版本**: 3.1.3
 **更新日期**: 2026-10-22
+
+## 架构与数据管理重构（2026-10-24）
+
+- [App.tsx](App.tsx): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [electron-api.d.ts](electron-api.d.ts): Window.electronAPI 的唯一全局声明

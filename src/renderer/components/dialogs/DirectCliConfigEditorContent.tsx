@@ -186,14 +186,16 @@ function normalizeModelPricingState(
 function getQuotaTypeInfo(quotaType: number) {
   if (quotaType === 1) {
     return {
-      icon: <span className="text-[10px] font-bold leading-none text-[var(--warning)]">次</span>,
+      icon: (
+        <span className="text-[11px] font-semibold leading-none text-[var(--warning)]">次</span>
+      ),
       text: '按次',
       color: 'border-[var(--line-muted)] bg-[var(--warning-soft)] text-[var(--warning)]',
     };
   }
 
   return {
-    icon: <span className="text-[10px] font-bold leading-none text-[var(--accent)]">量</span>,
+    icon: <span className="text-[11px] font-semibold leading-none text-[var(--accent)]">量</span>,
     text: '按量',
     color: 'border-[var(--line-muted)] bg-[var(--accent-soft)] text-[var(--accent)]',
   };
@@ -658,7 +660,7 @@ function ConfigFileDisplay({
         <code className="text-sm font-mono text-[var(--text-primary)]">{file.path}</code>
         <button
           onClick={() => onCopy(file.path, file.content)}
-          className="flex items-center gap-1 px-2 py-1 text-xs rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all"
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-colors"
         >
           {isCopied ? (
             <>
@@ -735,7 +737,7 @@ function CliModelSelector({
         disabled={disabled}
         aria-label={ariaLabel}
         onClick={() => !disabled && setOpen(!open)}
-        className={`flex w-full min-w-0 items-center justify-between rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+        className={`flex w-full min-w-0 items-center justify-between rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-colors focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
           disabled ? 'cursor-not-allowed opacity-50' : 'hover:border-[var(--text-tertiary)]'
         }`}
       >
@@ -809,7 +811,7 @@ function CliModelSelector({
                   }}
                   className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
                     selectedModel === model
-                      ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
+                      ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)]'
                       : 'text-[var(--text-primary)] hover:bg-[var(--surface-1)]'
                   }`}
                 >
@@ -1839,7 +1841,7 @@ export function DirectCliConfigEditorContent({
                   添加
                 </button>
               </div>
-              <div className="flex flex-wrap gap-0.5 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1">
+              <div className="flex flex-wrap gap-0.5 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-1)_72%,transparent)] p-1">
                 {manualModels.length > 0 ? (
                   manualModels.map(model => (
                     <span
@@ -1953,7 +1955,7 @@ export function DirectCliConfigEditorContent({
                                 })
                               }
                               disabled={!setting.enabled}
-                              className={`h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs transition-all disabled:opacity-50 focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+                              className={`h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs transition-colors disabled:opacity-50 focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
                                 setting.targetProtocol
                                   ? 'text-[var(--text-primary)]'
                                   : 'text-[var(--text-tertiary)]'
@@ -2019,7 +2021,7 @@ export function DirectCliConfigEditorContent({
                                   <button
                                     type="button"
                                     onClick={handleCancelEdit}
-                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
+                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] active:scale-95"
                                   >
                                     <X className="h-3 w-3" />
                                     <span>取消</span>
@@ -2027,7 +2029,7 @@ export function DirectCliConfigEditorContent({
                                   <button
                                     type="button"
                                     onClick={handleSaveEdit}
-                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--accent)] bg-[var(--accent)]/10 px-2 py-1 text-xs text-[var(--accent)] transition-all hover:bg-[var(--accent)]/20 active:scale-95"
+                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] px-2 py-1 text-xs text-[var(--accent)] transition-colors hover:bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] active:scale-95"
                                   >
                                     <Check className="h-3 w-3" />
                                     <span>保存</span>
@@ -2041,7 +2043,7 @@ export function DirectCliConfigEditorContent({
                                       onClick={() => {
                                         void requestResetConfig();
                                       }}
-                                      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--warning)]/50 px-2 py-1 text-xs text-[var(--warning)] transition-all hover:bg-[var(--warning)]/10 active:scale-95"
+                                      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--warning)_50%,transparent)] px-2 py-1 text-xs text-[var(--warning)] transition-colors hover:bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] active:scale-95"
                                       title="重置为默认配置"
                                     >
                                       <RotateCcw className="h-3 w-3" />
@@ -2051,7 +2053,7 @@ export function DirectCliConfigEditorContent({
                                   <button
                                     type="button"
                                     onClick={toggleEditMode}
-                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
+                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] active:scale-95"
                                     title="切换到编辑模式"
                                   >
                                     <Edit2 className="h-3 w-3" />
@@ -2102,7 +2104,7 @@ export function DirectCliConfigEditorContent({
       </div>
 
       {showCliSection && showResetConfirm ? (
-        <div className="rounded-[var(--radius-md)] border border-[var(--warning)]/40 bg-[var(--warning)]/10 p-3">
+        <div className="rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] p-3">
           <div className="text-sm font-semibold text-[var(--text-primary)]">确认重置</div>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">
             确定要重置为默认配置吗？您的编辑内容将会丢失。

@@ -150,15 +150,16 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
 
 /**
  * 站点列表默认列宽版本号
- * 当 DEFAULT_COLUMN_WIDTHS 形状发生变化时递增；uiStore 会据此一次性重置已持久化的列宽
+ * 当 DEFAULT_COLUMN_WIDTHS 形状或默认值发生变化时递增；uiStore 会据此一次性重置已持久化的列宽
+ * v8: 收窄账户 / 刷新时间两列，为 History 弹性列让出空间
  */
-export const COLUMN_WIDTHS_VERSION = 7;
+export const COLUMN_WIDTHS_VERSION = 8;
 
 /** 站点列表默认列宽（像素）— 站点、账户、刷新时间拆列，History 列保留 24 个时间桶展示空间 + 固定统计区 */
 export const DEFAULT_COLUMN_WIDTHS = [
   180, // 站点名
-  112, // 账户
-  84, // 刷新时间
+  96, // 账户（收窄：账户名本身会省略号截断，无需占满一列）
+  72, // 刷新时间（收窄：内容只有 HH:mm 或「N天前」，4 字表头 + 内边距足够）
   84, // 余额
   70, // 今日消费（减少约一个汉字宽度）
   50, // 模型数（减少约一个汉字宽度，保留最小列宽）

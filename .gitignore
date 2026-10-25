@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Isolated storage verification, generated native packages and local npm downloads
+/.cache/architecture-refactor-tests/
+/.cache/storage-tests/
+/.cache/npm/
+
 # Build outputs
 dist/
 dist-renderer/
@@ -81,6 +86,9 @@ docs/*
 !docs/ARCHITECTURE.md
 !docs/DEVELOPMENT.md
 !docs/USER_GUIDE.md
+!docs/STORAGE_SCHEMA.md
+!docs/STORAGE_OPERATIONS.md
+!docs/ARCHITECTURE_REFACTOR_PROGRESS.md
 .ace-tool/
 .worktrees/
 outputs/

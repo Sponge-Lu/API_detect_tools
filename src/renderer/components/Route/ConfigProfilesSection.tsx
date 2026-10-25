@@ -1,3 +1,6 @@
+import { RuleEditor } from './ConfigProfileRuleEditor';
+import { ApplyPreviewPanel } from './ConfigProfilePreview';
+import { createProfile, encodeTarget, errorMessage } from './config-profile-view';
 /**
  * 配置文件卡片区
  * 输入: window.electronAPI.configFileProfiles (load/upsert/delete/preview/previewDirectEdit/commit/readFiles/...)
@@ -6,18 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Check,
-  Copy,
-  Eye,
-  EyeOff,
-  FileCog,
-  FilePlus2,
-  Plus,
-  RefreshCw,
-  Save,
-  Trash2,
-} from 'lucide-react';
+import { Check, Copy, Eye, FileCog, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import type {
   ConfigFileApplyMode,
   ConfigFileAuthMode,
@@ -27,135 +19,26 @@ import type {
   ConfigFileResolvedTargetValues,
   ConfigFileSnapshot,
   ConfigFileBackup,
-  ConfigFileTarget,
   ConfigFileTargetCatalogEntry,
 } from '../../../shared/types/config-file-profile';
-import { DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS } from '../../../shared/types/config-file-profile';
+
 import { BUILTIN_CLI_IDS, BUILTIN_CLI_TYPES } from '../../../shared/types/cli-config';
 import { AppButton } from '../AppButton/AppButton';
 import { AppCard } from '../AppCard';
 import { AppModal } from '../AppModal/AppModal';
-import { AppInput } from '../AppInput/AppInput';
-import { AppSelect } from '../AppSelect';
-import { AgentLogo, AgentLogoSelect } from '../AgentLogo';
+
+import { AgentLogo } from '../AgentLogo';
 import { toast } from '../../store/toastStore';
-
-function createFile(profileId: string): ConfigFileDefinition {
-  return {
-    id: `${profileId}:file:${crypto.randomUUID()}`,
-    path: '',
-    template: '',
-    format: 'auto',
-  };
-}
-
-function createProfile(): ConfigFileProfile {
-  const now = Date.now();
-  const id = crypto.randomUUID();
-  return {
-    id,
-    name: '新建配置',
-    files: [createFile(id)],
-    sessionRecordConnectors: [],
-    sessionRecordPaths: [],
-    target: { kind: 'local-route', model: null },
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-function encodeTarget(target: ConfigFileTarget): string {
-  if (target.kind === 'local-route') return 'local-route';
-  if (target.kind === 'direct') return `direct:${target.configId}`;
-  return `managed:${target.siteId}:${target.accountId}`;
-}
-
-function decodeTarget(value: string): ConfigFileTarget {
-  const [kind, first, second] = value.split(':');
-  if (kind === 'direct') return { kind: 'direct', configId: first, model: null };
-  if (kind === 'managed') {
-    return { kind: 'managed', siteId: first, accountId: second, model: null };
-  }
-  return { kind: 'local-route', model: null };
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
-
-const CREDENTIAL_ICON_BUTTON_CLASS =
-  'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50';
-
-function renderTemplatePreview(
-  template: string,
-  values: { baseUrl: string; apiKey: string; model: string }
-): string {
-  return template
-    .split(DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS.baseUrl)
-    .join(values.baseUrl)
-    .split(DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS.apiKey)
-    .join(values.apiKey)
-    .split(DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS.model)
-    .join(values.model);
-}
-
-type DiffLine = { kind: 'same' | 'add' | 'del'; text: string };
-
-/** 轻量行级 diff（LCS），不引入第三方库。 */
-function computeLineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = oldText.split('\n');
-  const newLines = newText.split('\n');
-  const table: number[][] = Array.from({ length: oldLines.length + 1 }, () =>
-    new Array<number>(newLines.length + 1).fill(0)
-  );
-  for (let i = oldLines.length - 1; i >= 0; i -= 1) {
-    for (let j = newLines.length - 1; j >= 0; j -= 1) {
-      table[i][j] =
-        oldLines[i] === newLines[j]
-          ? table[i + 1][j + 1] + 1
-          : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
-  }
-  const result: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < oldLines.length && j < newLines.length) {
-    if (oldLines[i] === newLines[j]) {
-      result.push({ kind: 'same', text: oldLines[i] });
-      i += 1;
-      j += 1;
-    } else if (table[i + 1][j] >= table[i][j + 1]) {
-      result.push({ kind: 'del', text: oldLines[i] });
-      i += 1;
-    } else {
-      result.push({ kind: 'add', text: newLines[j] });
-      j += 1;
-    }
-  }
-  while (i < oldLines.length) {
-    result.push({ kind: 'del', text: oldLines[i] });
-    i += 1;
-  }
-  while (j < newLines.length) {
-    result.push({ kind: 'add', text: newLines[j] });
-    j += 1;
-  }
-  return result;
-}
-
-function diffSummary(lines: DiffLine[]): { added: number; removed: number } {
-  return lines.reduce(
-    (acc, line) => {
-      if (line.kind === 'add') acc.added += 1;
-      if (line.kind === 'del') acc.removed += 1;
-      return acc;
-    },
-    { added: 0, removed: 0 }
-  );
-}
+import { isDshConfigProfile } from '../../../shared/config/dsh-client-config';
+import {
+  DshConfigControls,
+  getDshConfigModelSources,
+  useDshRoutingStatus,
+} from './DshConfigControls';
 
 export function ConfigProfilesSection() {
   const [profiles, setProfiles] = useState<ConfigFileProfile[]>([]);
+  const dsh = useDshRoutingStatus(profiles.some(isDshConfigProfile));
   const [savedResolvedValues, setSavedResolvedValues] = useState<
     Record<string, ConfigFileResolvedTargetValues>
   >({});
@@ -189,16 +72,28 @@ export function ConfigProfilesSection() {
   const [rotateKeyTarget, setRotateKeyTarget] = useState<ConfigFileProfile | null>(null);
   const [rotatingRouteKey, setRotatingRouteKey] = useState(false);
   const pendingProfileRefreshRef = useRef(false);
+  const profileGeneration = useRef(0);
+  const guardProfileResponse = useCallback(async <T,>(result: Promise<T>): Promise<T> => {
+    const generation = profileGeneration.current;
+    const value = await result;
+    if (generation !== profileGeneration.current)
+      throw new Error('应用数据已恢复，请重新预览或保存草稿');
+    return value;
+  }, []);
+  const reloadSequence = useRef(0);
+  const catalogSequence = useRef(0);
   const [deleteFileTarget, setDeleteFileTarget] = useState<{
     profileId: string;
     fileId: string;
   } | null>(null);
 
   const reload = useCallback(async () => {
+    const request = ++reloadSequence.current;
     const [loadedProfiles, targetCatalog] = await Promise.all([
       window.electronAPI.configFileProfiles.load(),
       window.electronAPI.configFileProfiles.getTargetCatalog?.() ?? Promise.resolve([]),
     ]);
+    if (request !== reloadSequence.current) return;
     const configProfiles = loadedProfiles.filter(profile => !profile.credentialOnly);
     setProfiles(configProfiles);
     setProfileBaselines(current => ({
@@ -212,13 +107,16 @@ export function ConfigProfilesSection() {
         .filter(profile => !profile.lastApplied)
         .map(async profile => {
           try {
-            const values = await window.electronAPI.configFileProfiles.resolveValues({ profile });
+            const values = await guardProfileResponse(
+              window.electronAPI.configFileProfiles.resolveValues({ profile })
+            );
             return values ? ([profile.id, values] as const) : null;
           } catch {
             return null;
           }
         })
     );
+    if (request !== reloadSequence.current) return;
     setSavedResolvedValues(
       Object.fromEntries(
         resolvedEntries.filter((entry): entry is NonNullable<typeof entry> => !!entry)
@@ -227,7 +125,11 @@ export function ConfigProfilesSection() {
   }, []);
 
   const refreshCatalog = useCallback(async () => {
-    setCatalog(await window.electronAPI.configFileProfiles.getTargetCatalog());
+    const request = ++catalogSequence.current;
+    const catalog = await guardProfileResponse(
+      window.electronAPI.configFileProfiles.getTargetCatalog()
+    );
+    if (request === catalogSequence.current) setCatalog(catalog);
   }, []);
 
   useEffect(() => {
@@ -235,8 +137,17 @@ export function ConfigProfilesSection() {
   }, [reload]);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.appData?.onChanged?.(({ domains }) => {
+    const unsubscribe = window.electronAPI.appData?.onChanged?.(({ domains, restored }) => {
       if (!domains.includes('config-file-profiles')) return;
+      if (restored) {
+        profileGeneration.current++;
+        reloadSequence.current++;
+        catalogSequence.current++;
+        setPreview(null);
+        setSnapshots({});
+        setSavedResolvedValues({});
+        setBackupDialog(null);
+      }
       if (hasUnsavedChanges) {
         pendingProfileRefreshRef.current = true;
         return;
@@ -268,11 +179,12 @@ export function ConfigProfilesSection() {
   const selectedProfile = profiles.find(profile => profile.id === selectedProfileId) || null;
   const applyProfile = profiles.find(profile => profile.id === applyProfileId) || null;
   const restoreProfile = profiles.find(profile => profile.id === restoreProfileId) || null;
-  const missingBuiltinCount = BUILTIN_CLI_TYPES.filter(
+  const missingBuiltinCount = [...BUILTIN_CLI_TYPES, 'deepseekHarness' as const].filter(
     clientType =>
       !profiles.some(
         profile =>
-          profile.builtin?.clientType === clientType || profile.id === BUILTIN_CLI_IDS[clientType]
+          profile.builtin?.clientType === clientType ||
+          (clientType !== 'deepseekHarness' && profile.id === BUILTIN_CLI_IDS[clientType])
       )
   ).length;
 
@@ -312,19 +224,23 @@ export function ConfigProfilesSection() {
   };
 
   const persistProfile = async (profile: ConfigFileProfile): Promise<ConfigFileProfile> => {
-    const saved = await window.electronAPI.configFileProfiles.upsert({
-      profile,
-      expectedRevision: persistedIds.has(profile.id) ? profile.revision : undefined,
-    });
+    const saved = await guardProfileResponse(
+      window.electronAPI.configFileProfiles.upsert({
+        profile,
+        expectedRevision: persistedIds.has(profile.id) ? profile.revision : undefined,
+      })
+    );
     setProfiles(current => current.map(item => (item.id === saved.id ? saved : item)));
     setProfileBaselines(current => ({ ...current, [saved.id]: saved }));
     setPersistedIds(current => new Set(current).add(saved.id));
     setHasUnsavedChanges(false);
     if (!saved.lastApplied) {
       try {
-        const values = await window.electronAPI.configFileProfiles.resolveValues({
-          profile: saved,
-        });
+        const values = await guardProfileResponse(
+          window.electronAPI.configFileProfiles.resolveValues({
+            profile: saved,
+          })
+        );
         if (values) setSavedResolvedValues(current => ({ ...current, [saved.id]: values }));
       } catch {
         setSavedResolvedValues(current => {
@@ -357,10 +273,12 @@ export function ConfigProfilesSection() {
         setRotateKeyTarget(saved);
         return;
       }
-      const updated = await window.electronAPI.configFileProfiles.generateRouteKey({
-        profileId: saved.id,
-        expectedRevision: saved.revision,
-      });
+      const updated = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.generateRouteKey({
+          profileId: saved.id,
+          expectedRevision: saved.revision,
+        })
+      );
       setProfiles(current => current.map(item => (item.id === updated.id ? updated : item)));
       setVisibleRouteKeys(current => ({ ...current, [updated.id]: true }));
       setHasUnsavedChanges(false);
@@ -374,13 +292,17 @@ export function ConfigProfilesSection() {
     if (!rotateKeyTarget || rotatingRouteKey) return;
     setRotatingRouteKey(true);
     try {
-      const rotationPreview = await window.electronAPI.configFileProfiles.previewRouteKeyRotation({
-        profileId: rotateKeyTarget.id,
-        expectedRevision: rotateKeyTarget.revision,
-      });
-      await window.electronAPI.configFileProfiles.commit({
-        transactionId: rotationPreview.transactionId,
-      });
+      const rotationPreview = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.previewRouteKeyRotation({
+          profileId: rotateKeyTarget.id,
+          expectedRevision: rotateKeyTarget.revision,
+        })
+      );
+      await guardProfileResponse(
+        window.electronAPI.configFileProfiles.commit({
+          transactionId: rotationPreview.transactionId,
+        })
+      );
       const rotatedProfileId = rotateKeyTarget.id;
       setRotateKeyTarget(null);
       setVisibleRouteKeys(current => ({ ...current, [rotatedProfileId]: true }));
@@ -406,14 +328,33 @@ export function ConfigProfilesSection() {
       const saved = await persistProfile(selectedProfile);
       setApplyProfileId(saved.id);
       setPreview(
-        await window.electronAPI.configFileProfiles.preview({
-          profileId: saved.id,
-          expectedRevision: saved.revision,
-          applyMode,
-        })
+        await guardProfileResponse(
+          window.electronAPI.configFileProfiles.preview({
+            profileId: saved.id,
+            expectedRevision: saved.revision,
+            applyMode,
+          })
+        )
       );
     } catch (error) {
       toast.error(errorMessage(error, '生成写入预览失败'));
+    }
+  };
+
+  const buildDshRestorePreview = async () => {
+    if (!selectedProfile) return;
+    try {
+      const result = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.preview({
+          profileId: selectedProfile.id,
+          expectedRevision: selectedProfile.revision,
+          restoreDsh: true,
+        })
+      );
+      setApplyProfileId(selectedProfile.id);
+      setPreview(result);
+    } catch (error) {
+      toast.error(errorMessage(error, '生成 DSH 恢复预览失败'));
     }
   };
 
@@ -445,10 +386,12 @@ export function ConfigProfilesSection() {
   const deleteProfile = async (profile: ConfigFileProfile) => {
     try {
       if (persistedIds.has(profile.id)) {
-        await window.electronAPI.configFileProfiles.delete({
-          profileId: profile.id,
-          expectedRevision: profile.revision,
-        });
+        await guardProfileResponse(
+          window.electronAPI.configFileProfiles.delete({
+            profileId: profile.id,
+            expectedRevision: profile.revision,
+          })
+        );
       }
       setProfiles(current => current.filter(item => item.id !== profile.id));
       setPersistedIds(current => {
@@ -485,7 +428,9 @@ export function ConfigProfilesSection() {
 
   const readLocalFiles = async (profile: ConfigFileProfile) => {
     try {
-      const files = await window.electronAPI.configFileProfiles.readFiles(profile.id);
+      const files = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.readFiles(profile.id)
+      );
       setSnapshots(current => ({ ...current, [profile.id]: files }));
       setEdits(current => ({
         ...current,
@@ -501,10 +446,12 @@ export function ConfigProfilesSection() {
     const file = profile.files.find(item => item.id === fileId);
     if (!file) return;
     try {
-      const entries = await window.electronAPI.configFileProfiles.listBackups({
-        profileId: profile.id,
-        fileId,
-      });
+      const entries = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.listBackups({
+          profileId: profile.id,
+          fileId,
+        })
+      );
       setBackupDialog({
         profileId: profile.id,
         fileId,
@@ -521,13 +468,15 @@ export function ConfigProfilesSection() {
     if (!backupDialog || loadingBackup) return;
     setLoadingBackup(true);
     try {
-      const transaction = await window.electronAPI.configFileProfiles.previewBackupRestore({
-        profileId: backupDialog.profileId,
-        fileId: backupDialog.fileId,
-        expectedRevision: backupDialog.revision,
-        backupId: backup.id,
-        expectedHash: backup.sha256,
-      });
+      const transaction = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.previewBackupRestore({
+          profileId: backupDialog.profileId,
+          fileId: backupDialog.fileId,
+          expectedRevision: backupDialog.revision,
+          backupId: backup.id,
+          expectedHash: backup.sha256,
+        })
+      );
       setApplyProfileId(backupDialog.profileId);
       setPreview(transaction);
       setBackupDialog(null);
@@ -544,12 +493,14 @@ export function ConfigProfilesSection() {
       const saved = await persistProfile(profile);
       setApplyProfileId(saved.id);
       setPreview(
-        await window.electronAPI.configFileProfiles.previewDirectEdit({
-          profileId: saved.id,
-          expectedRevision: saved.revision,
-          edits: edits[saved.id] || {},
-          snapshots: Object.fromEntries(profileSnapshots.map(item => [item.fileId, item])),
-        })
+        await guardProfileResponse(
+          window.electronAPI.configFileProfiles.previewDirectEdit({
+            profileId: saved.id,
+            expectedRevision: saved.revision,
+            edits: edits[saved.id] || {},
+            snapshots: Object.fromEntries(profileSnapshots.map(item => [item.fileId, item])),
+          })
+        )
       );
     } catch (error) {
       toast.error(errorMessage(error, '生成本地文件保存预览失败'));
@@ -560,13 +511,16 @@ export function ConfigProfilesSection() {
     if (!preview || !applyProfile) return;
     const operation = preview.operation;
     try {
-      await window.electronAPI.configFileProfiles.commit({ transactionId: preview.transactionId });
+      await guardProfileResponse(
+        window.electronAPI.configFileProfiles.commit({ transactionId: preview.transactionId })
+      );
       setPreview(null);
       setApplyProfileId(null);
       try {
-        if (operation === 'apply' || operation === 'key-rotation') {
+        if (operation === 'apply' || operation === 'key-rotation' || operation === 'dsh-rollback') {
           await reload();
         }
+        if (isDshConfigProfile(applyProfile)) await dsh.refresh();
         if (operation === 'backup-restore') {
           const restoredFileIds = new Set(preview.files.map(file => file.fileId));
           setSnapshots(current => ({
@@ -599,7 +553,11 @@ export function ConfigProfilesSection() {
             ? '配置文件已从备份恢复'
             : operation === 'direct-edit'
               ? '本地文件已保存'
-              : '配置已应用到本地'
+              : isDshConfigProfile(applyProfile)
+                ? operation === 'dsh-rollback'
+                  ? '已恢复 DSH 接入前配置，请重启 DeepSeek Harness'
+                  : 'DSH 配置已写入，请重启 DeepSeek Harness；旧会话可在高级操作中迁移'
+                : '配置已应用到本地'
       );
     } catch (error) {
       toast.error(errorMessage(error, '写入本地配置失败'));
@@ -609,10 +567,12 @@ export function ConfigProfilesSection() {
   const restoreBuiltin = async () => {
     if (!restoreProfile) return;
     try {
-      const restored = await window.electronAPI.configFileProfiles.restoreBuiltin({
-        profileId: restoreProfile.id,
-        expectedRevision: restoreProfile.revision,
-      });
+      const restored = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.restoreBuiltin({
+          profileId: restoreProfile.id,
+          expectedRevision: restoreProfile.revision,
+        })
+      );
       setProfiles(current =>
         current.map(profile => (profile.id === restored.id ? restored : profile))
       );
@@ -636,7 +596,7 @@ export function ConfigProfilesSection() {
 
   const restoreMissingBuiltins = async () => {
     try {
-      await window.electronAPI.configFileProfiles.restoreMissingBuiltins();
+      await guardProfileResponse(window.electronAPI.configFileProfiles.restoreMissingBuiltins());
       await reload();
       toast.success('内置模板已恢复');
     } catch (error) {
@@ -649,11 +609,13 @@ export function ConfigProfilesSection() {
     const { profile, authMode } = authModeTarget;
     try {
       const saved = await persistProfile(profile);
-      const switched = await window.electronAPI.configFileProfiles.switchAuthMode({
-        profileId: saved.id,
-        authMode,
-        expectedRevision: saved.revision,
-      });
+      const switched = await guardProfileResponse(
+        window.electronAPI.configFileProfiles.switchAuthMode({
+          profileId: saved.id,
+          authMode,
+          expectedRevision: saved.revision,
+        })
+      );
       setProfiles(current => current.map(item => (item.id === switched.id ? switched : item)));
       setProfileBaselines(current => ({ ...current, [switched.id]: switched }));
       setSnapshots(current => {
@@ -677,6 +639,15 @@ export function ConfigProfilesSection() {
     catalog.find(entry => entry.value === encodeTarget(profile.target));
 
   const modelOptions = (profile: ConfigFileProfile): string[] => {
+    if (isDshConfigProfile(profile)) {
+      const sources = getDshConfigModelSources(catalog, dsh.status);
+      const sourceId =
+        profile.dsh?.modelSourceId ||
+        dsh.status?.matchedModelSourceId ||
+        sources.find(item => item.kind === 'local-route')?.id ||
+        sources[0]?.id;
+      return sources.find(item => item.id === sourceId)?.models || [];
+    }
     const entry = targetEntryFor(profile);
     if (!entry) return [];
     if (profile.target.kind !== 'managed' || showAllModels[profile.id]) return entry.allModels;
@@ -807,7 +778,7 @@ export function ConfigProfilesSection() {
                   }
                 }}
               >
-                <div className="flex items-start gap-2.5 px-3 pb-2.5 pt-3">
+                <div className="flex items-center gap-2 px-3 pb-2.5 pt-3">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-muted)] bg-[var(--surface-2)]">
                     <AgentLogo
                       logoId={profile.agentLogoId}
@@ -816,6 +787,9 @@ export function ConfigProfilesSection() {
                       className="h-5 w-5"
                     />
                   </div>
+                  {/* 标题区不再渲染副标题：入口标签与下方「配置目标」字段重复，
+                      「官方登录」/「需修复」徽标已覆盖状态语义。
+                      这样所有卡片头部等高，四列栅格里字段区天然对齐，也不会留下空位。 */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate text-sm font-semibold">{profile.name}</h3>
@@ -835,12 +809,39 @@ export function ConfigProfilesSection() {
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
-                      {isOfficial ? '官方账号登录' : entry?.label || '目标已不存在'}
-                    </p>
+                  </div>
+                  {/* 28×28 紧凑图标按钮：比 sm 按钮（34px 宽）窄，把横向空间让给客户端名称 */}
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <AppButton
+                      variant="tertiary"
+                      size="sm"
+                      className="!h-7 !min-h-7 !w-7 !px-0"
+                      title="复制配置"
+                      aria-label={`${profile.name} 复制配置`}
+                      onClick={event => {
+                        event.stopPropagation();
+                        duplicateProfile(profile);
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </AppButton>
+                    <AppButton
+                      variant="tertiary"
+                      size="sm"
+                      className="!h-7 !min-h-7 !w-7 !px-0"
+                      title="删除配置"
+                      aria-label={`${profile.name} 删除配置`}
+                      onClick={event => {
+                        event.stopPropagation();
+                        setDeleteProfileTarget(profile);
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </AppButton>
                   </div>
                 </div>
-                <div className="space-y-1.5 border-y border-[var(--line-muted)] bg-[var(--surface-2)]/40 px-3 py-2 text-xs">
+                {/* 操作按钮已上移到卡片顶部，字段区是最后一个区块，只保留上边框 */}
+                <div className="space-y-1.5 border-t border-[var(--line-muted)] bg-[color-mix(in_srgb,var(--surface-2)_40%,transparent)] px-3 py-2 text-xs">
                   {[
                     [
                       '配置目标',
@@ -848,13 +849,24 @@ export function ConfigProfilesSection() {
                         ? '官方账号登录'
                         : cardValues?.targetLabel || entry?.label || '未设置',
                     ],
-                    ['BaseURL', isOfficial ? '—' : cardValues?.baseUrl || '未设置'],
+                    [
+                      'BaseURL',
+                      isOfficial
+                        ? '—'
+                        : cardValues?.baseUrl ||
+                          (isDshConfigProfile(profile) ? dsh.status?.expectedBaseUrl : '') ||
+                          '未设置',
+                    ],
                     ['APIKey 名称', isOfficial ? '—' : cardValues?.apiKeyName || '未设置'],
                     [
                       '模型',
                       isOfficial
                         ? '模板内置'
-                        : cardValues?.model || profile.target.model || '未设置',
+                        : cardValues?.model ||
+                          profile.target.model ||
+                          (isDshConfigProfile(profile)
+                            ? `${dsh.status?.configuredModelCount ?? 0} 个模型`
+                            : '未设置'),
                     ],
                   ].map(([label, value]) => (
                     <div
@@ -867,32 +879,6 @@ export function ConfigProfilesSection() {
                       </span>
                     </div>
                   ))}
-                </div>
-                <div className="flex items-center justify-end gap-1 px-3 py-2">
-                  <AppButton
-                    variant="tertiary"
-                    size="sm"
-                    title="复制配置"
-                    aria-label={`${profile.name} 复制配置`}
-                    onClick={event => {
-                      event.stopPropagation();
-                      duplicateProfile(profile);
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </AppButton>
-                  <AppButton
-                    variant="tertiary"
-                    size="sm"
-                    title="删除配置"
-                    aria-label={`${profile.name} 删除配置`}
-                    onClick={event => {
-                      event.stopPropagation();
-                      setDeleteProfileTarget(profile);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </AppButton>
                 </div>
               </AppCard>
             );
@@ -927,27 +913,29 @@ export function ConfigProfilesSection() {
             </>
           ) : (
             <>
-              <div
-                role="group"
-                aria-label="预览写入模式"
-                className="mr-auto flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] p-0.5"
-              >
-                {(['merge', 'overwrite'] as const).map(mode => (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={applyMode === mode}
-                    onClick={() => setApplyMode(mode)}
-                    className={`rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs transition-colors ${
-                      applyMode === mode
-                        ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
-                        : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
-                    }`}
-                  >
-                    {mode === 'merge' ? '合并' : '覆盖'}
-                  </button>
-                ))}
-              </div>
+              {!selectedProfile || !isDshConfigProfile(selectedProfile) ? (
+                <div
+                  role="group"
+                  aria-label="预览写入模式"
+                  className="mr-auto flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] p-0.5"
+                >
+                  {(['merge', 'overwrite'] as const).map(mode => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={applyMode === mode}
+                      onClick={() => setApplyMode(mode)}
+                      className={`rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs transition-colors ${
+                        applyMode === mode
+                          ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
+                          : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      {mode === 'merge' ? '合并' : '覆盖'}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {selectedProfile?.isExample ? (
                 <AppButton
                   variant="secondary"
@@ -989,6 +977,17 @@ export function ConfigProfilesSection() {
         ) : selectedProfile ? (
           <RuleEditor
             profile={selectedProfile}
+            advancedActions={
+              isDshConfigProfile(selectedProfile) ? (
+                <DshConfigControls
+                  status={dsh.status}
+                  error={dsh.error}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  onRefresh={dsh.refresh}
+                  onRestore={() => void buildDshRestorePreview()}
+                />
+              ) : null
+            }
             catalog={targetOptions}
             currentEntry={targetEntryFor(selectedProfile)}
             showAll={showAllModels[selectedProfile.id] === true}
@@ -1209,615 +1208,5 @@ export function ConfigProfilesSection() {
         </p>
       </AppModal>
     </AppCard>
-  );
-}
-
-function ApplyPreviewPanel(props: { preview: ConfigFilePreviewTransaction; onBack: () => void }) {
-  const totalAdded = props.preview.files.reduce(
-    (sum, file) => sum + diffSummary(computeLineDiff(file.content, file.nextContent)).added,
-    0
-  );
-  const totalRemoved = props.preview.files.reduce(
-    (sum, file) => sum + diffSummary(computeLineDiff(file.content, file.nextContent)).removed,
-    0
-  );
-  return (
-    <div className="space-y-4 p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3 border-b border-[var(--line-muted)] pb-3">
-        <div>
-          <h3 className="text-sm font-semibold">确认写入内容</h3>
-          <p className="mt-1 text-xs font-medium text-[var(--accent-strong)]">
-            写入模式：
-            {props.preview.operation === 'backup-restore'
-              ? '恢复备份'
-              : props.preview.applyMode === 'overwrite'
-                ? '覆盖'
-                : '合并'}
-          </p>
-          <p className="mt-1 text-xs text-[var(--text-tertiary)]">
-            共 {props.preview.files.length} 个文件
-            {totalAdded + totalRemoved > 0
-              ? ` · 新增 ${totalAdded} 行 · 删除 ${totalRemoved} 行`
-              : '，内容无变化'}
-            ，确认后将写入本地配置。
-          </p>
-        </div>
-        <AppButton variant="tertiary" size="sm" onClick={props.onBack}>
-          返回编辑
-        </AppButton>
-      </div>
-      {props.preview.files.map(file => (
-        <section
-          key={file.fileId}
-          className="space-y-3 rounded-[var(--radius-md)] border border-[var(--line-soft)] p-4"
-        >
-          <div className="truncate font-mono text-xs" title={file.path}>
-            {file.path}
-          </div>
-          {props.preview.operation === 'backup-restore' ? (
-            <p className="text-sm text-[var(--text-secondary)]">将恢复所选备份的完整内容。</p>
-          ) : (
-            <DiffView oldText={file.content} newText={file.nextContent} />
-          )}
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function DiffView(props: { oldText: string; newText: string }) {
-  const lines = useMemo(
-    () => computeLineDiff(props.oldText, props.newText),
-    [props.oldText, props.newText]
-  );
-  const summary = useMemo(() => diffSummary(lines), [lines]);
-  return (
-    <div className="overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)]">
-      <div className="flex items-center gap-3 border-b border-[var(--line-muted)] px-3 py-1.5 text-xs">
-        <span className="font-medium text-[var(--success)]">+{summary.added}</span>
-        <span className="font-medium text-[var(--danger)]">-{summary.removed}</span>
-        <span className="ml-auto text-[var(--text-tertiary)]">{lines.length} 行</span>
-      </div>
-      <div className="max-h-72 overflow-auto p-2 font-mono text-xs leading-5">
-        {lines.map((line, index) => (
-          <div
-            key={index}
-            data-diff-kind={line.kind}
-            className={
-              line.kind === 'add'
-                ? 'rounded-[var(--radius-sm)] bg-[var(--success-soft)] text-[var(--success)]'
-                : line.kind === 'del'
-                  ? 'rounded-[var(--radius-sm)] bg-[var(--danger-soft)] text-[var(--danger)]'
-                  : 'text-[var(--text-secondary)]'
-            }
-          >
-            {line.kind === 'add' ? '+ ' : line.kind === 'del' ? '- ' : '  '}
-            {line.text || ' '}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RuleEditor(props: {
-  profile: ConfigFileProfile;
-  catalog: ConfigFileTargetCatalogEntry[];
-  currentEntry?: ConfigFileTargetCatalogEntry;
-  showAll: boolean;
-  models: string[];
-  snapshots: ConfigFileSnapshot[];
-  edits: Record<string, string>;
-  onSelectScope: (showAll: boolean) => void;
-  onUpdate: (update: (profile: ConfigFileProfile) => ConfigFileProfile) => void;
-  routeKeyVisible: boolean;
-  onToggleRouteKey: () => void;
-  onGenerateRouteKey: () => void;
-  onCopyRouteKey: () => void;
-  onUpdateFile: (fileId: string, updates: Partial<ConfigFileDefinition>) => void;
-  onRequestAuthMode: (authMode: ConfigFileAuthMode) => void;
-  onReadLocal: () => void;
-  onEditLocal: (fileId: string, content: string) => void;
-  onSaveLocal: () => void;
-  canBrowseBackups: boolean;
-  onShowBackups: (fileId: string) => void;
-  onRequestDeleteFile: (fileId: string) => void;
-}) {
-  const { profile } = props;
-  const authMode = profile.authMode ?? 'third-party';
-  const isOfficial = authMode === 'official';
-  const [resolvedValues, setResolvedValues] = useState<ConfigFileResolvedTargetValues | null>(null);
-  const [apiKeyVisible, setApiKeyVisible] = useState(false);
-  const unavailableTarget = !props.currentEntry || !props.currentEntry.available;
-  const selectedKey = profile.target.kind === 'managed' ? profile.target.apiKeyId : undefined;
-
-  // 解析结果只依赖 target 与本地路由凭证；按稳定 key 触发，避免名称/模板/路径每次编辑都重置并重发 IPC
-  const resolveKey = useMemo(() => {
-    const target = profile.target;
-    const scope =
-      target.kind === 'managed'
-        ? `managed:${target.siteId}:${target.accountId}:${target.apiKeyId ?? ''}`
-        : target.kind === 'direct'
-          ? `direct:${target.configId}`
-          : `local-route:${profile.localRouteCredential?.apiKey ?? ''}`;
-    return `${scope}:${target.model ?? ''}`;
-  }, [profile.target, profile.localRouteCredential?.apiKey]);
-
-  useEffect(() => {
-    let active = true;
-    setResolvedValues(null);
-    setApiKeyVisible(false);
-    if (isOfficial || !props.currentEntry?.available) return () => undefined;
-    void window.electronAPI.configFileProfiles
-      .resolveValues({ profile })
-      .then(values => {
-        if (active) setResolvedValues(values);
-      })
-      .catch(() => {
-        if (active) setResolvedValues(null);
-      });
-    return () => {
-      active = false;
-    };
-    // resolveKey 已覆盖全部影响解析结果的输入；profile 仅用于透传给 IPC
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolveKey, props.currentEntry]);
-
-  const targetValues = resolvedValues || { baseUrl: '', apiKey: '', model: '' };
-
-  return (
-    <div className="space-y-3 p-3">
-      {profile.isExample ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
-          <div>
-            <span className="text-sm font-semibold">接入方式</span>
-            <p className="mt-0.5 text-xs text-[var(--text-tertiary)]">
-              {isOfficial
-                ? '使用客户端官方账号登录，无需站点 API Key'
-                : '使用第三方 API 站点或本地路由'}
-            </p>
-          </div>
-          <div
-            role="group"
-            aria-label="接入方式"
-            className="flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] p-0.5"
-          >
-            {(['third-party', 'official'] as const).map(mode => (
-              <button
-                key={mode}
-                type="button"
-                aria-pressed={authMode === mode}
-                onClick={() => {
-                  if (authMode !== mode) props.onRequestAuthMode(mode);
-                }}
-                className={`rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs transition-colors ${
-                  authMode === mode
-                    ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
-                    : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
-                }`}
-              >
-                {mode === 'third-party' ? '第三方 API' : '官方账号登录'}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <section className="space-y-2">
-        <div className="flex items-center justify-between border-b border-[var(--line-muted)] pb-1.5">
-          <div>
-            <h3 className="text-sm font-semibold">基本信息</h3>
-          </div>
-          {!isOfficial && unavailableTarget ? (
-            <span className="text-xs text-[var(--danger)]">
-              {props.currentEntry?.unavailableReason || '目标需要重新选择'}
-            </span>
-          ) : null}
-        </div>
-        <div className="grid min-w-0 items-end gap-2 md:grid-cols-2 xl:grid-cols-[2fr_1.2fr_1.8fr_1fr]">
-          <div className="grid min-w-0 grid-cols-2 items-end gap-2">
-            <div className="min-w-0">
-              <AppInput
-                size="sm"
-                label="名称"
-                aria-label="配置名称"
-                value={profile.name}
-                onChange={event => props.onUpdate(item => ({ ...item, name: event.target.value }))}
-              />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <span className="block text-sm font-medium text-[var(--text-primary)]">Logo</span>
-              <AgentLogoSelect
-                value={profile.agentLogoId}
-                agentId={profile.builtin?.clientType}
-                agentName={profile.name}
-                ariaLabel={`${profile.name} Logo`}
-                onChange={agentLogoId => props.onUpdate(item => ({ ...item, agentLogoId }))}
-              />
-            </div>
-          </div>
-          {isOfficial ? (
-            <div className="min-w-0 md:col-span-2 xl:col-span-3">
-              <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--line-soft)] px-3 py-2.5 text-xs leading-5 text-[var(--text-tertiary)]">
-                官方账号登录由客户端自行完成（首次使用请运行 claude / codex login / opencode auth
-                login / grok login），无需选择站点、API Key 或模型。
-              </p>
-            </div>
-          ) : (
-            <>
-              <AppSelect
-                size="sm"
-                label="配置目标"
-                aria-label={`${profile.name} 目标`}
-                containerClassName="min-w-0"
-                value={encodeTarget(profile.target)}
-                onChange={event =>
-                  props.onUpdate(item => ({ ...item, target: decodeTarget(event.target.value) }))
-                }
-              >
-                {unavailableTarget ? (
-                  <option value={encodeTarget(profile.target)} disabled>
-                    当前目标已不可用
-                  </option>
-                ) : null}
-                {props.catalog
-                  .filter(entry => entry.available)
-                  .map(entry => (
-                    <option key={entry.value} value={entry.value} disabled={!entry.available}>
-                      {entry.label}
-                      {!entry.available && entry.unavailableReason
-                        ? `（${entry.unavailableReason}）`
-                        : ''}
-                    </option>
-                  ))}
-              </AppSelect>
-              <div className="min-w-0 xl:min-w-0">
-                {profile.target.kind === 'managed' ? (
-                  <div className="flex min-w-0 items-end gap-0.5">
-                    <AppSelect
-                      size="sm"
-                      label="API Key"
-                      aria-label={`${profile.name} API Key`}
-                      value={selectedKey || ''}
-                      containerClassName="min-w-0 flex-1"
-                      onChange={event =>
-                        props.onUpdate(item => ({
-                          ...item,
-                          target:
-                            item.target.kind === 'managed'
-                              ? {
-                                  ...item.target,
-                                  apiKeyId: event.target.value || undefined,
-                                  model: null,
-                                }
-                              : item.target,
-                        }))
-                      }
-                    >
-                      <option value="">选择 API Key</option>
-                      {selectedKey &&
-                      !props.currentEntry?.apiKeys.some(key => key.id === selectedKey) ? (
-                        <option value={selectedKey} disabled>
-                          当前 API Key 已不可用
-                        </option>
-                      ) : null}
-                      {props.currentEntry?.apiKeys.map(key => (
-                        <option key={key.id} value={key.id}>
-                          {key.label}
-                        </option>
-                      ))}
-                    </AppSelect>
-                    <button
-                      type="button"
-                      className={`${CREDENTIAL_ICON_BUTTON_CLASS} mb-0.5`}
-                      title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                      aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                      onClick={() => setApiKeyVisible(current => !current)}
-                    >
-                      {apiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                ) : profile.target.kind === 'local-route' ? (
-                  <div className="space-y-1">
-                    <span className="block text-sm font-medium text-[var(--text-primary)]">
-                      API Key
-                    </span>
-                    <div className="flex min-w-0 gap-0.5">
-                      <AppInput
-                        size="sm"
-                        readOnly
-                        className="min-w-0 flex-1 font-mono"
-                        containerClassName="min-w-0 flex-1"
-                        aria-label={`${profile.name} API Key`}
-                        type={props.routeKeyVisible ? 'text' : 'password'}
-                        value={profile.localRouteCredential?.apiKey || ''}
-                        placeholder="尚未生成独立 API Key"
-                      />
-                      {profile.localRouteCredential ? (
-                        <>
-                          <button
-                            type="button"
-                            className={CREDENTIAL_ICON_BUTTON_CLASS}
-                            title={props.routeKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                            aria-label={props.routeKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                            onClick={props.onToggleRouteKey}
-                          >
-                            {props.routeKeyVisible ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            className={CREDENTIAL_ICON_BUTTON_CLASS}
-                            title="复制 API Key"
-                            aria-label="复制 API Key"
-                            onClick={props.onCopyRouteKey}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </button>
-                        </>
-                      ) : null}
-                      <button
-                        type="button"
-                        className={CREDENTIAL_ICON_BUTTON_CLASS}
-                        title={profile.localRouteCredential ? '重新生成 API Key' : '生成 API Key'}
-                        aria-label={
-                          profile.localRouteCredential ? '重新生成 API Key' : '生成 API Key'
-                        }
-                        onClick={props.onGenerateRouteKey}
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    <span className="block text-sm font-medium text-[var(--text-primary)]">
-                      API Key
-                    </span>
-                    <div className="flex items-center gap-0.5">
-                      <div className="flex h-9 min-w-0 flex-1 items-center truncate rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 font-mono text-xs text-[var(--text-secondary)]">
-                        {resolvedValues?.apiKeyName ||
-                          (profile.target.kind === 'direct' ? '直连 API Key' : '未选择 API Key')}
-                      </div>
-                      <button
-                        type="button"
-                        className={`${CREDENTIAL_ICON_BUTTON_CLASS} mb-0.5`}
-                        title={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                        aria-label={apiKeyVisible ? '隐藏 API Key' : '显示 API Key'}
-                        onClick={() => setApiKeyVisible(current => !current)}
-                      >
-                        {apiKeyVisible ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-end gap-2">
-                <AppSelect
-                  size="sm"
-                  label="模型"
-                  aria-label={`${profile.name} 模型`}
-                  value={profile.target.model || ''}
-                  onChange={event =>
-                    props.onUpdate(item => ({
-                      ...item,
-                      target: { ...item.target, model: event.target.value || null },
-                    }))
-                  }
-                  containerClassName="min-w-0 flex-1"
-                >
-                  <option value="">选择模型</option>
-                  {props.models.map(model => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </AppSelect>
-                {profile.target.kind === 'managed' ? (
-                  <div
-                    role="group"
-                    aria-label="模型显示范围"
-                    className="flex shrink-0 items-center overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] text-xs"
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={!props.showAll}
-                      onClick={() => props.onSelectScope(false)}
-                      className={`flex h-9 items-center px-3 transition-colors ${
-                        !props.showAll
-                          ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
-                          : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      按分组
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={props.showAll}
-                      onClick={() => props.onSelectScope(true)}
-                      className={`flex h-9 items-center border-l border-[var(--line-soft)] px-3 transition-colors ${
-                        props.showAll
-                          ? 'bg-[var(--surface-3)] font-medium text-[var(--text-primary)]'
-                          : 'text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      显示全部
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </>
-          )}
-        </div>
-      </section>
-
-      {!isOfficial && props.currentEntry && (
-        <section className="flex flex-wrap gap-3 rounded-[var(--radius-md)] bg-[var(--surface-2)] p-3">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-mono text-[var(--text-tertiary)]">{'{{BASE_URL}}'}</span>
-            <span className="font-medium text-[var(--text-primary)]">
-              {targetValues.baseUrl || '未设置'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-mono text-[var(--text-tertiary)]">{'{{API_KEY}}'}</span>
-            <span className="font-medium text-[var(--text-primary)]">
-              {targetValues.apiKey
-                ? profile.target.kind === 'local-route'
-                  ? !props.routeKeyVisible
-                    ? `${targetValues.apiKey.slice(0, 4)}••••${targetValues.apiKey.slice(-4)}`
-                    : targetValues.apiKey
-                  : !apiKeyVisible
-                    ? `${targetValues.apiKey.slice(0, 4)}••••${targetValues.apiKey.slice(-4)}`
-                    : targetValues.apiKey
-                : '未设置'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-mono text-[var(--text-tertiary)]">{'{{MODEL}}'}</span>
-            <span className="font-medium text-[var(--text-primary)]">
-              {targetValues.model || '未设置'}
-            </span>
-          </div>
-        </section>
-      )}
-
-      <div className="flex items-end justify-between border-b border-[var(--line-muted)] pb-2">
-        <div>
-          <h3 className="text-sm font-semibold">文件规则</h3>
-          <p className="mt-0.5 text-xs text-[var(--text-tertiary)]">
-            维护模板并对照生成结果与本地内容
-          </p>
-        </div>
-        <AppButton
-          variant="tertiary"
-          size="sm"
-          onClick={() =>
-            props.onUpdate(item => ({ ...item, files: [...item.files, createFile(item.id)] }))
-          }
-        >
-          <FilePlus2 className="h-4 w-4" />
-          添加文件
-        </AppButton>
-      </div>
-
-      <div className="space-y-3">
-        {profile.files.map((file, fileIndex) => {
-          const snapshot = props.snapshots.find(item => item.fileId === file.id);
-          return (
-            <section
-              key={file.id}
-              className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-3"
-            >
-              <div className="flex items-center gap-2">
-                <h4 className="shrink-0 text-sm font-semibold">文件 {fileIndex + 1}</h4>
-                <AppInput
-                  size="sm"
-                  className="min-w-0 flex-1 font-mono"
-                  containerClassName="min-w-0 flex-1"
-                  aria-label={`${profile.name} 文件路径`}
-                  value={file.path}
-                  placeholder="配置文件路径"
-                  onChange={event => props.onUpdateFile(file.id, { path: event.target.value })}
-                />
-                <AppButton
-                  variant="tertiary"
-                  size="sm"
-                  title="删除文件"
-                  aria-label={`${profile.name} 删除文件 ${fileIndex + 1}`}
-                  onClick={() => props.onRequestDeleteFile(file.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </AppButton>
-              </div>
-              <div className="mt-3 overflow-x-auto">
-                <div className="grid min-w-[56rem] grid-cols-3 gap-3">
-                  <div className="min-w-0 space-y-2">
-                    <span className="flex h-8 items-center text-xs font-medium text-[var(--text-secondary)]">
-                      配置模板
-                    </span>
-                    <textarea
-                      aria-label={`${profile.name} 文件模板`}
-                      value={file.template}
-                      onChange={event =>
-                        props.onUpdateFile(file.id, { template: event.target.value })
-                      }
-                      placeholder="使用 {{BASE_URL}}、{{API_KEY}}、{{MODEL}} 作为占位符"
-                      className="h-44 w-full resize-none overflow-auto whitespace-pre rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-3 font-mono text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
-                    />
-                  </div>
-                  <div className="min-w-0 space-y-2">
-                    <span className="flex h-8 items-center text-xs font-medium text-[var(--text-secondary)]">
-                      配置预览
-                    </span>
-                    <pre className="h-44 overflow-auto whitespace-pre rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-3 font-mono text-xs text-[var(--text-secondary)]">
-                      {file.template
-                        ? renderTemplatePreview(file.template, targetValues)
-                        : '选择配置目标并编辑模板后显示预览'}
-                    </pre>
-                  </div>
-                  <div className="min-w-0 space-y-2">
-                    <div className="flex h-8 items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-[var(--text-secondary)]">
-                        本地配置
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <AppButton
-                          variant="secondary"
-                          size="sm"
-                          title="保存本地文件修改（预览后写入）"
-                          disabled={!snapshot}
-                          onClick={props.onSaveLocal}
-                        >
-                          <Save className="h-3.5 w-3.5" />
-                          保存
-                        </AppButton>
-                        <AppButton
-                          variant="tertiary"
-                          size="sm"
-                          disabled={!props.canBrowseBackups}
-                          title="保存配置后可查看备份并预览恢复"
-                          onClick={() => props.onShowBackups(file.id)}
-                        >
-                          备份
-                        </AppButton>
-                        <AppButton variant="tertiary" size="sm" onClick={props.onReadLocal}>
-                          <RefreshCw className="h-3.5 w-3.5" />
-                          读取
-                        </AppButton>
-                      </div>
-                    </div>
-                    {snapshot ? (
-                      <textarea
-                        aria-label={`${profile.name} 本地文件 ${file.path}`}
-                        value={props.edits[file.id] ?? snapshot.content}
-                        onChange={event => props.onEditLocal(file.id, event.target.value)}
-                        className="h-44 w-full resize-none overflow-auto whitespace-pre rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-3 font-mono text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
-                      />
-                    ) : (
-                      <div className="flex min-h-44 items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--line-soft)] p-5 text-center text-xs text-[var(--text-tertiary)]">
-                        点击「读取」加载本地文件
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </section>
-          );
-        })}
-        {profile.files.length === 0 ? (
-          <div className="flex min-h-48 items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--line-soft)] p-6 text-sm text-[var(--text-tertiary)]">
-            添加一个文件后开始编辑
-          </div>
-        ) : null}
-      </div>
-    </div>
   );
 }

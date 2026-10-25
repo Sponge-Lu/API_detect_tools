@@ -88,7 +88,10 @@ export function buildRouteRuleTags(
   rule: RouteRule,
   context: RouteRuleLookupContext = {}
 ): string[] {
-  const tags = [getRouteProtocolLabel(rule.sourceProtocol), getRoutePatternTypeLabel(rule.patternType)];
+  const tags = [
+    getRouteProtocolLabel(rule.sourceProtocol),
+    getRoutePatternTypeLabel(rule.patternType),
+  ];
   if (rule.pattern === '*') {
     tags.push('全部模型');
   } else {

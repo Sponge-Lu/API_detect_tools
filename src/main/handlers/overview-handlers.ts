@@ -1,11 +1,12 @@
-import { ipcMain } from 'electron';
+import { handleStorageIpc } from '../storage/ipc-handler';
+
 import * as overview from '../overview-service';
 
 const ok = <T>(data?: T) => ({ success: true, data });
 const err = (message: string) => ({ success: false, error: message });
 
 export function registerOverviewHandlers() {
-  ipcMain.handle('overview:get-site-daily-snapshots', async (_, params) => {
+  handleStorageIpc('overview:get-site-daily-snapshots', async (_, params) => {
     try {
       return ok(overview.getSiteDailySnapshots(params));
     } catch (error: unknown) {

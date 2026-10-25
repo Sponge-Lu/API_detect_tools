@@ -10,7 +10,7 @@
  */
 
 import { CheckCircle, XCircle, Server, DollarSign, Box } from 'lucide-react';
-import { DetectionResult } from '../App';
+import type { DetectionResult } from '../../shared/types/site';
 import { DataTableEmpty } from './DataTable/primitives';
 import { LoadingState } from './LoadingState';
 
@@ -36,7 +36,7 @@ export function DetectionResults({ results, detecting }: DetectionResultsProps) 
 
   return (
     <>
-      <div className="border-b border-[var(--line-soft)] bg-[var(--surface-1)]/88 px-6 py-4 backdrop-blur-sm">
+      <div className="border-b border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-1)_88%,transparent)] px-6 py-4 backdrop-blur-sm">
         <h2 className="text-lg font-semibold text-[var(--text-primary)]">检测结果</h2>
         <p className="text-sm text-[var(--text-secondary)]">共检测 {results.length} 个站点</p>
       </div>
@@ -44,10 +44,10 @@ export function DetectionResults({ results, detecting }: DetectionResultsProps) 
         {results.map((result, index) => (
           <div
             key={index}
-            className={`rounded-[var(--radius-lg)] border bg-[var(--surface-1)]/82 p-4 backdrop-blur-sm transition-colors ${
+            className={`rounded-[var(--radius-lg)] border bg-[color-mix(in_srgb,var(--surface-1)_82%,transparent)] p-4 backdrop-blur-sm transition-colors ${
               result.status === '成功'
-                ? 'border-[var(--success)]/28 hover:border-[var(--success)]/45'
-                : 'border-[var(--danger)]/28 hover:border-[var(--danger)]/45'
+                ? 'border-[color-mix(in_srgb,var(--success)_28%,transparent)] hover:border-[color-mix(in_srgb,var(--success)_45%,transparent)]'
+                : 'border-[color-mix(in_srgb,var(--danger)_28%,transparent)] hover:border-[color-mix(in_srgb,var(--danger)_45%,transparent)]'
             }`}
           >
             <div className="flex items-start justify-between mb-3">

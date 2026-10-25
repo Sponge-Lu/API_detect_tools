@@ -29,7 +29,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { isApiKeyActive, type SiteConfig } from '../../../shared/types/site';
-import type { DetectionResult } from '../../App';
+import type { DetectionResult } from '../../../shared/types/renderer-config';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
 import { AppSearchInput } from '../AppInput';
 import {
@@ -74,13 +74,13 @@ interface SiteCardDetailsProps {
 const getQuotaTypeInfo = (quotaType: number) => {
   if (quotaType === 1) {
     return {
-      icon: <span className="text-xs font-bold text-[var(--warning)]">次</span>,
+      icon: <span className="text-xs font-semibold text-[var(--warning)]">次</span>,
       text: '按次',
       color: 'border-[var(--line-muted)] bg-[var(--warning-soft)] text-[var(--warning)]',
     };
   }
   return {
-    icon: <span className="text-xs font-bold text-[var(--accent)]">量</span>,
+    icon: <span className="text-xs font-semibold text-[var(--accent)]">量</span>,
     text: '按量',
     color: 'border-[var(--line-muted)] bg-[var(--accent-soft)] text-[var(--accent)]',
   };
@@ -257,7 +257,7 @@ export function SiteCardDetails({
         />
 
         {apiKeys.length === 0 ? (
-          <div className="px-1 text-[11px] text-[var(--text-secondary)]/80">
+          <div className="px-1 text-[11px] text-[color-mix(in_srgb,var(--text-secondary)_80%,transparent)]">
             暂无 API Key，可点击右侧"添加令牌"创建。
           </div>
         ) : (
@@ -299,7 +299,9 @@ export function SiteCardDetails({
                           <span className="truncate">{token.group}</span>
                         </span>
                       ) : (
-                        <span className="text-[var(--text-secondary)]/80">--</span>
+                        <span className="text-[color-mix(in_srgb,var(--text-secondary)_80%,transparent)]">
+                          --
+                        </span>
                       )}
                     </div>
 
@@ -310,7 +312,9 @@ export function SiteCardDetails({
                       ) : quotaInfo ? (
                         <span className="font-medium">限额: {quotaInfo.text}</span>
                       ) : (
-                        <span className="text-[var(--text-secondary)]/80">--</span>
+                        <span className="text-[color-mix(in_srgb,var(--text-secondary)_80%,transparent)]">
+                          --
+                        </span>
                       )}
                     </div>
 
@@ -324,7 +328,9 @@ export function SiteCardDetails({
                           </span>
                         </>
                       ) : (
-                        <span className="text-[var(--text-secondary)]/80">已使用: --</span>
+                        <span className="text-[color-mix(in_srgb,var(--text-secondary)_80%,transparent)]">
+                          已使用: --
+                        </span>
                       )}
                     </div>
 

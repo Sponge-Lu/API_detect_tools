@@ -22,7 +22,7 @@
 
 import { useCallback, useRef, useEffect } from 'react';
 import { useUIStore } from '../store/uiStore';
-import type { Config } from '../App';
+import type { Config } from '../../shared/types/renderer-config';
 
 interface UseSiteDragOptions {
   config: Config | null;

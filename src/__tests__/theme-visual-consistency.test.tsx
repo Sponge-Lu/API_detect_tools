@@ -132,7 +132,7 @@ describe('theme visual consistency', () => {
 
     const root = container.firstElementChild as HTMLElement;
 
-    expect(root).toHaveClass('bg-[var(--surface-1)]/90', 'border-b', 'border-[var(--line-soft)]');
+    expect(root).toHaveClass('bg-[var(--surface-1)]', 'border-b', 'border-[var(--line-soft)]');
     expect(root.className).not.toContain('--ios-');
     expect(root.className).not.toContain('bg-blue-50');
     expect(root.className).not.toContain('border-gray-200');

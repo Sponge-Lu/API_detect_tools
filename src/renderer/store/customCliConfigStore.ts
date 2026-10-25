@@ -10,6 +10,8 @@
  */
 
 import { create } from 'zustand';
+import { currentDataEpoch } from '../services/data-generation';
+import type { StateVersion } from '../../shared/types/app-storage-contract';
 import type { CustomCliConfig, CustomCliSettings } from '../../shared/types/custom-cli-config';
 import type { ModelPriceInfo, ModelPricingData } from '../../shared/types/site';
 import {
@@ -27,6 +29,8 @@ import { sessionEventLog } from '../services/sessionEventLog';
 import Logger from '../utils/logger';
 
 interface CustomCliConfigState {
+  storageVersion?: StateVersion;
+  persistedFingerprint?: string;
   /** 所有自定义配置 */
   configs: CustomCliConfig[];
   /** 当前应用的配置ID */
@@ -64,8 +68,16 @@ interface CustomCliConfigState {
 }
 
 type CustomCliConfigBridge = {
-  load?: () => Promise<{ configs?: CustomCliConfig[]; activeConfigId?: string | null } | null>;
-  save?: (data: { configs: CustomCliConfig[]; activeConfigId: string | null }) => Promise<unknown>;
+  load?: () => Promise<{
+    configs?: CustomCliConfig[];
+    activeConfigId?: string | null;
+    storageVersion?: StateVersion;
+  } | null>;
+  save?: (data: {
+    configs: CustomCliConfig[];
+    activeConfigId: string | null;
+    storageVersion?: StateVersion;
+  }) => Promise<unknown>;
   fetchModels?: (configId: string) => Promise<string[]>;
 };
 
@@ -286,6 +298,32 @@ function normalizeCustomCliConfigs(configs: CustomCliConfig[]): CustomCliConfig[
   return configs.map(config => normalizeCustomCliConfigModelBoundary(config));
 }
 
+// Model discovery may advance the revision; only rebase drafts when stable fields are unchanged.
+function stableConfigFingerprint(
+  configs: CustomCliConfig[],
+  activeConfigId: string | null
+): string {
+  const normalized = configs.map(config => ({
+    ...config,
+    apiKeys: normalizeCustomCliApiKeys(config.apiKeys, {
+      legacyApiKey: config.apiKey,
+      legacyName: config.name,
+      legacyGroupMultiplier: config.groupMultiplier,
+    }),
+  }));
+  return JSON.stringify({ configs: normalized, activeConfigId }, (key, value) => {
+    if (key === 'models' || key === 'lastModelFetch') return undefined;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map(name => [name, value[name]])
+      );
+    }
+    return value;
+  });
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -307,15 +345,22 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
 
   // 从持久化加载配置
   loadConfigs: async () => {
+    const epoch = currentDataEpoch();
     set({ loading: true });
     try {
       const customCliConfig = getCustomCliConfigBridge();
       if (customCliConfig?.load) {
         const data = await customCliConfig.load();
+        if (epoch !== currentDataEpoch()) return;
         if (data) {
           set({
             configs: normalizeCustomCliConfigs(data.configs || []),
             activeConfigId: data.activeConfigId || null,
+            storageVersion: data.storageVersion,
+            persistedFingerprint: stableConfigFingerprint(
+              data.configs || [],
+              data.activeConfigId || null
+            ),
           });
           Logger.info('✅ [CustomCliConfigStore] 加载配置成功:', data.configs?.length || 0, '个');
         }
@@ -329,16 +374,27 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
 
   // 保存配置到持久化
   saveConfigs: async () => {
-    const { configs, activeConfigId } = get();
+    const epoch = currentDataEpoch();
+    const { configs, activeConfigId, storageVersion } = get();
     const normalizedConfigs = normalizeCustomCliConfigs(configs);
     set({ saving: true, configs: normalizedConfigs });
     try {
       const customCliConfig = getCustomCliConfigBridge();
       if (!customCliConfig?.save) throw new Error('当前环境不支持保存配置');
-      const result = await customCliConfig.save({ configs: normalizedConfigs, activeConfigId });
+      const result = await customCliConfig.save({
+        configs: normalizedConfigs,
+        activeConfigId,
+        ...(storageVersion ? { storageVersion } : {}),
+      });
+      if (epoch !== currentDataEpoch()) throw new Error('应用数据已恢复，请重新加载后保存');
       if (result && typeof result === 'object' && 'success' in result && !result.success) {
         throw new Error('保存自定义CLI配置失败');
       }
+      if (result && typeof result === 'object' && 'storageVersion' in result)
+        set({
+          storageVersion: result.storageVersion as StateVersion,
+          persistedFingerprint: stableConfigFingerprint(normalizedConfigs, activeConfigId),
+        });
       Logger.info('✅ [CustomCliConfigStore] 保存配置成功');
       sessionEventLog.success('custom-cli', '自定义 CLI 配置已保存');
     } catch (error) {
@@ -439,7 +495,15 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
 
   // 拉取模型列表
   fetchModels: async (configId: string) => {
-    const { configs, updateConfig, saveConfigs, fetchingModels } = get();
+    const epoch = currentDataEpoch();
+    const {
+      configs,
+      updateConfig,
+      saveConfigs,
+      fetchingModels,
+      storageVersion,
+      persistedFingerprint,
+    } = get();
     const config = configs.find(c => c.id === configId);
     if (!config) {
       toast.error('配置不存在');
@@ -461,16 +525,29 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       const customCliConfig = getCustomCliConfigBridge();
       if (customCliConfig?.fetchModels) {
         const models = await customCliConfig.fetchModels(configId);
+        if (epoch !== currentDataEpoch()) return [];
         const persisted = await customCliConfig.load?.();
+        if (epoch !== currentDataEpoch()) return [];
+        if (storageVersion !== get().storageVersion)
+          throw new Error('配置已变更，请重新加载后拉取模型');
         if (persisted) {
-          const fetchedConfig = persisted.configs?.find(item => item.id === configId);
-          const fetched = fetchedConfig
-            ? normalizeCustomCliConfigModelBoundary(fetchedConfig)
-            : undefined;
+          const fingerprint = stableConfigFingerprint(
+            persisted.configs || [],
+            persisted.activeConfigId || null
+          );
+          if (
+            storageVersion &&
+            (persisted.storageVersion?.generation !== storageVersion.generation ||
+              fingerprint !== persistedFingerprint)
+          )
+            throw new Error('配置已变更，请重新加载后拉取模型');
+          const fetchedConfigs = normalizeCustomCliConfigs(persisted.configs || []);
           set(state => ({
+            storageVersion: persisted.storageVersion,
+            persistedFingerprint: fingerprint,
             configs: state.configs.map(current => {
+              const fetched = fetchedConfigs.find(item => item.id === current.id);
               if (
-                current.id !== configId ||
                 !fetched ||
                 current.baseUrl !== fetched.baseUrl ||
                 current.modelUrl !== fetched.modelUrl ||
@@ -522,6 +599,7 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       }
       return [];
     } catch (error) {
+      if (epoch !== currentDataEpoch()) return [];
       const message = getErrorMessage(error);
       Logger.error('❌ [CustomCliConfigStore] 拉取模型失败:', message);
       toast.error(`拉取模型失败: ${message}`);
@@ -531,9 +609,10 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       );
       return [];
     } finally {
-      set(state => ({
-        fetchingModels: { ...state.fetchingModels, [configId]: false },
-      }));
+      if (epoch === currentDataEpoch())
+        set(state => ({
+          fetchingModels: { ...state.fetchingModels, [configId]: false },
+        }));
     }
   },
 

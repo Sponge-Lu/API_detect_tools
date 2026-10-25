@@ -275,3 +275,8 @@ export async function newServiceMethod(
 ---
 **版本**: 2.1.8  
 **更新日期**: 2025-12-24
+
+## 架构与数据管理重构（2026-10-24）
+
+- [config-commands.ts](config-commands.ts): 配置保存的按 ID 命令转换与 canonical 响应处理
+- [data-generation.ts](data-generation.ts): Renderer 恢复 epoch，用于异步结果失效

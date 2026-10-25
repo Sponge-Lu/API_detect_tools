@@ -1,10 +1,14 @@
+import { applyConfigCommands } from '../storage/config-command-service';
+import { notifyAppDataChanged } from '../app-data-events';
+import { getApplicationStorage } from '../storage/application-storage';
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 统一配置 IPC 处理器
  * 合并原 config-handlers 和 storage-handlers
  */
 
 import Logger from '../utils/logger';
-import { ipcMain } from 'electron';
+
 import { unifiedConfigManager } from '../unified-config-manager';
 import type { UnifiedSite } from '../../shared/types/site';
 
@@ -12,37 +16,68 @@ export function registerUnifiedConfigHandlers() {
   // ============= 配置操作 =============
 
   // 加载配置（兼容旧格式）
-  ipcMain.handle('load-config', async () => {
-    await unifiedConfigManager.loadConfig();
-    return unifiedConfigManager.getLegacyConfig();
+  handleStorageIpc('load-config', async () => {
+    await unifiedConfigManager.getConfig();
+    return {
+      ...unifiedConfigManager.getLegacyConfig(),
+      storageVersion: getApplicationStorage()?.coordinator.version('app-config'),
+    };
   });
 
   // 保存配置（兼容旧格式）
-  ipcMain.handle('save-config', async (_, config) => {
+  handleStorageIpc('save-config', async (_, config) => {
+    if (getApplicationStorage())
+      throw Object.assign(new Error('Use versioned configuration commands'), {
+        code: 'LEGACY_WRITE_DISABLED',
+      });
     await unifiedConfigManager.saveLegacyConfig(config);
+  });
+
+  handleStorageIpc('config:commands', async (_, input: unknown) => {
+    try {
+      await applyConfigCommands(input);
+      notifyAppDataChanged('site-config', 120);
+      return {
+        success: true,
+        data: {
+          ...unifiedConfigManager.getLegacyConfig(),
+          storageVersion: getApplicationStorage()!.coordinator.version('app-config'),
+        },
+      };
+    } catch (error) {
+      const failure = error as Error & { code?: string; currentVersion?: unknown };
+      return {
+        success: false,
+        error: {
+          code: failure.code ?? 'VALIDATION_ERROR',
+          message: failure.message,
+          currentVersion: failure.currentVersion,
+        },
+      };
+    }
   });
 
   // ============= 站点操作（新 API） =============
 
   // 获取所有站点
-  ipcMain.handle('sites:get-all', async () => {
+  handleStorageIpc('sites:get-all', async () => {
     return unifiedConfigManager.getSites();
   });
 
   // 根据 ID 获取站点
-  ipcMain.handle('sites:get-by-id', async (_, id: string) => {
+  handleStorageIpc('sites:get-by-id', async (_, id: string) => {
     const site = unifiedConfigManager.getSiteById(id);
     return { success: !!site, data: site };
   });
 
   // 根据 URL 获取站点
-  ipcMain.handle('sites:get-by-url', async (_, url: string) => {
+  handleStorageIpc('sites:get-by-url', async (_, url: string) => {
     const site = unifiedConfigManager.getSiteByUrl(url);
     return { success: !!site, data: site };
   });
 
   // 添加站点
-  ipcMain.handle('sites:add', async (_, site: Omit<UnifiedSite, 'id'>) => {
+  handleStorageIpc('sites:add', async (_, site: Omit<UnifiedSite, 'id'>) => {
     try {
       const newSite = await unifiedConfigManager.addSite(site);
       return { success: true, data: newSite };
@@ -53,7 +88,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 更新站点
-  ipcMain.handle('sites:update', async (_, id: string, updates: Partial<UnifiedSite>) => {
+  handleStorageIpc('sites:update', async (_, id: string, updates: Partial<UnifiedSite>) => {
     try {
       const result = await unifiedConfigManager.updateSite(id, updates);
       return { success: result };
@@ -64,7 +99,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 删除站点
-  ipcMain.handle('sites:delete', async (_, id: string) => {
+  handleStorageIpc('sites:delete', async (_, id: string) => {
     try {
       const result = await unifiedConfigManager.deleteSite(id);
       return { success: result };
@@ -75,7 +110,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 更新站点令牌
-  ipcMain.handle('sites:update-token', async (_, id: string, accessToken: string) => {
+  handleStorageIpc('sites:update-token', async (_, id: string, accessToken: string) => {
     try {
       const result = await unifiedConfigManager.updateSiteToken(id, accessToken);
       return { success: result };
@@ -88,7 +123,7 @@ export function registerUnifiedConfigHandlers() {
   // ============= 兼容旧 storage API =============
 
   // 获取所有账号（兼容）- 返回站点列表
-  ipcMain.handle('get-all-accounts', async () => {
+  handleStorageIpc('get-all-accounts', async () => {
     const sites = unifiedConfigManager.getSites();
     // 转换为旧格式的账号结构
     return sites.map(site => ({
@@ -108,7 +143,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 保存账号（兼容）
-  ipcMain.handle('storage:save-account', async (_, account: any) => {
+  handleStorageIpc('storage:save-account', async (_, account: any) => {
     try {
       // 查找现有站点
       let site = account.id ? unifiedConfigManager.getSiteById(account.id) : null;
@@ -145,7 +180,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 删除账号（兼容）
-  ipcMain.handle('storage:delete-account', async (_, id: string) => {
+  handleStorageIpc('storage:delete-account', async (_, id: string) => {
     try {
       const result = await unifiedConfigManager.deleteSite(id);
       return { success: result };
@@ -156,7 +191,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 更新令牌（兼容）
-  ipcMain.handle('storage:update-token', async (_, id: string, accessToken: string) => {
+  handleStorageIpc('storage:update-token', async (_, id: string, accessToken: string) => {
     try {
       const result = await unifiedConfigManager.updateSiteToken(id, accessToken);
       return { success: result };
@@ -167,7 +202,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 根据 ID 获取账号（兼容）
-  ipcMain.handle('storage:get-account', async (_, id: string) => {
+  handleStorageIpc('storage:get-account', async (_, id: string) => {
     const site = unifiedConfigManager.getSiteById(id);
     if (!site) {
       return { success: false, error: '账号不存在' };
@@ -185,7 +220,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 导出数据（兼容）
-  ipcMain.handle('storage:export', async () => {
+  handleStorageIpc('storage:export', async () => {
     try {
       const config = await unifiedConfigManager.exportConfig();
       return { success: true, data: config };
@@ -196,7 +231,7 @@ export function registerUnifiedConfigHandlers() {
   });
 
   // 导入数据（兼容）
-  ipcMain.handle('storage:import', async (_, data: any) => {
+  handleStorageIpc('storage:import', async (_, data: any) => {
     try {
       await unifiedConfigManager.importConfig(data);
       return { success: true };

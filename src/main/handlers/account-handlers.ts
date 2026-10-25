@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
 
  * 输入: UnifiedConfigManager (配置管理)
@@ -8,8 +9,6 @@
 
  */
 
-import { ipcMain } from 'electron';
-
 import { unifiedConfigManager } from '../unified-config-manager';
 
 import Logger from '../utils/logger';
@@ -17,7 +16,7 @@ import Logger from '../utils/logger';
 export function registerAccountHandlers(): void {
   // 获取站点的所有账户
 
-  ipcMain.handle('accounts:list', async (_, siteId: string) => {
+  handleStorageIpc('accounts:list', async (_, siteId: string) => {
     try {
       return { success: true, data: unifiedConfigManager.getAccountsBySiteId(siteId) };
     } catch (error: any) {
@@ -29,7 +28,7 @@ export function registerAccountHandlers(): void {
 
   // 更新账户信息
 
-  ipcMain.handle(
+  handleStorageIpc(
     'accounts:update',
 
     async (
@@ -68,7 +67,7 @@ export function registerAccountHandlers(): void {
 
   // 添加账户（从前端传入已获取的凭证数据）
 
-  ipcMain.handle(
+  handleStorageIpc(
     'accounts:add',
 
     async (
@@ -128,7 +127,7 @@ export function registerAccountHandlers(): void {
 
   // 删除账户
 
-  ipcMain.handle('accounts:delete', async (_, accountId: string) => {
+  handleStorageIpc('accounts:delete', async (_, accountId: string) => {
     try {
       const result = await unifiedConfigManager.deleteAccount(accountId);
 

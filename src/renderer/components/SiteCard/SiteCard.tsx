@@ -150,7 +150,7 @@ export const SiteCard = React.memo(
         {/* 刷新提示消息 */}
         {refreshMessage && refreshMessage.site === effectiveCardKey && (
           <div
-            className={`mx-[var(--spacing-md)] mt-[var(--spacing-sm)] px-[var(--spacing-md)] py-1.5 rounded-[var(--radius-sm)] text-xs font-medium transition-all ${
+            className={`mx-[var(--spacing-md)] mt-[var(--spacing-sm)] px-[var(--spacing-md)] py-1.5 rounded-[var(--radius-sm)] text-xs font-medium transition-colors ${
               refreshMessage.type === 'success'
                 ? 'border border-[var(--line-soft)] bg-[var(--success-soft)] text-[var(--success)]'
                 : 'border border-[var(--line-soft)] bg-[var(--accent-soft)] text-[var(--accent)]'
@@ -161,7 +161,7 @@ export const SiteCard = React.memo(
         )}
 
         <div className="px-3 py-2">
-          <div data-testid="site-card-main-row" className="flex items-center justify-between gap-3">
+          <div data-testid="site-card-main-row" className="flex items-center">
             <SiteCardHeader
               site={site}
               siteResult={normalizedSiteResult}
@@ -181,20 +181,21 @@ export const SiteCard = React.memo(
               cliConfig={cliConfig}
               onOpenCliConfig={onOpenCliConfig}
               onApply={onApply}
-            />
-
-            <SiteCardActions
-              site={site}
-              cardKey={effectiveCardKey}
-              accessPointType={accessPointType}
-              accountId={accountId}
-              siteResult={siteResult}
-              isDetecting={isDetecting}
-              checkingIn={checkingIn}
-              checkinStats={siteResult?.checkinStats}
-              onDetect={onDetect}
-              onCheckIn={onCheckIn}
-              onOpenExtraLink={onOpenExtraLink}
+              actions={
+                <SiteCardActions
+                  site={site}
+                  cardKey={effectiveCardKey}
+                  accessPointType={accessPointType}
+                  accountId={accountId}
+                  siteResult={siteResult}
+                  isDetecting={isDetecting}
+                  checkingIn={checkingIn}
+                  checkinStats={siteResult?.checkinStats}
+                  onDetect={onDetect}
+                  onCheckIn={onCheckIn}
+                  onOpenExtraLink={onOpenExtraLink}
+                />
+              }
             />
           </div>
         </div>

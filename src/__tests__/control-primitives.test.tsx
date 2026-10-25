@@ -70,7 +70,7 @@ describe('AppSelect primitive contract', () => {
 
     const select = screen.getByLabelText('选择 API Key') as HTMLSelectElement;
     expect(select).toBeTruthy();
-    expect(select.className).toContain('bg-[var(--surface-2)]');
+    expect(select.className).toContain('bg-[var(--field-bg)]');
     expect(select.value).toBe('a');
     expect(select.options.length).toBe(2);
   });
@@ -91,7 +91,7 @@ describe('PageContainer primitive contract', () => {
   it('applies the unified page padding and scroll container', () => {
     const { container } = render(<PageContainer>内容</PageContainer>);
     const el = container.firstElementChild as HTMLElement;
-    expect(el.className).toContain('px-6');
+    expect(el.className).toContain('px-5');
     expect(el.className).toContain('py-4');
     expect(el.className).toContain('overflow-y-auto');
     expect(el.textContent).toBe('内容');

@@ -9,7 +9,7 @@ export function AccessPointResourceShell({
 }) {
   return (
     <div
-      className="cursor-default space-y-[var(--spacing-sm)] border-t border-[var(--line-soft)] bg-[var(--surface-2)]/92 px-[var(--spacing-md)] py-[var(--spacing-sm)]"
+      className="cursor-default space-y-[var(--spacing-sm)] border-t border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)] px-[var(--spacing-md)] py-[var(--spacing-sm)]"
       data-no-drag="true"
       data-testid={testId}
     >
@@ -42,7 +42,7 @@ export const accessPointResourceActionClass =
   'inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--accent-soft)] px-2 py-1 text-xs font-medium text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)] disabled:cursor-not-allowed disabled:opacity-50';
 
 export const accessPointResourceListClass =
-  'max-h-56 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1';
+  'max-h-56 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-1)_72%,transparent)] p-1';
 
 export const accessPointResourceTokenListClass = 'max-h-40 space-y-0.5 overflow-y-auto';
 

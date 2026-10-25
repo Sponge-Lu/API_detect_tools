@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 /**
  * 路由分析统计服务
  * 输入: 代理请求结果（outcome, latency, tokens）
@@ -44,10 +45,7 @@ const MAX_ROUTE_REQUEST_LOGS = 1000;
 const FAILURE_LOG_DEDUPE_MS = 5_000;
 const failureLogDedupeByKey = new Map<string, number>();
 const ROUTE_OVERVIEW_DEBOUNCE_MS = 1200;
-/**
- * 分析桶落盘是整文件重写（可达数 MB），每次都在主进程同步序列化；
- * 桶只是聚合计数，丢最近半分钟可接受，退出前另有强制 flush。
- */
+/** Coalesce dirty bucket upserts; shutdown, backup and restore explicitly flush. */
 const ANALYTICS_FLUSH_DELAY_MS = 30_000;
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 
@@ -55,6 +53,7 @@ const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 const pendingBuckets = new Map<string, RouteAnalyticsBucket>();
 const routeRequestLogs: RouteRequestLogItem[] = [];
 let flushTimer: NodeJS.Timeout | null = null;
+let analyticsFlush: Promise<void> | undefined;
 let routeRequestLogSequence = 0;
 
 function buildRouteRequestLogId(at: number): string {
@@ -376,7 +375,9 @@ function scheduleFlush() {
   if (flushTimer) return;
   flushTimer = setTimeout(async () => {
     flushTimer = null;
-    await flushPendingBuckets();
+    await flushPendingBuckets().catch(error =>
+      log.error('Scheduled analytics flush failed', error)
+    );
   }, ANALYTICS_FLUSH_DELAY_MS);
 }
 
@@ -392,22 +393,38 @@ export async function flushRouteAnalytics(): Promise<void> {
   await flushPendingBuckets();
 }
 
-async function flushPendingBuckets(): Promise<void> {
-  if (pendingBuckets.size === 0) return;
-  // swap-and-flush：新请求写入新 map，避免竞态
-  const toFlush = new Map(pendingBuckets);
+export function invalidateRouteAnalytics(): void {
+  cancelPendingFlush();
   pendingBuckets.clear();
+  routeRequestLogs.length = 0;
+}
+
+async function flushPendingBuckets(): Promise<void> {
+  if (analyticsFlush) {
+    await analyticsFlush;
+    return flushPendingBuckets();
+  }
+  const operation = persistPendingBuckets();
+  analyticsFlush = operation;
+  try {
+    await operation;
+  } finally {
+    if (analyticsFlush === operation) analyticsFlush = undefined;
+  }
+}
+
+async function persistPendingBuckets(): Promise<void> {
+  if (pendingBuckets.size === 0) return;
+  // Retain absolute counts until commit. New events replace, rather than mutate, a batch value.
+  const toFlush = new Map(pendingBuckets);
   try {
     await unifiedConfigManager.upsertRouteAnalyticsBuckets(Array.from(toFlush.values()));
+    for (const [key, bucket] of toFlush)
+      if (pendingBuckets.get(key) === bucket) pendingBuckets.delete(key);
     notifyAppDataChanged('route-overview', 120);
   } catch (err) {
-    // 失败时将数据合并回 pending（增量不丢失）
-    for (const [key, bucket] of toFlush) {
-      if (!pendingBuckets.has(key)) {
-        pendingBuckets.set(key, bucket);
-      }
-    }
     log.error('Flush analytics buckets failed:', err);
+    throw err;
   }
 }
 
@@ -558,12 +575,13 @@ export function recordRouteRequest(params: {
   );
 
   let bucket = pendingBuckets.get(bucketKey);
+  if (bucket) bucket = structuredClone(bucket);
   if (!bucket) {
     // 尝试从持久化读取
     const routing = unifiedConfigManager.getRoutingConfig();
     const existing = routing.analytics.buckets[bucketKey];
     bucket = existing
-      ? { ...existing }
+      ? structuredClone(existing)
       : {
           bucketKey,
           bucketStart,
@@ -638,7 +656,14 @@ export function getAnalyticsBuckets(params: RouteAnalyticsWindowQuery): RouteAna
   const cutoff = Date.now() - windowToMs(params.window);
   const mergedBuckets = new Map<string, RouteAnalyticsBucket>();
 
-  for (const bucket of Object.values(routing.analytics.buckets)) {
+  const storage = getApplicationStorage();
+  const persisted = storage
+    ? (storage.documents.analyticsBuckets(
+        cutoff,
+        Number.MAX_SAFE_INTEGER
+      ) as RouteAnalyticsBucket[])
+    : Object.values(routing.analytics.buckets);
+  for (const bucket of persisted) {
     mergedBuckets.set(bucket.bucketKey, bucket);
   }
 
@@ -934,6 +959,7 @@ export async function resetAnalytics(params?: {
   cliType?: RouteCliType;
   routeRuleId?: string;
 }): Promise<void> {
+  if (analyticsFlush) await analyticsFlush;
   pendingBuckets.clear();
   await unifiedConfigManager.resetRouteAnalytics(params);
   notifyAppDataChanged('route-overview', 120);

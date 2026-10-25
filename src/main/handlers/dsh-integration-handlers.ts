@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 输入: dsh-integration-service 的检测/接入/回滚/迁移能力
  * 输出: 注册到 ipcMain 的 `dsh-integration:*` 通道
@@ -9,7 +10,6 @@
  * - PROJECT_INDEX.md
  */
 
-import { ipcMain } from 'electron';
 import {
   detectDshRouting,
   enableDshSessionRouting,
@@ -36,23 +36,23 @@ async function toResult<T>(operation: () => Promise<T>): Promise<DshActionResult
 }
 
 export function registerDshIntegrationHandlers(): void {
-  ipcMain.handle('dsh-integration:status', () =>
+  handleStorageIpc('dsh-integration:status', () =>
     toResult<DshRoutingStatus>(() => detectDshRouting())
   );
 
-  ipcMain.handle('dsh-integration:model-sources', () =>
+  handleStorageIpc('dsh-integration:model-sources', () =>
     toResult<DshModelSource[]>(() => listDshModelSources())
   );
 
-  ipcMain.handle('dsh-integration:enable', (_, input: EnableDshSessionRoutingInput) =>
+  handleStorageIpc('dsh-integration:enable', (_, input: EnableDshSessionRoutingInput) =>
     toResult<EnableDshSessionRoutingResult>(() => enableDshSessionRouting(input ?? {}))
   );
 
-  ipcMain.handle('dsh-integration:rollback', () =>
+  handleStorageIpc('dsh-integration:rollback', () =>
     toResult<DshRollbackResult>(() => rollbackDshSessionRouting())
   );
 
-  ipcMain.handle('dsh-integration:migrate-sessions', () =>
+  handleStorageIpc('dsh-integration:migrate-sessions', () =>
     toResult<DshSessionMigrationResult>(() => migrateDshSessionProviders())
   );
 }

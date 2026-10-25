@@ -13,6 +13,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import Logger from './utils/logger';
+import { getApplicationStorage, readStorageTextSync } from './storage/application-storage';
 
 export type CloseBehavior = 'ask' | 'quit' | 'minimize';
 
@@ -55,10 +56,13 @@ export class CloseBehaviorManager {
   /**
    * 加载设置文件
    */
-  private async loadSettings(): Promise<void> {
+  async loadSettings(): Promise<void> {
     try {
-      if (fs.existsSync(this.settingsPath)) {
-        const data = fs.readFileSync(this.settingsPath, 'utf-8');
+      if (
+        getApplicationStorage()?.documents.has('close-behavior-settings') ||
+        fs.existsSync(this.settingsPath)
+      ) {
+        const data = readStorageTextSync(this.settingsPath);
         const parsed: CloseBehaviorSettingsFile = JSON.parse(data);
         if (this.isValidBehavior(parsed.behavior)) {
           this.settings = { behavior: parsed.behavior };
@@ -148,15 +152,16 @@ export class CloseBehaviorManager {
       throw new Error(`Invalid behavior: ${settings.behavior}`);
     }
 
-    this.settings = { ...settings };
-
     const fileData: CloseBehaviorSettingsFile = {
-      behavior: this.settings.behavior,
+      behavior: settings.behavior,
       version: '1.0',
     };
 
     try {
-      fs.writeFileSync(this.settingsPath, JSON.stringify(fileData, null, 2), 'utf-8');
+      if (!getApplicationStorage()?.write(this.settingsPath, JSON.stringify(fileData))) {
+        fs.writeFileSync(this.settingsPath, JSON.stringify(fileData, null, 2), 'utf-8');
+      }
+      this.settings = { ...settings };
       Logger.info(`💾 [CloseBehaviorManager] 已保存设置: ${this.settings.behavior}`);
     } catch (error) {
       Logger.error('❌ [CloseBehaviorManager] 保存设置失败:', error);

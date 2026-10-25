@@ -253,7 +253,7 @@ describe('sites page redesign', () => {
   });
 
   it('restores the PRD page-header detection settings and detect-all actions', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
 
     expect(source).not.toContain('<div className="w-[48px]" aria-hidden="true" />');
     expect(source).toContain('handleOpenDetectionSettings');
@@ -358,7 +358,7 @@ describe('sites page redesign', () => {
   });
 
   it('defaults the group filter to 默认分组 and does not render an 全部 tab', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
 
     expect(source).toContain(
       'const effectiveActiveSiteGroupFilter = activeSiteGroupFilter ?? defaultGroupId;'
@@ -367,11 +367,14 @@ describe('sites page redesign', () => {
   });
 
   it('keeps direct custom CLI configs wired into the merged Sites page', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
 
     expect(source).toContain('useCustomCliConfigStore');
     expect(source).toContain("type: 'custom-cli'");
-    expect(source).toContain('buildCustomCliRouteSiteId');
+    expect(source).toContain('buildCustomCliVirtualSite');
+    expect(
+      readFileSync(join(process.cwd(), 'src/renderer/pages/sites/site-projections.ts'), 'utf8')
+    ).toContain('buildCustomCliRouteSiteId');
     expect(source).not.toContain(['CustomCliConfig', 'EditorDialog'].join(''));
     expect(source).toContain('handleAddDirectConfig');
     expect(source).not.toContain('直连配置功能即将推出');
@@ -379,7 +382,7 @@ describe('sites page redesign', () => {
   });
 
   it('keeps page-level batch refresh and check-in on the legacy behavior paths', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
 
     expect(source).toContain('const { handleCheckIn, handleCheckInAll } = useCheckIn');
     expect(source).toContain('if (config.sites.length > 0)');
@@ -396,7 +399,7 @@ describe('sites page redesign', () => {
   });
 
   it('creates new managed sites through site-plus-account persistence instead of site-level legacy credentials', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
 
     expect(source).toContain('const createSiteWithDefaultAccount = useCallback(');
     expect(source).toContain('window.electronAPI.sites?.add(buildSitePayloadForCreate(site))');
@@ -817,7 +820,7 @@ describe('sites page redesign', () => {
     const content = screen.getByTestId('managed-tab2-content');
     expect(content).toHaveClass(
       'border-t',
-      'bg-[var(--surface-2)]/92',
+      'bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)]',
       'px-[var(--spacing-md)]',
       'py-[var(--spacing-sm)]'
     );
@@ -1150,7 +1153,7 @@ describe('sites page redesign', () => {
         'cursor-default',
         'space-y-[var(--spacing-sm)]',
         'border-t',
-        'bg-[var(--surface-2)]/92',
+        'bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)]',
         'px-[var(--spacing-md)]',
         'py-[var(--spacing-sm)]'
       );
@@ -1625,7 +1628,7 @@ describe('sites page redesign', () => {
   });
 
   it('persists AnyRouter user hash edits from the side panel callback', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
     const panelSource = readFileSync(
       join(process.cwd(), 'src/renderer/components/dialogs/AccessPointDetailPanel.tsx'),
       'utf8'
@@ -1639,7 +1642,7 @@ describe('sites page redesign', () => {
   });
 
   it('managed side-panel account refresh uses browser basic-info refresh instead of site detection', () => {
-    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const source = readSitesSource();
     const handlerStart = source.indexOf('const handleRefreshPanelAccountInfo = useCallback');
     const handlerEnd = source.indexOf(
       'const handleOpenDetectionSettings = useCallback',
@@ -1988,7 +1991,7 @@ describe('sites page redesign', () => {
 
   it('renders only the visible folded-row columns inside the sticky header', () => {
     // 站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型 / 请求端点
-    expect(DEFAULT_COLUMN_WIDTHS).toEqual([180, 112, 84, 84, 70, 50, 400]);
+    expect(DEFAULT_COLUMN_WIDTHS).toEqual([180, 96, 72, 84, 70, 50, 400]);
 
     const { container } = render(
       <SiteListHeader
@@ -2326,7 +2329,10 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('History')).not.toBeInTheDocument();
     expect(screen.getByText('批量检测')).toBeInTheDocument();
     const header = container.firstElementChild as HTMLDivElement;
-    expect(header.style.gridTemplateColumns).toBe('260px 120px 90px 100px 86px 66px 360px 1fr');
+    // 前 6 列固定、History 弹性、末列为固定宽度的操作区（与数据行共用同一模板）
+    expect(header.style.gridTemplateColumns).toBe(
+      '260px 120px 90px 100px 86px 66px minmax(360px, 1fr) 96px'
+    );
     expect(header).toHaveClass('px-3');
     expect(header.lastElementChild).toHaveClass('items-center', 'justify-end', 'gap-0.5');
   });
@@ -2447,7 +2453,9 @@ describe('sites page redesign', () => {
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
-    expect(grid.style.gridTemplateColumns).toBe('180px 112px 84px 84px 70px 50px 400px');
+    expect(grid.style.gridTemplateColumns).toBe(
+      '180px 96px 72px 84px 70px 50px minmax(400px, 1fr) 96px'
+    );
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
     expect(screen.getByText('12:34')).toBeInTheDocument();
     // Phase 5/6: 站点类型列已移除
@@ -2610,3 +2618,13 @@ describe('sites page redesign', () => {
     expect(onRefreshToken.mock.calls[0]?.[2]).toBe(0);
   });
 });
+
+function readSitesSource(): string {
+  return [
+    'src/renderer/pages/sites/useSitesController.tsx',
+    'src/renderer/pages/SitesPage.tsx',
+    'src/renderer/pages/sites/SitesPageParts.tsx',
+  ]
+    .map(file => readFileSync(join(process.cwd(), file), 'utf8'))
+    .join('\n');
+}

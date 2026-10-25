@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 输入: ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, IPC handlers
  * 输出: 注册到 ipcMain 的 IPC 事件监听器
  * 定位: 集成层 - 注册所有 IPC 事件处理器，协调服务通信

@@ -70,7 +70,7 @@ describe('Input Primitive Compatibility', () => {
 
             // Should have the focus box-shadow with 4px spread and 10% opacity
             // The class should contain the focus ring styling
-            expect(classList).toContain('[box-shadow:0_0_0_4px_var(--focus-ring)');
+            expect(classList).toContain('[box-shadow:0_0_0_3px_var(--focus-ring)');
           }
         }
       ),
@@ -124,17 +124,8 @@ describe('Input Primitive Compatibility', () => {
         if (input) {
           const classList = input.className;
 
-          // Verify it has a rounded class
-          const hasRoundedClass = classList.match(/rounded-\[(\d+)px\]/);
-          expect(hasRoundedClass).not.toBeNull();
-
-          if (hasRoundedClass) {
-            const radiusValue = parseInt(hasRoundedClass[1]);
-
-            // Should be one of the supported primitive values (8-16px range for inputs)
-            expect(radiusValue).toBeGreaterThanOrEqual(8);
-            expect(radiusValue).toBeLessThanOrEqual(16);
-          }
+          // 统一使用 radius-sm token（8px）
+          expect(classList).toContain('rounded-[var(--radius-sm)]');
         }
       }),
       { numRuns: 100 }
@@ -200,7 +191,7 @@ describe('Input Primitive Compatibility', () => {
           // Verify disabled styling
           if (disabled) {
             const classList = input.className;
-            expect(classList).toContain('opacity-50');
+            expect(classList).toContain('opacity-60');
             expect(classList).toContain('cursor-not-allowed');
           }
         }
@@ -257,7 +248,7 @@ describe('Input Primitive Compatibility', () => {
           const classList = input.className;
 
           // Should have inner shadow
-          expect(classList).toContain('[box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)]');
+          expect(classList).toContain('bg-[var(--field-bg)]');
         }
       }),
       { numRuns: 100 }
@@ -281,11 +272,8 @@ describe('Input Primitive Compatibility', () => {
             classList.includes('transition-all') || classList.includes('transition-[');
           expect(hasTransition).toBe(true);
 
-          // Should use the shared standard timing function
-          expect(classList).toContain('[transition-timing-function:var(--ease-standard)]');
-
-          // Should use fast duration
-          expect(classList).toContain('duration-[var(--duration-fast)]');
+          // hover / 聚焦反馈统一走 140ms 的短时长
+          expect(classList).toContain('duration-[var(--duration-hover)]');
         }
       }),
       { numRuns: 100 }
@@ -340,7 +328,7 @@ describe('Search Input Primitive Compatibility', () => {
           const classList = input.className;
 
           // Should have the focus box-shadow with 4px spread and 10% opacity
-          expect(classList).toContain('[box-shadow:0_0_0_4px_var(--focus-ring)]');
+          expect(classList).toContain('[box-shadow:0_0_0_3px_var(--focus-ring)]');
         }
       }),
       { numRuns: 100 }
@@ -437,17 +425,8 @@ describe('Search Input Primitive Compatibility', () => {
         if (input) {
           const classList = input.className;
 
-          // Verify it has a rounded class
-          const hasRoundedClass = classList.match(/rounded-\[(\d+)px\]/);
-          expect(hasRoundedClass).not.toBeNull();
-
-          if (hasRoundedClass) {
-            const radiusValue = parseInt(hasRoundedClass[1]);
-
-            // Should be one of the supported primitive values (8-16px range for inputs)
-            expect(radiusValue).toBeGreaterThanOrEqual(8);
-            expect(radiusValue).toBeLessThanOrEqual(16);
-          }
+          // 统一使用 radius-sm token（8px）
+          expect(classList).toContain('rounded-[var(--radius-sm)]');
         }
       }),
       { numRuns: 100 }
@@ -466,8 +445,8 @@ describe('Search Input Primitive Compatibility', () => {
         if (input) {
           const classList = input.className;
 
-          // Should have border-none class
-          expect(classList).toContain('border-none');
+          // 搜索框与普通输入框共用同一套描边语言
+          expect(classList).toContain('border-[var(--line-strong)]');
         }
       }),
       { numRuns: 100 }
@@ -492,7 +471,7 @@ describe('Search Input Primitive Compatibility', () => {
           // Verify disabled styling
           if (disabled) {
             const classList = input.className;
-            expect(classList).toContain('opacity-50');
+            expect(classList).toContain('opacity-60');
             expect(classList).toContain('cursor-not-allowed');
 
             // Clear button should not be visible when disabled

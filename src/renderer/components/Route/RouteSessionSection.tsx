@@ -58,13 +58,18 @@ function formatTime(value?: number): string {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function effectiveAgentName(instance: RouteInstance): string {
+function defaultAgentName(instance: RouteInstance): string {
   return (
-    instance.display.customAgentName ||
-    instance.display.observedAgentName ||
+    (instance.routeKey?.agentId === 'deepseekHarness'
+      ? 'DSH'
+      : instance.display.observedAgentName) ||
     instance.routeKey?.agentId ||
     '未知 Agent'
   );
+}
+
+function effectiveAgentName(instance: RouteInstance): string {
+  return instance.display.customAgentName || defaultAgentName(instance);
 }
 
 function isSessionScopedRoute(instance: RouteInstance): boolean {
@@ -472,7 +477,7 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
                         <option value="session">会话级</option>
                       </AppSelect>
                     ) : null}
-                    <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
+                    <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">
                       {count} 张
                     </span>
                   </div>
@@ -601,9 +606,9 @@ function ClientRouteCard({
           <Pin className={`h-3.5 w-3.5 ${settings.pinned ? 'fill-current' : ''}`} />
         </button>
       </div>
-      <p className="text-[10px] text-[var(--text-tertiary)]">作用于该客户端的所有会话</p>
+      <p className="text-[11px] text-[var(--text-tertiary)]">作用于该客户端的所有会话</p>
       <div className="grid grid-cols-2 gap-1.5 border-t border-[var(--line-soft)] pt-1">
-        <label className="grid min-w-0 gap-0.5 text-[10px] text-[var(--text-tertiary)]">
+        <label className="grid min-w-0 gap-0.5 text-[11px] text-[var(--text-tertiary)]">
           模型
           <AppSelect
             size="sm"
@@ -622,7 +627,7 @@ function ClientRouteCard({
             ))}
           </AppSelect>
         </label>
-        <div className="grid min-w-0 gap-0.5 text-[10px] text-[var(--text-tertiary)]">
+        <div className="grid min-w-0 gap-0.5 text-[11px] text-[var(--text-tertiary)]">
           思考强度
           <ReasoningEffortEditor
             instance={{
@@ -772,7 +777,7 @@ function SessionCard({
             onBlur={event => {
               const value = event.target.value.replace(/\s+#\d+(?:\.\d+)?$/, '').trim();
               void onUpdate(instance.id, {
-                customAgentName: value === instance.display.observedAgentName ? null : value,
+                customAgentName: value === defaultAgentName(instance) ? null : value,
               });
             }}
           />
@@ -897,7 +902,7 @@ function SessionCard({
       {bound ? (
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-1 text-[11px] leading-4">
-            <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">Session</span>
+            <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">Session</span>
             <span
               className="min-w-0 truncate font-mono text-[var(--text-secondary)]"
               title={instance.routeKey?.sessionId}
@@ -930,16 +935,16 @@ function SessionCard({
 
       <div className="grid min-h-0 grid-cols-2 content-start gap-2 border-t border-[var(--line-soft)] pt-2">
         <div className="grid min-w-0 content-start gap-1">
-          <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">模型</span>
+          <span className="text-[11px] leading-3 text-[var(--text-tertiary)]">模型</span>
           {modelSelect}
         </div>
         <div className="grid min-w-0 content-start gap-1">
-          <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">思考强度</span>
+          <span className="text-[11px] leading-3 text-[var(--text-tertiary)]">思考强度</span>
           {effortEditor}
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-2 text-[10px] leading-3 text-[var(--text-tertiary)]">
+      <div className="flex items-center justify-between gap-2 text-[11px] leading-3 text-[var(--text-tertiary)]">
         <span className="min-w-0 truncate">创建 {formatTime(instance.createdAt)}</span>
         <span className="min-w-0 truncate">最近 {formatTime(instance.lastRequestAt)}</span>
       </div>

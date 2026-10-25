@@ -27,54 +27,57 @@ export const AppSearchInput = forwardRef<HTMLInputElement, AppSearchInputProps>(
     const [isFocused, setIsFocused] = useState(false);
     const hasValue = value !== undefined && value !== '';
 
+    /* 高度与 AppInput / AppButton 对齐，工具栏并排时不出现高低差 */
     const sizeStyles = {
-      sm: 'pl-[var(--spacing-8)] pr-[var(--spacing-8)] py-[var(--spacing-sm)] text-sm rounded-[10px]',
-      md: 'pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]',
-      lg: 'pl-[44px] pr-[44px] py-[var(--spacing-lg)] text-lg rounded-[14px]',
+      sm: 'h-8 pl-8 pr-8 text-[12px]',
+      md: 'h-9 pl-9 pr-9 text-[13px]',
+      lg: 'h-10 pl-10 pr-10 text-[13px]',
     };
 
     const iconSizes = {
-      sm: 'w-4 h-4',
-      md: 'w-5 h-5',
-      lg: 'w-6 h-6',
+      sm: 'h-3.5 w-3.5',
+      md: 'h-4 w-4',
+      lg: 'h-4 w-4',
     };
 
     const iconPositions = {
-      sm: 'left-[var(--spacing-sm)]',
+      sm: 'left-2.5',
       md: 'left-[var(--spacing-md)]',
-      lg: 'left-[var(--spacing-lg)]',
+      lg: 'left-[var(--spacing-md)]',
     };
 
     const clearPositions = {
-      sm: 'right-[var(--spacing-sm)]',
-      md: 'right-[var(--spacing-md)]',
-      lg: 'right-[var(--spacing-lg)]',
+      sm: 'right-1',
+      md: 'right-1.5',
+      lg: 'right-1.5',
     };
 
     const baseInputStyles = `
       w-full
-      bg-[var(--surface-2)]
+      rounded-[var(--radius-sm)]
+      bg-[var(--field-bg)]
       text-[var(--text-primary)]
       placeholder-[var(--text-tertiary)]
-      border-none
-      transition-all
-      duration-[var(--duration-fast)]
-      [transition-timing-function:var(--ease-standard)]
+      border
+      transition-[box-shadow,border-color]
+      duration-[var(--duration-hover)]
       outline-none
     `
       .replace(/\s+/g, ' ')
       .trim();
 
-    const focusStyles = isFocused
-      ? 'bg-[var(--surface-1)] [box-shadow:0_0_0_4px_var(--focus-ring)]'
-      : '';
+    const borderStyles = isFocused
+      ? 'border-[var(--accent)] [box-shadow:0_0_0_3px_var(--focus-ring)]'
+      : 'border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]';
 
-    const disabledStyles = disabled ? 'opacity-50 cursor-not-allowed' : '';
+    const disabledStyles = disabled
+      ? 'opacity-60 cursor-not-allowed bg-[var(--surface-2)] text-[var(--text-tertiary)]'
+      : '';
 
     const combinedInputClassName = `
       ${baseInputStyles}
       ${sizeStyles[size]}
-      ${focusStyles}
+      ${borderStyles}
       ${disabledStyles}
       ${className}
     `
@@ -96,9 +99,9 @@ export const AppSearchInput = forwardRef<HTMLInputElement, AppSearchInputProps>(
     return (
       <div className={`relative ${containerClassName}`}>
         <div
-          className={`absolute ${iconPositions[size]} top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none`}
+          className={`pointer-events-none absolute ${iconPositions[size]} top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]`}
         >
-          <Search className={iconSizes[size]} strokeWidth={2} aria-hidden="true" />
+          <Search className={iconSizes[size]} strokeWidth={1.75} aria-hidden="true" />
         </div>
 
         <input
@@ -125,10 +128,10 @@ export const AppSearchInput = forwardRef<HTMLInputElement, AppSearchInputProps>(
             onClick={handleClear}
             aria-label="清除搜索内容"
             title="清除"
-            className={`absolute ${clearPositions[size]} top-1/2 -translate-y-1/2 rounded-full p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-secondary)]`}
+            className={`absolute ${clearPositions[size]} top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-secondary)]`}
             tabIndex={-1}
           >
-            <X className={iconSizes[size]} strokeWidth={2} aria-hidden="true" />
+            <X className={iconSizes[size]} strokeWidth={1.75} aria-hidden="true" />
           </button>
         )}
       </div>

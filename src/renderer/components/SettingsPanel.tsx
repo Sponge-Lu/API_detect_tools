@@ -23,7 +23,7 @@ import {
   Info,
   Database,
 } from 'lucide-react';
-import type { Config } from '../App';
+import type { Config } from '../../shared/types/renderer-config';
 import { useTheme } from '../hooks/useTheme';
 import { useUpdate, UpdateCheckResult } from '../hooks/useUpdate';
 import { toast } from '../store/toastStore';
@@ -45,9 +45,9 @@ function isSameWebdavConfig(left: WebDAVConfig, right: WebDAVConfig): boolean {
 }
 
 const WEBDAV_SAVE_DIRTY_CLASS =
-  'px-3 py-1.5 bg-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_85%,var(--text-primary))] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
+  'px-3 py-1.5 bg-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_85%,var(--text-primary))] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-colors flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 const WEBDAV_SAVE_CLEAN_CLASS =
-  'px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
+  'px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-colors flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 
 // 设置分类定义
 const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
@@ -283,10 +283,10 @@ export function SettingsPanel({
                 key={preset.id}
                 type="button"
                 onClick={() => changeThemeMode(preset.id)}
-                className={`rounded-[var(--radius-md)] border px-4 py-3 text-left transition-all ${
+                className={`rounded-[var(--radius-md)] border px-4 py-3 text-left transition-colors ${
                   selected
                     ? 'border-[var(--accent)] ring-1 ring-[var(--accent-soft)]'
-                    : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+                    : 'border-[var(--line-soft)] hover:border-[color-mix(in_srgb,var(--accent)_45%,transparent)]'
                 }`}
                 style={
                   selected
@@ -344,10 +344,10 @@ export function SettingsPanel({
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
             <label
-              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-all ${
+              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-colors ${
                 closeBehavior === 'ask'
                   ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-soft)]'
-                  : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+                  : 'border-[var(--line-soft)] hover:border-[color-mix(in_srgb,var(--accent)_45%,transparent)]'
               }`}
             >
               <input
@@ -367,10 +367,10 @@ export function SettingsPanel({
               </div>
             </label>
             <label
-              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-all ${
+              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-colors ${
                 closeBehavior === 'quit'
                   ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-soft)]'
-                  : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+                  : 'border-[var(--line-soft)] hover:border-[color-mix(in_srgb,var(--accent)_45%,transparent)]'
               }`}
             >
               <input
@@ -390,10 +390,10 @@ export function SettingsPanel({
               </div>
             </label>
             <label
-              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-all ${
+              className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-4 py-3 transition-colors ${
                 closeBehavior === 'minimize'
                   ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent-soft)]'
-                  : 'border-[var(--line-soft)] hover:border-[var(--accent)]/45'
+                  : 'border-[var(--line-soft)] hover:border-[color-mix(in_srgb,var(--accent)_45%,transparent)]'
               }`}
             >
               <input
@@ -442,7 +442,8 @@ export function SettingsPanel({
             启用 WebDAV 备份
           </label>
           <p className="text-xs text-[var(--text-secondary)] mt-1">
-            将配置备份到支持 WebDAV 的云存储（如坚果云、NextCloud）。导出默认不含密钥，恢复后需重新填写凭据。
+            将配置备份到支持 WebDAV
+            的云存储（如坚果云、NextCloud）。导出默认不含密钥，恢复后需重新填写凭据。
           </p>
         </div>
       </div>
@@ -450,8 +451,13 @@ export function SettingsPanel({
       {webdavConfig.enabled && (
         <div className="space-y-4">
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={webdavConfig.includeSecrets === true}
-              onChange={event => setWebdavConfig({ ...webdavConfig, includeSecrets: event.target.checked })} />
+            <input
+              type="checkbox"
+              checked={webdavConfig.includeSecrets === true}
+              onChange={event =>
+                setWebdavConfig({ ...webdavConfig, includeSecrets: event.target.checked })
+              }
+            />
             云备份包含密钥（持有备份者可读取凭据）
           </label>
           <div className="grid gap-4 md:grid-cols-2">
@@ -523,7 +529,7 @@ export function SettingsPanel({
                 type="button"
                 onClick={handleTestConnection}
                 disabled={testingConnection || !webdavConfig.serverUrl}
-                className="px-3 py-1.5 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:bg-[var(--surface-2)] disabled:opacity-50 rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+                className="px-3 py-1.5 border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-primary)] hover:bg-[var(--surface-2)] disabled:opacity-50 rounded-[var(--radius-md)] transition-colors flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
               >
                 {testingConnection ? (
                   <>
@@ -555,7 +561,7 @@ export function SettingsPanel({
                 type="button"
                 onClick={() => setShowBackupDialog(true)}
                 disabled={!webdavConfig.serverUrl}
-                className="px-3 py-1.5 bg-[var(--success)] hover:bg-[color-mix(in_srgb,var(--success)_85%,var(--text-primary))] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+                className="px-3 py-1.5 bg-[var(--success)] hover:bg-[color-mix(in_srgb,var(--success)_85%,var(--text-primary))] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-colors flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
               >
                 <FolderOpen className="w-4 h-4" />
                 管理备份
@@ -594,7 +600,7 @@ export function SettingsPanel({
           type="button"
           onClick={checkForUpdates}
           disabled={isChecking}
-          className="px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+          className="px-3 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] disabled:opacity-50 text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-colors flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
         >
           {isChecking ? (
             <>
@@ -721,7 +727,7 @@ export function SettingsPanel({
             <button
               type="button"
               onClick={handleExport}
-              className="flex-1 px-4 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-all flex items-center justify-center gap-2 font-medium text-sm shadow-sm"
+              className="flex-1 px-4 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-strong)] text-[var(--text-on-accent)] rounded-[var(--radius-md)] transition-colors flex items-center justify-center gap-2 font-medium text-sm shadow-sm"
             >
               <Download className="w-4 h-4" />
               导出配置
@@ -729,7 +735,7 @@ export function SettingsPanel({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex-1 px-4 py-2.5 bg-[var(--surface-2)] hover:bg-[var(--surface-3)] text-[var(--text-primary)] rounded-[var(--radius-md)] transition-all flex items-center justify-center gap-2 font-medium text-sm border border-[var(--line-soft)]"
+              className="flex-1 px-4 py-2.5 bg-[var(--surface-2)] hover:bg-[var(--surface-3)] text-[var(--text-primary)] rounded-[var(--radius-md)] transition-colors flex items-center justify-center gap-2 font-medium text-sm border border-[var(--line-soft)]"
             >
               <Upload className="w-4 h-4" />
               导入配置
@@ -816,14 +822,14 @@ export function SettingsPanel({
           </button>
         </div>
         <div className="flex-1 flex overflow-hidden">
-          <aside className="w-48 shrink-0 border-r border-[var(--line-soft)] bg-[var(--surface-2)]/72 p-2 space-y-1 overflow-y-auto">
+          <aside className="w-48 shrink-0 border-r border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] p-2 space-y-1 overflow-y-auto">
             {sections.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => setActiveSection(id)}
                 className={`
-                  w-full flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-sm font-medium transition-all text-left
+                  w-full flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] text-sm font-medium transition-colors text-left
                   ${
                     activeSection === id
                       ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm'

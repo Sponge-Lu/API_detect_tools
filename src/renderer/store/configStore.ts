@@ -1,3 +1,4 @@
+import { saveAppConfig } from '../services/config-commands';
 /**
  * 输入: Config (应用配置), SiteConfig (站点配置), Settings (应用设置)
  * 输出: ConfigState (配置状态), 配置操作方法
@@ -17,7 +18,7 @@
  */
 
 import { create } from 'zustand';
-import type { Config, SiteConfig, Settings } from '../App';
+import type { Config, SiteConfig, Settings } from '../../shared/types/renderer-config';
 import { toast } from './toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
 import Logger from '../utils/logger';
@@ -190,7 +191,7 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
     if (!config) return;
     set({ saving: true });
     try {
-      await window.electronAPI.saveConfig(config);
+      await saveAppConfig(config);
       sessionEventLog.success('sites', '站点配置已保存');
     } catch (error) {
       Logger.error('保存配置失败:', error);

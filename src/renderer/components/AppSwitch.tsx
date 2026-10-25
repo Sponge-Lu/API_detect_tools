@@ -19,12 +19,12 @@ export interface AppSwitchProps
 
 const trackStyles: Record<NonNullable<AppSwitchProps['size']>, string> = {
   sm: 'h-4 w-8',
-  md: 'h-[24px] w-[44px]',
+  md: 'h-6 w-11',
 };
 
 const thumbStyles: Record<NonNullable<AppSwitchProps['size']>, { base: string; on: string }> = {
-  sm: { base: 'h-3 w-3 translate-x-[1px]', on: 'translate-x-4' },
-  md: { base: 'h-[18px] w-[18px] translate-x-[1px]', on: 'translate-x-[21px]' },
+  sm: { base: 'h-3 w-3 translate-x-[2px]', on: 'translate-x-[18px]' },
+  md: { base: 'h-[18px] w-[18px] translate-x-[3px]', on: 'translate-x-[23px]' },
 };
 
 export const AppSwitch = forwardRef<HTMLButtonElement, AppSwitchProps>(function AppSwitch(
@@ -45,22 +45,20 @@ export const AppSwitch = forwardRef<HTMLButtonElement, AppSwitchProps>(function 
         aria-label={label ? undefined : ariaLabel}
         aria-labelledby={label ? labelId : undefined}
         onClick={() => onCheckedChange(!checked)}
-        className={`relative inline-flex shrink-0 rounded-full border-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 ${trackStyles[size]} ${
-          checked
-            ? 'border-[var(--accent)] bg-[var(--accent)]'
-            : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
+        className={`relative inline-flex shrink-0 items-center rounded-full transition-colors duration-[var(--duration-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50 ${trackStyles[size]} ${
+          checked ? 'bg-[var(--accent-solid)]' : 'bg-[var(--line-strong)]'
         }`}
         {...props}
       >
         <span
           aria-hidden="true"
-          className={`mt-px inline-block rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] transition-transform ${thumbStyles[size].base} ${
+          className={`inline-block rounded-full bg-[var(--text-on-accent)] shadow-[var(--shadow-sm)] transition-transform duration-[var(--duration-hover)] ${thumbStyles[size].base} ${
             checked ? thumbStyles[size].on : ''
           }`}
         />
       </button>
       {label ? (
-        <span id={labelId} className="text-[var(--text-secondary)] select-none">
+        <span id={labelId} className="select-none text-[13px] text-[var(--text-secondary)]">
           {label}
         </span>
       ) : null}

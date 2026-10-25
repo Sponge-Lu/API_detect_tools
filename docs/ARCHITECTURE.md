@@ -404,3 +404,15 @@ DSH（DeepSeek Harness）默认走 `llm-pi-ai` 的 `anthropic-messages` 通道�
 - **端点测试更明确**：协议中立、上游直连、最新结果与时间持久化形成统一诊断链路。
 - **UI 与主题体系收敛**：从旧命名和多套实验主题回到统一原语与四套中性主题。
 - **恢复能力更强**：配置迁移、坏文件保护和备份恢复成为内建能力。
+
+## 2026-10-24 存储与职责边界更新
+
+当前持久化模型以 [STORAGE_SCHEMA.md](STORAGE_SCHEMA.md) 为准，迁移/备份/错误与回退见 [STORAGE_OPERATIONS.md](STORAGE_OPERATIONS.md)。本文此前 JSON 文件布局描述保留作旧格式和逻辑交换标识说明，不再表示迁移后有多份可独立修改的数据源。
+
+启动顺序：单实例锁 → 显式数据库/schema 校验 → 一次性旧文件适配/原始备份/事务导入 → CLI 中断恢复 → 配置投影与服务组装 → IPC/窗口。运行态和稳定意图分域，事务提交后发布稳定配置；恢复用维护屏障与 generation 失效旧回调。
+
+main/config 管理实体与旧格式/defaults；main/storage 管理 DB/仓储/命令/应用恢复；main/auth 按 authentication/checkin/api-keys/detection 分离操作；main/clients 管理内容合并、模板升级、目标解析与会话解析；browser-runtime 区分槽位/路径和 page-auth。既有 route-request-context/upstream-forwarder/rule-engine/usage 继续复用。
+
+Renderer 的共享契约移至 shared/types；App 初始化/自动刷新交给 useApplicationData/useManagedAutoRefresh；站点与模型重定向用局部控制 Hook，展示不负责持久化拼装；overview 分离纯聚合和两类视图/图表；卡片的模板编辑、预览与 DSH 控件保留独立边界。架构测试检查进程依赖、存储底层依赖和旧全量写入口。
+
+验收与平台限制见 [ARCHITECTURE_REFACTOR_PROGRESS.md](ARCHITECTURE_REFACTOR_PROGRESS.md)。

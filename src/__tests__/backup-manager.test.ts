@@ -18,6 +18,7 @@ vi.mock('../main/utils/logger', () => ({
 }));
 
 import { BackupManager } from '../main/backup-manager';
+import * as storageBundle from '../main/app-storage-bundle';
 
 describe('BackupManager', () => {
   let tempDir: string;
@@ -32,7 +33,23 @@ describe('BackupManager', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('checks automatic backup throttling before collecting a database snapshot', async () => {
+    const collect = vi
+      .spyOn(storageBundle, 'createPortableAppStorageBundleContent')
+      .mockResolvedValue(
+        JSON.stringify({ version: '3.1', sites: [], accounts: [], siteGroups: [], settings: {} })
+      );
+    const manager = new BackupManager({ backupDir, minAutoBackupIntervalMs: 60_000 });
+    expect(await manager.backupManifestBundle({ force: true })).toBe(true);
+    collect.mockClear();
+    expect(await manager.backupManifestBundle()).toBe(false);
+    expect(collect).not.toHaveBeenCalled();
+    expect(await manager.backupManifestBundle({ force: true })).toBe(true);
+    expect(collect).toHaveBeenCalledTimes(1);
   });
 
   it('skips automatic backups inside the throttle window', async () => {

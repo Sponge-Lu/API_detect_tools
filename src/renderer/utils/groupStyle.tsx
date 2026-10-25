@@ -74,5 +74,5 @@ export function getGroupTextColor(groupName: string): string {
  */
 export function getGroupIcon(_groupName: string, index?: number): React.ReactNode {
   const idx = index !== undefined ? index % CIRCLED_NUMBERS.length : 0;
-  return <span className="text-xs font-bold">{CIRCLED_NUMBERS[idx]}</span>;
+  return <span className="text-xs font-semibold">{CIRCLED_NUMBERS[idx]}</span>;
 }

@@ -16,7 +16,7 @@ export interface AppCardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function AppCard({
   variant = 'standard',
-  blur = true,
+  blur = false,
   hoverable = true,
   expanded = false,
   expandContent,
@@ -41,10 +41,8 @@ export function AppCard({
 
   const baseStyles = `
     relative
-    rounded-[var(--radius-lg)]
+    rounded-[var(--radius-md)]
     overflow-hidden
-    [backface-visibility:hidden]
-    [transform:translateZ(0)]
   `
     .replace(/\s+/g, ' ')
     .trim();
@@ -55,9 +53,8 @@ export function AppCard({
       : '';
 
   const transitionStyles = `
-    transition-[transform,opacity,box-shadow]
-    duration-[var(--duration-normal)]
-    [transition-timing-function:var(--ease-standard)]
+    transition-[box-shadow,border-color,background-color]
+    duration-[var(--duration-fast)]
   `
     .replace(/\s+/g, ' ')
     .trim();
@@ -65,21 +62,21 @@ export function AppCard({
   const variantStyles = {
     standard: `
       bg-[var(--surface-1)]
-      border-2 border-transparent
+      border border-[var(--line-soft)]
       shadow-[var(--shadow-md)]
     `
       .replace(/\s+/g, ' ')
       .trim(),
     elevated: `
       bg-[var(--surface-1)]
-      border-2 border-transparent
+      border border-[var(--line-soft)]
       shadow-[var(--shadow-lg)]
     `
       .replace(/\s+/g, ' ')
       .trim(),
     grouped: `
       bg-[var(--surface-1)]
-      border-2 border-transparent
+      border border-[var(--line-soft)]
       shadow-[var(--shadow-sm)]
     `
       .replace(/\s+/g, ' ')
@@ -88,10 +85,8 @@ export function AppCard({
 
   const blurStyles = blur
     ? `
-    backdrop-blur-[12px]
-    [-webkit-backdrop-filter:blur(12px)]
-    bg-opacity-95
-    [will-change:backdrop-filter]
+    backdrop-blur-[8px]
+    [-webkit-backdrop-filter:blur(8px)]
   `
         .replace(/\s+/g, ' ')
         .trim()
@@ -100,8 +95,8 @@ export function AppCard({
   const hoverStyles =
     hoverable && !disabled
       ? `
+    hover:border-[var(--line-strong)]
     hover:shadow-[var(--shadow-lg)]
-    hover:-translate-y-0.5
   `
           .replace(/\s+/g, ' ')
           .trim()
@@ -109,10 +104,9 @@ export function AppCard({
 
   const dragOverStyles = isDragOver
     ? `
-    border-[var(--accent)]
-    scale-[1.02]
+    !border-[var(--accent)]
     shadow-[var(--shadow-xl)]
-    [will-change:transform,border-color]
+    bg-[var(--accent-soft)]
   `
         .replace(/\s+/g, ' ')
         .trim()

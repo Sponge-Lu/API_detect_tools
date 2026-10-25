@@ -1,6 +1,6 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /** CLI 配置保存与本地配置文件写入 IPC。 */
 
-import { ipcMain } from 'electron';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
 import { normalizeTomlContent } from '../utils/toml-parser';
@@ -478,7 +478,7 @@ function mergeConfigByType(
  */
 export function registerCliCompatHandlers() {
   // 保存 CLI 配置到账户配置（不是 cached_data，这样备份时不会丢失）
-  ipcMain.handle(
+  handleStorageIpc(
     'cli-compat:save-config',
     async (_, siteUrl: string, cliConfig: CliConfig, accountId?: string) => {
       try {
@@ -531,7 +531,7 @@ export function registerCliCompatHandlers() {
   );
 
   // 写入 CLI 配置文件到文件系统（支持合并和覆盖模式）
-  ipcMain.handle(
+  handleStorageIpc(
     'cli-compat:write-config',
     async (_, params: WriteCliConfigParams): Promise<WriteCliConfigResult> => {
       const applyMode = params.applyMode || 'merge';

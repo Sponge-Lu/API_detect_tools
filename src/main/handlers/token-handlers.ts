@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 import Logger from '../utils/logger';
 /**
  * 输入: TokenService, ChromeManager, UnifiedConfigManager
@@ -5,7 +6,7 @@ import Logger from '../utils/logger';
  * 定位: IPC 层 - 令牌管理接口，支持多账户凭证初始化
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron';
 import type { TokenService } from '../token-service';
 import { isMaskedApiKeyValue, mergeApiKeysPreservingRawValue } from '../token-service';
 import type { ChromeManager } from '../chrome-manager';
@@ -41,14 +42,14 @@ export function registerTokenHandlers(
   chromeManager: ChromeManager,
   getMainWindow: () => BrowserWindow | null
 ) {
-  ipcMain.handle('token:list-local-api-keys', async (_, accountId: string) => {
+  handleStorageIpc('token:list-local-api-keys', async (_, accountId: string) => {
     try {
       return { success: true, data: await listLocalApiKeys(accountId) };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
-  ipcMain.handle(
+  handleStorageIpc(
     'token:add-local-api-key',
     async (_, accountId: string, input: LocalApiKeyInput) => {
       try {
@@ -61,7 +62,7 @@ export function registerTokenHandlers(
       }
     }
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'token:update-local-api-key',
     async (_, accountId: string, keyId: string, input: LocalApiKeyInput) => {
       try {
@@ -74,7 +75,7 @@ export function registerTokenHandlers(
       }
     }
   );
-  ipcMain.handle('token:delete-local-api-key', async (_, accountId: string, keyId: string) => {
+  handleStorageIpc('token:delete-local-api-key', async (_, accountId: string, keyId: string) => {
     try {
       const data = await deleteLocalApiKey(accountId, keyId);
       await syncModelRegistrySources(true);
@@ -84,14 +85,14 @@ export function registerTokenHandlers(
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
-  ipcMain.handle('token:reveal-local-api-key', async (_, accountId: string, keyId: string) => {
+  handleStorageIpc('token:reveal-local-api-key', async (_, accountId: string, keyId: string) => {
     try {
       return { success: true, data: await revealLocalApiKey(accountId, keyId) };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
-  ipcMain.handle(
+  handleStorageIpc(
     'token:refresh-local-api-keys',
     async (_, accountId: string, baseUrl: string, keyId?: string) => {
       try {
@@ -273,7 +274,7 @@ export function registerTokenHandlers(
   };
 
   // 初始化站点账号
-  ipcMain.handle('token:initialize-site', async (_, baseUrl: string) => {
+  handleStorageIpc('token:initialize-site', async (_, baseUrl: string) => {
     try {
       const mainWindow = getMainWindow();
       const siteAccount = await tokenService.initializeSiteAccount(
@@ -302,7 +303,7 @@ export function registerTokenHandlers(
   });
 
   // 刷新显示数据
-  ipcMain.handle('token:refresh-display-data', async (_, account: any) => {
+  handleStorageIpc('token:refresh-display-data', async (_, account: any) => {
     try {
       const result = await tokenService.refreshDisplayData(account);
       return { success: result.success, data: result.data, healthStatus: result.healthStatus };
@@ -313,7 +314,7 @@ export function registerTokenHandlers(
   });
 
   // 从浏览器登录态刷新账户基础信息（user_id / username / access_token）
-  ipcMain.handle('token:refresh-account-basic-info', async (_, accountId: string) => {
+  handleStorageIpc('token:refresh-account-basic-info', async (_, accountId: string) => {
     try {
       await unifiedConfigManager.getConfig();
       const account = unifiedConfigManager.getAccountById(accountId);
@@ -374,7 +375,7 @@ export function registerTokenHandlers(
   });
 
   // 验证令牌有效性
-  ipcMain.handle('token:validate', async (_, account: any) => {
+  handleStorageIpc('token:validate', async (_, account: any) => {
     try {
       const isValid = await tokenService.validateToken(account);
       return { success: true, data: { isValid } };
@@ -385,7 +386,7 @@ export function registerTokenHandlers(
   });
 
   // 获取 API 令牌列表
-  ipcMain.handle(
+  handleStorageIpc(
     'token:fetch-api-tokens',
     async (_, baseUrl: string, userId: number, accessToken: string, accountId?: string) => {
       try {
@@ -403,7 +404,7 @@ export function registerTokenHandlers(
     }
   );
 
-  ipcMain.handle(
+  handleStorageIpc(
     'token:resolve-api-key-value',
     async (_, siteUrl: string, apiKeyId: string | number, accountId?: string) => {
       try {
@@ -498,7 +499,7 @@ export function registerTokenHandlers(
   );
 
   // 创建新的 API 令牌
-  ipcMain.handle(
+  handleStorageIpc(
     'token:create-api-token',
     async (
       _,
@@ -524,7 +525,7 @@ export function registerTokenHandlers(
   );
 
   // 删除 API 令牌
-  ipcMain.handle(
+  handleStorageIpc(
     'token:delete-api-token',
     async (
       _,
@@ -553,7 +554,7 @@ export function registerTokenHandlers(
   );
 
   // 获取用户分组信息
-  ipcMain.handle(
+  handleStorageIpc(
     'token:fetch-user-groups',
     async (_, baseUrl: string, userId: number, accessToken: string) => {
       try {
@@ -568,7 +569,7 @@ export function registerTokenHandlers(
   );
 
   // 获取模型定价信息
-  ipcMain.handle(
+  handleStorageIpc(
     'token:fetch-model-pricing',
     async (_, baseUrl: string, userId: number, accessToken: string) => {
       try {
@@ -583,7 +584,7 @@ export function registerTokenHandlers(
   );
 
   // 执行签到
-  ipcMain.handle(
+  handleStorageIpc(
     'token:check-in',
     async (_, baseUrl: string, userId: number, accessToken: string) => {
       try {

@@ -1,4 +1,4 @@
-import type { Config } from '../App';
+import type { Config } from '../../shared/types/renderer-config';
 import {
   BUILTIN_GROUP_IDS,
   isSiteCheckinEnabled,

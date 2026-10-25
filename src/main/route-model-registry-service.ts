@@ -43,6 +43,7 @@ export { resolveApiKeyId } from './api-key-identity';
 import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 import { normalizeCircledGroupLabel } from '../shared/utils/groupLabel';
 import { resolveApiKeyForUse } from '../shared/utils/apiConfig';
+import { expandRouteModelSourceKeys } from '../shared/utils/routeModelGrouping';
 
 const log = Logger.scope('RouteModelRegistry');
 const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
@@ -75,31 +76,6 @@ function normalizeDisplayItemOriginalModelOrder(
   }
 
   return normalized;
-}
-
-function expandDisplayItemSourceKeys(
-  item: RouteModelDisplayItem,
-  sourcePool: RouteModelSourceRef[],
-  sourceByKey: Map<string, RouteModelSourceRef>
-): string[] {
-  const selectedModels = new Set(
-    (item.originalModelOrder || []).map(model => normalizeModelToken(model)).filter(Boolean)
-  );
-
-  for (const sourceKey of item.sourceKeys) {
-    const source = sourceByKey.get(sourceKey);
-    if (source?.originalModel) {
-      selectedModels.add(source.originalModel);
-    }
-  }
-
-  if (selectedModels.size === 0) {
-    return Array.from(new Set(item.sourceKeys.filter(sourceKey => sourceByKey.has(sourceKey))));
-  }
-
-  return sourcePool
-    .filter(source => selectedModels.has(source.originalModel))
-    .map(source => source.sourceKey);
 }
 
 function sortSourceKeysByOriginalModelOrder(
@@ -385,12 +361,12 @@ function buildDisplayItems(
     .map<RouteModelDisplayItem | null>(item => {
       const sourceKeys = Array.from(
         new Set(
-          expandDisplayItemSourceKeys(item, sourcePool, sourceByKey).filter(sourceKey =>
+          expandRouteModelSourceKeys(item, sourcePool).filter(sourceKey =>
             validSourceKeys.has(sourceKey)
           )
         )
       );
-      if (sourceKeys.length === 0) {
+      if (sourceKeys.length === 0 && !item.autoCollect?.modelKeys.length) {
         return null;
       }
 
@@ -451,7 +427,14 @@ function buildDisplayItems(
     const manualItem = itemByCanonicalName.get(canonicalName);
     if (manualItem) {
       const sourceKeys = Array.from(
-        new Set([...manualItem.sourceKeys, ...group.sources.map(source => source.sourceKey)])
+        new Set([
+          ...manualItem.sourceKeys,
+          ...group.sources
+            .filter(
+              source => !manualItem.autoCollect?.excludedModels.includes(source.originalModel)
+            )
+            .map(source => source.sourceKey),
+        ])
       );
       manualItem.sourceKeys = sortSourceKeysByOriginalModelOrder(
         sourceKeys,

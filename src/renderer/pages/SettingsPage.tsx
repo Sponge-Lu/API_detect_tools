@@ -1,3 +1,4 @@
+import { saveAppConfig } from '../services/config-commands';
 /**
  * 设置独立页面
  * 薄包装层，调用 SettingsPanel asPage 模式
@@ -8,7 +9,7 @@ import { LoadingState } from '../components/LoadingState';
 import { useConfigStore } from '../store/configStore';
 import { useUIStore } from '../store/uiStore';
 import { useUpdate } from '../hooks/useUpdate';
-import type { Config } from '../App';
+import type { Config } from '../../shared/types/renderer-config';
 import Logger from '../utils/logger';
 import { toast } from '../store/toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
@@ -25,7 +26,7 @@ export function SettingsPage() {
   const saveConfig = async (newConfig: Config) => {
     try {
       useConfigStore.getState().setSaving(true);
-      await window.electronAPI.saveConfig(newConfig);
+      await saveAppConfig(newConfig);
       useConfigStore.getState().setConfig(newConfig);
       sessionEventLog.success('settings', '应用设置已保存');
     } catch (error) {

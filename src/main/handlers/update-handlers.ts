@@ -1,9 +1,10 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 软件更新 IPC 处理器
  * 处理更新检查、版本获取、下载链接打开和设置管理
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron';
 import { updateService } from '../update-service';
 import Logger from '../utils/logger';
 
@@ -12,7 +13,7 @@ import Logger from '../utils/logger';
  */
 export function registerUpdateHandlers(): void {
   // 检查更新 - 直接返回结果，与 App.tsx 类型定义一致
-  ipcMain.handle('update:check', async () => {
+  handleStorageIpc('update:check', async () => {
     try {
       Logger.info('[UpdateHandlers] 收到检查更新请求');
       const result = await updateService.checkForUpdates();
@@ -24,7 +25,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 获取当前版本 - 直接返回版本字符串
-  ipcMain.handle('update:get-current-version', () => {
+  handleStorageIpc('update:get-current-version', () => {
     try {
       return updateService.getCurrentVersion();
     } catch (error: any) {
@@ -34,7 +35,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 打开下载链接
-  ipcMain.handle('update:open-download', async (_event, url: string) => {
+  handleStorageIpc('update:open-download', async (_event, url: string) => {
     try {
       Logger.info('[UpdateHandlers] 打开下载链接:', url);
       await updateService.openDownloadUrl(url);
@@ -45,7 +46,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 获取更新设置 - 直接返回设置对象
-  ipcMain.handle('update:get-settings', async () => {
+  handleStorageIpc('update:get-settings', async () => {
     try {
       return await updateService.getSettings();
     } catch (error: any) {
@@ -55,7 +56,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 保存更新设置
-  ipcMain.handle('update:save-settings', async (_event, settings: any) => {
+  handleStorageIpc('update:save-settings', async (_event, settings: any) => {
     try {
       await updateService.saveSettings(settings);
     } catch (error: any) {
@@ -65,7 +66,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 开始下载更新
-  ipcMain.handle('update:start-download', async (event, url: string) => {
+  handleStorageIpc('update:start-download', async (event, url: string) => {
     try {
       Logger.info('[UpdateHandlers] 开始下载更新:', url);
       const filePath = await updateService.downloadUpdate(url, progress => {
@@ -84,7 +85,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 取消下载
-  ipcMain.handle('update:cancel-download', async () => {
+  handleStorageIpc('update:cancel-download', async () => {
     try {
       Logger.info('[UpdateHandlers] 取消下载');
       updateService.cancelDownload();
@@ -95,7 +96,7 @@ export function registerUpdateHandlers(): void {
   });
 
   // 安装更新
-  ipcMain.handle('update:install', async (_event, filePath: string) => {
+  handleStorageIpc('update:install', async (_event, filePath: string) => {
     try {
       Logger.info('[UpdateHandlers] 安装更新:', filePath);
       await updateService.installUpdate(filePath);

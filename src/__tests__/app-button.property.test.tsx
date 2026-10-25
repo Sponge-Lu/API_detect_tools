@@ -31,31 +31,29 @@ describe('AppButton primitive contract', () => {
         if (button) {
           const classList = button.className;
 
-          expect(classList).toContain('rounded-[var(--radius-md)]');
+          expect(classList).toContain('rounded-[var(--radius-sm)]');
           expect(classList).toContain('transition-colors');
           expect(classList).toContain('disabled:opacity-50');
           expect(classList).toContain('disabled:cursor-not-allowed');
 
           if (variant === 'primary') {
-            expect(classList).toContain('bg-[var(--accent-soft)]');
-            expect(classList).toContain('text-[var(--accent-strong)]');
-            expect(classList).toContain('hover:bg-[var(--accent-soft-strong)]');
+            expect(classList).toContain('bg-[var(--accent-solid)]');
+            expect(classList).toContain('text-[var(--text-on-accent)]');
+            expect(classList).toContain('hover:bg-[var(--accent-solid-hover)]');
           } else if (variant === 'secondary') {
             expect(classList).toContain('border-[var(--line-soft)]');
             expect(classList).toContain('bg-[var(--surface-3)]');
-            expect(classList).toContain('text-[var(--text-secondary)]');
+            expect(classList).toContain('text-[var(--text-primary)]');
             expect(classList).toContain('hover:bg-[var(--surface-2)]');
           } else if (variant === 'tertiary') {
             expect(classList).toContain('border-transparent');
             expect(classList).toContain('bg-transparent');
             expect(classList).toContain('text-[var(--text-secondary)]');
-            expect(classList).toContain('hover:bg-[var(--surface-2)]');
+            expect(classList).toContain('hover:bg-[var(--hover-overlay)]');
           } else {
-            expect(classList).toContain('bg-[var(--danger-soft)]');
-            expect(classList).toContain('text-[var(--danger)]');
-            expect(classList).toContain(
-              'hover:bg-[color-mix(in_srgb,var(--danger)_20%,transparent)]'
-            );
+            expect(classList).toContain('bg-[var(--danger)]');
+            expect(classList).toContain('text-[var(--text-on-accent)]');
+            expect(classList).toContain('hover:bg-[color-mix(in_srgb,var(--danger)_88%,black)]');
           }
         }
 
@@ -76,9 +74,9 @@ describe('AppButton primitive contract', () => {
         if (button) {
           const classList = button.className;
           const sizeClassMap: Record<NonNullable<AppButtonProps['size']>, string[]> = {
-            sm: ['min-h-8', 'px-3', 'text-xs'],
-            md: ['min-h-9', 'px-3.5', 'text-sm'],
-            lg: ['min-h-10', 'px-4', 'text-sm'],
+            sm: ['min-h-8', 'px-2.5', 'text-[12px]'],
+            md: ['min-h-9', 'px-3', 'text-[13px]'],
+            lg: ['min-h-10', 'px-4', 'text-[13px]'],
           };
 
           sizeClassMap[size].forEach(expectedClass => {

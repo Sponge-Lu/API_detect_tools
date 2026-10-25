@@ -48,7 +48,7 @@
 | **AppShell/** | 页面壳层组件与页面元数据 | GlobalCommandBar, PageHeader, pageMeta |
 | **SiteCard/** | 站点列表行；站点与直连配置名称调用系统浏览器打开 | SiteCard, SiteCardHeader, SiteCardActions, SiteCardDetails |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader；History 固定展示路由请求时间桶 |
-| **Route/** | Route 页面组件 | DshIntegrationBanner, ConfigProfilesSection, RouteSessionSection, Redirection/ModelRedirectionTab, ProxyStats/ProxyStatsTab, Usability/HistoryBucketBars |
+| **Route/** | Route 页面组件 | ConfigProfilesSection, DshConfigControls, RouteSessionSection, Redirection/ModelRedirectionTab, ProxyStats/ProxyStatsTab, Usability/HistoryBucketBars |
 | **dialogs/** | 对话框组件 | 各类对话框；接入点侧滑面板承载独立端点测试、CLI 配置及身份维护；操作记录弹窗展示当前会话关键操作；站点设置弹窗维护站点刷新参数 |
 | **Skeleton/** | 骨架屏 | Skeleton, SiteCardSkeleton, SiteListSkeleton |
 | **Toast/** | 消息提示 | Toast, ToastContainer |

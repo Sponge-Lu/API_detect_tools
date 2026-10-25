@@ -373,7 +373,7 @@ function SearchableModelSelector({
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => !disabled && setOpen(prev => !prev)}
-        className={`flex w-full items-center justify-between rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-all ${
+        className={`flex w-full items-center justify-between rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-colors ${
           disabled ? 'cursor-not-allowed opacity-50' : 'hover:border-[var(--text-tertiary)]'
         }`}
       >
@@ -420,7 +420,7 @@ function SearchableModelSelector({
               }}
               className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
                 selectedModel === null
-                  ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
+                  ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)]'
               }`}
             >
@@ -438,7 +438,7 @@ function SearchableModelSelector({
                   }}
                   className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
                     selectedModel === model
-                      ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
+                      ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-[var(--accent)]'
                       : 'text-[var(--text-primary)] hover:bg-[var(--surface-2)]'
                   }`}
                 >
@@ -489,7 +489,7 @@ function ConfigFileDisplay({
         </code>
         <button
           onClick={() => onCopy(file.path, file.content)}
-          className="flex items-center gap-1 rounded-[var(--radius-sm)] px-2 py-1 text-xs transition-all hover:bg-[var(--surface-1)] active:scale-95"
+          className="flex items-center gap-1 rounded-[var(--radius-sm)] px-2 py-1 text-xs transition-colors hover:bg-[var(--surface-1)] active:scale-95"
           title="复制配置内容"
         >
           {isCopied ? (
@@ -1182,7 +1182,7 @@ export function ManagedCliConfigEditorContent({
                         aria-label={`${cli.name} 选择上游端口`}
                         value={selectedTargetProtocolValue}
                         onChange={event => handleTargetProtocolChange(cli.key, event.target.value)}
-                        className={`h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+                        className={`h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs transition-colors focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
                           selectedTargetProtocolValue
                             ? 'text-[var(--text-primary)]'
                             : 'text-[var(--text-tertiary)]'
@@ -1219,7 +1219,7 @@ export function ManagedCliConfigEditorContent({
                               e.target.value ? parseInt(e.target.value, 10) : null
                             )
                           }
-                          className="h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                          className="h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs text-[var(--text-primary)] transition-colors focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                         >
                           <option value="">请选择 API Key</option>
                           {apiKeys.map(apiKey => {
@@ -1293,7 +1293,7 @@ export function ManagedCliConfigEditorContent({
                           {(editedConfig || savedEditedConfig) && (
                             <button
                               onClick={() => void onResetConfirmRequested()}
-                              className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--warning)]/50 px-2 py-1 text-xs text-[var(--warning)] transition-all hover:bg-[var(--warning)]/10 active:scale-95"
+                              className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--warning)_50%,transparent)] px-2 py-1 text-xs text-[var(--warning)] transition-colors hover:bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] active:scale-95"
                               title="重置为默认配置"
                             >
                               <RotateCcw className="h-3 w-3" />
@@ -1302,7 +1302,7 @@ export function ManagedCliConfigEditorContent({
                           )}
                           <button
                             onClick={toggleEditMode}
-                            className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
+                            className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] active:scale-95"
                             title={isEditing ? '切换到预览模式' : '切换到编辑模式'}
                           >
                             {isEditing ? (
@@ -1325,7 +1325,7 @@ export function ManagedCliConfigEditorContent({
                         {previewBaseUrlMismatch && (
                           <div
                             role="alert"
-                            className="rounded-[var(--radius-sm)] border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]"
+                            className="rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-2 py-1.5 text-xs text-[var(--warning)]"
                           >
                             检测到当前预览配置中的域名（{previewBaseUrlMismatch.previewBaseUrl}
                             ）与当前站点（
@@ -1334,7 +1334,7 @@ export function ManagedCliConfigEditorContent({
                           </div>
                         )}
                         {isShowingTemplate && (
-                          <div className="rounded-[var(--radius-sm)] bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]">
+                          <div className="rounded-[var(--radius-sm)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-2 py-1.5 text-xs text-[var(--warning)]">
                             请选择 API Key 和 CLI 使用模型以生成实际配置，以下为配置模板
                           </div>
                         )}

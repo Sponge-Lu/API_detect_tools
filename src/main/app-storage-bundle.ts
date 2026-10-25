@@ -12,9 +12,12 @@ import {
   resolveAppStorageEntryPath,
 } from './app-storage-manifest';
 import { writeTextFileAtomically } from './utils/atomic-json';
+import { getApplicationStorage, type StorageDocuments } from './storage/application-storage';
+import type { StorageDocumentId } from './storage/repositories/document-mapping';
+import { encodePayload, decodePayload } from './storage/database/payload-codec';
 
 export const APP_STORAGE_BUNDLE_FORMAT = 'api-hub-storage-bundle';
-export const APP_STORAGE_BUNDLE_VERSION = 1;
+export const APP_STORAGE_BUNDLE_VERSION = 2;
 
 export type AppStorageBundleMode = 'full-manifest' | 'portable-config';
 export type AppStorageBundleFileEncoding = 'utf8' | 'base64';
@@ -35,6 +38,8 @@ export interface AppStorageBundle {
   manifestVersion: number;
   mode: AppStorageBundleMode;
   createdAt: number;
+  includeSecrets?: boolean;
+  databaseSchemaVersion?: number;
   files: AppStorageBundleFile[];
 }
 
@@ -70,7 +75,7 @@ export function omitBackupSecrets(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      /^(?:api_?key|unifiedApiKey|key|token|access_?token|refresh_?token|system_?token|password|secret|authorization|cookie|session_?token|localRouteCredential)$/i.test(
+      /^(?:api_?key|unifiedApiKey|key|token|access_?token|refresh_?token|system_?token|password|secret|authorization|cookie|session_?token|localRouteCredential|template|content|body|headers|environment|env|editedFiles|fileContents)$/i.test(
         key
       )
         ? typeof item === 'object'
@@ -183,10 +188,21 @@ function decodeBundleFile(file: AppStorageBundleFile): Buffer {
 }
 
 function assertBundleFileHash(file: AppStorageBundleFile, buffer: Buffer): void {
+  if (!Number.isSafeInteger(file.size) || file.size !== buffer.length)
+    throw new Error('备份文件大小校验失败');
   const actualHash = hashBuffer(buffer);
   if (actualHash !== file.sha256) {
     throw new Error(`备份文件校验失败: ${file.relativePath}`);
   }
+}
+
+function parseBackupDocument(buffer: Buffer): Record<string, unknown> {
+  const parsed = JSON.parse(buffer.toString('utf8'));
+  if (isObjectRecord(parsed) && parsed.storageDocumentFormat === 1) {
+    if (typeof parsed.payload !== 'string') throw new Error('Invalid encrypted backup document');
+    return decodePayload(parsed.payload);
+  }
+  return parsed;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -197,7 +213,7 @@ export function isAppStorageBundle(value: unknown): value is AppStorageBundle {
   return (
     isObjectRecord(value) &&
     value.format === APP_STORAGE_BUNDLE_FORMAT &&
-    value.version === APP_STORAGE_BUNDLE_VERSION &&
+    (value.version === 1 || value.version === APP_STORAGE_BUNDLE_VERSION) &&
     value.manifestVersion === APP_STORAGE_MANIFEST_VERSION &&
     (value.mode === 'full-manifest' || value.mode === 'portable-config') &&
     Array.isArray(value.files)
@@ -209,8 +225,20 @@ async function collectBundleFiles(
   roots: AppStorageRoots
 ): Promise<AppStorageBundleFile[]> {
   const files: AppStorageBundleFile[] = [];
+  const storage = getApplicationStorage();
+  const entries = getEntriesForBundleMode(mode);
+  const documents =
+    storage && path.resolve(roots.userData ?? '') === path.resolve(storage.root)
+      ? await storage.snapshotDocuments(
+          entries.flatMap(entry => {
+            const filename = resolveAppStorageEntryPath(entry, roots);
+            const id = filename && storage.documentId(filename);
+            return id ? [id] : [];
+          })
+        )
+      : undefined;
 
-  for (const entry of getEntriesForBundleMode(mode)) {
+  for (const entry of entries) {
     const absolutePath = resolveAppStorageEntryPath(entry, roots);
     if (!absolutePath) {
       continue;
@@ -219,7 +247,14 @@ async function collectBundleFiles(
     let buffer: Buffer;
     let stat;
     try {
-      [buffer, stat] = await Promise.all([fs.readFile(absolutePath), fs.stat(absolutePath)]);
+      const id = storage?.documentId(absolutePath);
+      if (documents && id) {
+        if (!documents[id]) continue;
+        buffer = Buffer.from(JSON.stringify(documents[id], null, 2));
+        stat = { mtimeMs: Date.now() };
+      } else {
+        [buffer, stat] = await Promise.all([fs.readFile(absolutePath), fs.stat(absolutePath)]);
+      }
     } catch (error) {
       if (isMissingFile(error) || isDirectoryError(error)) {
         continue;
@@ -251,13 +286,27 @@ export async function createAppStorageBundle(
   const mode = options.mode ?? 'full-manifest';
   const roots = options.roots ?? getCurrentAppStorageRoots();
   const files = await collectBundleFiles(mode, roots);
-  if (options.includeSecrets === false) {
-    for (const file of files) {
-      const sanitized = Buffer.from(JSON.stringify(omitBackupSecrets(JSON.parse(file.content)), null, 2));
-      file.content = sanitized.toString('utf8');
-      file.size = sanitized.length;
-      file.sha256 = hashBuffer(sanitized);
+  for (const file of files) {
+    const value = JSON.parse(file.content);
+    const output =
+      options.includeSecrets === false
+        ? omitBackupSecrets(value)
+        : { storageDocumentFormat: 1, payload: encodePayload(value) };
+    if (
+      options.includeSecrets === false &&
+      file.entryId === 'config-file-profiles' &&
+      isObjectRecord(output) &&
+      Array.isArray(output.profiles)
+    ) {
+      output.profiles = output.profiles.map(profile => ({
+        ...profile,
+        requiresConfiguration: true,
+      }));
     }
+    const sanitized = Buffer.from(JSON.stringify(output, null, 2));
+    file.content = sanitized.toString('utf8');
+    file.size = sanitized.length;
+    file.sha256 = hashBuffer(sanitized);
   }
 
   return {
@@ -266,6 +315,10 @@ export async function createAppStorageBundle(
     manifestVersion: APP_STORAGE_MANIFEST_VERSION,
     mode,
     createdAt: Date.now(),
+    includeSecrets: options.includeSecrets !== false,
+    databaseSchemaVersion: getApplicationStorage()?.database.connection.pragma('user_version', {
+      simple: true,
+    }) as number | undefined,
     files,
   };
 }
@@ -289,9 +342,13 @@ export async function createPortableAppStorageBundleContent(
 }
 
 export function extractStableConfigFromBackupContent(content: string): unknown {
+  if (Buffer.byteLength(content, 'utf8') > 128 * 1024 * 1024)
+    throw new Error('Backup exceeds the 128 MiB limit');
   const parsed = JSON.parse(content);
 
   if (!isAppStorageBundle(parsed)) {
+    if (isObjectRecord(parsed) && parsed.format === APP_STORAGE_BUNDLE_FORMAT)
+      throw new Error('Unsupported backup version');
     assertConfigShape(parsed);
     return parsed;
   }
@@ -303,7 +360,7 @@ export function extractStableConfigFromBackupContent(content: string): unknown {
 
   const buffer = decodeBundleFile(configFile);
   assertBundleFileHash(configFile, buffer);
-  const config = JSON.parse(buffer.toString('utf-8'));
+  const config = parseBackupDocument(buffer);
   assertConfigShape(config);
   return config;
 }
@@ -367,6 +424,33 @@ async function restoreBundle(
     decodedFiles.push({ entry, file, buffer });
   }
 
+  const storage = getApplicationStorage();
+  if (storage && path.resolve(roots.userData ?? '') === path.resolve(storage.root)) {
+    const documents: StorageDocuments = {};
+    const selected = new Set(getEntriesForBundleMode(bundle.mode).map(entry => entry.id));
+    for (const { entry, buffer } of decodedFiles) {
+      if (!selected.has(entry.id)) continue;
+      const filename = resolveAppStorageEntryPath(entry, roots);
+      const id = filename && storage.documentId(filename);
+      if (!id) throw new Error('Unsupported database backup entry: ' + entry.id);
+      documents[id] = parseBackupDocument(buffer);
+      restoredFiles.push(filename);
+    }
+    const reset: StorageDocumentId[] =
+      bundle.mode === 'full-manifest'
+        ? [
+            'runtime-detection-cache',
+            'route-runtime-state',
+            'route-analytics-state',
+            'model-registry-source-state',
+            'route-endpoint-test-state',
+            'route-session-activity',
+            'route-session-bindings',
+          ]
+        : [];
+    await storage.restore(documents, reset);
+    return { kind: 'storage-bundle', mode: bundle.mode, restoredFiles };
+  }
   await removeEntries(getRestoreWipeEntries(bundle.mode), roots);
 
   for (const { entry, buffer } of decodedFiles) {
@@ -375,7 +459,7 @@ async function restoreBundle(
       continue;
     }
 
-    await writeTextFileAtomically(absolutePath, buffer.toString('utf-8'));
+    await writeTextFileAtomically(absolutePath, JSON.stringify(parseBackupDocument(buffer)));
     restoredFiles.push(absolutePath);
   }
 
@@ -388,6 +472,11 @@ async function restoreLegacyConfig(
 ): Promise<RestoreStorageBackupResult> {
   const parsed = JSON.parse(content);
   assertConfigShape(parsed);
+  const storage = getApplicationStorage();
+  if (storage?.documentId(targetConfigPath) === 'stable-config') {
+    await storage.restore({ 'stable-config': parsed });
+    return { kind: 'legacy-config', restoredFiles: [targetConfigPath] };
+  }
   await writeTextFileAtomically(targetConfigPath, `${JSON.stringify(parsed, null, 2)}\n`);
   return { kind: 'legacy-config', restoredFiles: [targetConfigPath] };
 }
@@ -397,11 +486,16 @@ export async function restoreAppStorageBackupContent(
   targetConfigPath: string,
   roots: AppStorageRoots = getCurrentAppStorageRoots()
 ): Promise<RestoreStorageBackupResult> {
+  if (Buffer.byteLength(content, 'utf8') > 128 * 1024 * 1024)
+    throw new Error('Backup exceeds the 128 MiB limit');
   const parsed = JSON.parse(content);
 
   if (isAppStorageBundle(parsed)) {
     return restoreBundle(parsed, roots);
   }
+
+  if (isObjectRecord(parsed) && parsed.format === APP_STORAGE_BUNDLE_FORMAT)
+    throw new Error('Unsupported backup version');
 
   return restoreLegacyConfig(content, targetConfigPath);
 }

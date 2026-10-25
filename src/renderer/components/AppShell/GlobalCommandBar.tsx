@@ -17,7 +17,7 @@ export function GlobalCommandBar({
 }: GlobalCommandBarProps) {
   return (
     <header
-      className="z-[var(--z-command-bar)] flex h-[42px] shrink-0 items-center border-b border-[var(--line-soft)] bg-[var(--surface-1)]/90 px-3 backdrop-blur-sm transition-colors duration-200"
+      className="z-[var(--z-command-bar)] flex h-[42px] shrink-0 items-center border-b border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-1)_90%,transparent)] px-3 backdrop-blur-sm transition-colors duration-200"
       style={{ WebkitAppRegion: 'drag' } as CSSProperties}
     >
       <div className="flex-1 min-w-4" />

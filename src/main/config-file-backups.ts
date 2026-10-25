@@ -4,12 +4,23 @@ import * as path from 'path';
 import { app } from 'electron';
 import { writeTextFileAtomically } from './utils/atomic-json';
 import type { ConfigFileBackup } from '../shared/types/config-file-profile';
+import { encodePayload, decodePayload } from './storage/database/payload-codec';
 
 export const CONFIG_BACKUP_RETENTION = 10;
 const snapshots = /^\d+-[0-9a-f-]{36}\.bak$/;
 const importedSnapshots = /^\d+-[0-9a-f]{64}\.legacy\.bak$/;
 const pending = new Map<string, Promise<void>>();
 const digest = (content: string | Buffer) => createHash('sha256').update(content).digest('hex');
+const protectedPrefix = 'api-hub-cli-backup:v1\n';
+const protectBackup = (content: string) => protectedPrefix + encodePayload(content);
+function readBackup(buffer: Buffer): string {
+  const text = buffer.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(buffer)) throw new Error('备份不是有效的 UTF-8 文本');
+  if (!text.startsWith(protectedPrefix)) return text;
+  const content = decodePayload<unknown>(text.slice(protectedPrefix.length));
+  if (typeof content !== 'string') throw new Error('Invalid client backup content');
+  return content;
+}
 
 export function getConfigFileBackupDirectory(): string {
   return path.join(app.getPath('userData'), 'backups', 'cli-config');
@@ -78,7 +89,9 @@ async function prepareDirectory(filePath: string, original: string): Promise<str
       throw new Error('原始备份必须是普通文件');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    await writeTextFileAtomically(path.join(directory, 'original'), original, { mode: 0o600 });
+    await writeTextFileAtomically(path.join(directory, 'original'), protectBackup(original), {
+      mode: 0o600,
+    });
   }
   await writeTextFileAtomically(
     path.join(directory, 'source.json'),
@@ -93,7 +106,7 @@ export async function backupConfigFile(filePath: string, content: string): Promi
     const directory = await prepareDirectory(filePath, content);
     await writeTextFileAtomically(
       path.join(directory, `${Date.now()}-${randomUUID()}.bak`),
-      content,
+      protectBackup(content),
       { mode: 0o600 }
     );
     const names = (await fs.readdir(directory))
@@ -153,9 +166,7 @@ export async function readConfigFileBackup(
     if (!(await fs.lstat(filename)).isFile()) throw new Error('备份必须是普通文件');
     const content = await fs.readFile(filename);
     if (digest(content) !== expectedHash) throw new Error('备份内容已变化，请重新加载备份列表');
-    const text = content.toString('utf8');
-    if (!Buffer.from(text, 'utf8').equals(content)) throw new Error('备份不是有效的 UTF-8 文本');
-    return text;
+    return readBackup(content);
   });
 }
 
@@ -187,8 +198,8 @@ export async function migrateLegacyConfigBackups(filePaths: string[]): Promise<n
         const directory = await prepareDirectory(filePath, text);
         const id = `${name.slice(prefix.length)}-${digest(content)}.legacy.bak`;
         const destination = path.join(directory, id);
-        await writeTextFileAtomically(destination, text, { mode: 0o600 });
-        if (!(await fs.readFile(destination)).equals(content))
+        await writeTextFileAtomically(destination, protectBackup(text), { mode: 0o600 });
+        if (!Buffer.from(readBackup(await fs.readFile(destination)), 'utf8').equals(content))
           throw new Error(`旧备份归档校验失败，已保留原文件: ${source}`);
         // Imported history is kept outside automatic snapshot rotation.
         if (!(await fs.lstat(source)).isFile() || !(await fs.readFile(source)).equals(content))

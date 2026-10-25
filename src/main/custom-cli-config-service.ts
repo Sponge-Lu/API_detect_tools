@@ -11,25 +11,17 @@
  */
 
 import { app } from 'electron';
-import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
+
 import * as path from 'path';
 import Logger from './utils/logger';
 import { writeTextFileAtomically } from './utils/atomic-json';
+import { readStorageText, readStorageTextSync } from './storage/application-storage';
 import type { CustomCliConfig, CustomCliSettings } from '../shared/types/custom-cli-config';
 import {
   normalizeCustomCliApiKeys,
   normalizeCustomCliSettings,
 } from '../shared/types/custom-cli-config';
-import {
-  CUSTOM_CLI_ROUTE_GROUP,
-  buildCustomCliRouteAccountId,
-  buildCustomCliRouteApiKeyId,
-  buildCustomCliRouteSiteId,
-  isCustomCliRouteChannel,
-  parseCustomCliRouteApiKeyId,
-  parseCustomCliRouteConfigId,
-} from '../shared/utils/customCliRouteId';
+import { buildCustomCliRouteSiteId } from '../shared/utils/customCliRouteId';
 import { encryptCustomCliConfigs, decryptCustomCliConfigs } from './config-field-crypto';
 import { routeStateAffinityService } from './route-state-affinity-service';
 import {
@@ -58,10 +50,23 @@ export {
   isCustomCliRouteChannel,
   parseCustomCliRouteApiKeyId,
   parseCustomCliRouteConfigId,
-};
+} from '../shared/utils/customCliRouteId';
 
 export function getCustomCliConfigFilePath(): string {
   return path.join(app.getPath('userData'), 'custom-cli-configs.json');
+}
+
+export function prepareCustomCliConfigs(value: unknown): CustomCliConfigStorage {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !Array.isArray((value as CustomCliConfigStorage).configs)
+  )
+    throw new Error('Invalid direct configuration storage');
+  const source = value as CustomCliConfigStorage;
+  const configs = decryptCustomCliConfigs(structuredClone(source.configs));
+  normalizeCustomCliConfigs(configs);
+  return { ...source, configs, activeConfigId: source.activeConfigId ?? null };
 }
 
 function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
@@ -156,7 +161,7 @@ export function loadCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
 async function readCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
   const filePath = getCustomCliConfigFilePath();
   try {
-    const content = await fs.readFile(filePath, 'utf-8');
+    const content = await readStorageText(filePath);
     const data = JSON.parse(content);
     if (!data || !Array.isArray(data.configs))
       throw new Error('Invalid direct configuration storage');
@@ -195,7 +200,7 @@ async function readCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
 export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
   const filePath = getCustomCliConfigFilePath();
   try {
-    const content = fsSync.readFileSync(filePath, 'utf-8');
+    const content = readStorageTextSync(filePath);
     const data = JSON.parse(content);
     if (!data || !Array.isArray(data.configs))
       throw new Error('Invalid direct configuration storage');

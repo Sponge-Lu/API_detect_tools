@@ -1,5 +1,5 @@
 /**
- * 输入: ~/.dsh（DSH home）、本应用路由配置（server.host/port、unifiedApiKey、模型目录）
+ * 输入: DSH home、内置配置卡片的独立路由凭据与模型目录
  * 输出: DSH 会话级路由的检测状态、一键接入/回滚、存量会话 provider 迁移
  * 定位: 主进程服务层 - 把 DeepSeek Harness 的 cordis.patch.yml 与本应用路由打通
  *
@@ -18,7 +18,6 @@
  */
 
 import { execFile } from 'child_process';
-import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as os from 'os';
@@ -47,6 +46,8 @@ import {
   type EnableDshSessionRoutingResult,
 } from '../shared/types/dsh-integration';
 import type { AgentLogoId } from '../shared/types/config-file-profile';
+import { getDshWriteModels, isDshConfigProfile } from '../shared/config/dsh-client-config';
+import { listConfigFileBackups, readConfigFileBackup } from './config-file-backups';
 
 const log = Logger.scope('DshIntegration');
 
@@ -241,20 +242,35 @@ async function ensureProfileLogo(profileId: string, logoId: AgentLogoId): Promis
   }
 }
 
-/** 只读取现有 DSH 方案的路由 Key，不创建任何东西。 */ async function readDshRouteCredential(): Promise<{
+/** 只读取现有 DSH 方案的路由 Key，不创建任何东西。 */
+async function readDshRouteCredential(): Promise<{
   profileId: string;
   apiKey: string;
+  modelSourceId?: string;
+  model?: string | null;
 } | null> {
   const { loadConfigFileProfiles } = await import('./config-file-profile-service');
   const profiles = await loadConfigFileProfiles();
-  const existing = profiles.find(
+  const candidates = profiles.filter(
     profile =>
       profile.target?.kind === 'local-route' &&
       Boolean(profile.localRouteCredential?.apiKey) &&
-      /^(dsh|deepseek[\s_-]*harness)$/i.test(profile.name.trim())
+      (isDshConfigProfile(profile) || /^(dsh|deepseek[\s_-]*harness)$/i.test(profile.name.trim()))
   );
+  const existing =
+    candidates
+      .filter(isDshConfigProfile)
+      .sort((a, b) => (b.lastApplied?.appliedAt || 0) - (a.lastApplied?.appliedAt || 0))[0] ||
+    candidates[0];
   const apiKey = existing?.localRouteCredential?.apiKey;
-  return existing && apiKey ? { profileId: existing.id, apiKey } : null;
+  return existing && apiKey
+    ? {
+        profileId: existing.id,
+        apiKey,
+        modelSourceId: existing.dsh?.modelSourceId,
+        model: existing.target.model,
+      }
+    : null;
 }
 
 /**
@@ -265,7 +281,7 @@ async function ensureProfileLogo(profileId: string, logoId: AgentLogoId): Promis
  * `401 invalid_api_key`（`route-proxy-service.ts:575`）。统一 Key 只用于 target-lock，
  * 不参与方案解析。
  *
- * 方案复用规则：优先复用名字就是 DSH 的方案；否则新建一个 `credentialOnly` 方案。
+ * 方案复用规则：优先使用已应用的 DSH 内置卡片，兼容旧 DSH 方案；缺失时创建内置卡片。
  * 不复用其它客户端的方案，避免把别人的 Key 借给 DSH。
  */
 async function ensureDshRouteCredential(): Promise<{ profileId: string; apiKey: string }> {
@@ -277,32 +293,23 @@ async function ensureDshRouteCredential(): Promise<{ profileId: string; apiKey: 
     return existing;
   }
 
-  const { upsertConfigFileProfile, generateConfigFileProfileRouteKey } = await import(
-    './config-file-profile-service'
-  );
+  const { loadConfigFileProfiles, upsertConfigFileProfile, generateConfigFileProfileRouteKey } =
+    await import('./config-file-profile-service');
+  const { createDshConfigFileProfile } = await import('./dsh-config-file-profile');
   const now = Date.now();
-  const created = await upsertConfigFileProfile({
-    profile: {
-      id: randomUUID(),
-      name: 'DeepSeek Harness',
-      agentLogoId: 'deepseekHarness',
-      authMode: 'third-party',
-      credentialOnly: true,
-      files: [],
-      sessionRecordConnectors: [],
-      sessionRecordPaths: [],
-      target: { kind: 'local-route', model: null },
-      createdAt: now,
-      updatedAt: now,
-    },
-  });
+  const profiles = await loadConfigFileProfiles();
+  const created =
+    profiles.find(isDshConfigProfile) ||
+    (await upsertConfigFileProfile({
+      profile: createDshConfigFileProfile(now),
+    }));
   const withKey = await generateConfigFileProfileRouteKey({ profileId: created.id });
   const apiKey = withKey.localRouteCredential?.apiKey;
   if (!apiKey) throw new Error('生成 DSH 本地路由密钥失败，请到配置卡片里手动生成一次');
   return { profileId: withKey.id, apiKey };
 }
 
-function resolveBaseUrl(server: { host?: string; port: number }): string {
+export function resolveBaseUrl(server: { host?: string; port: number }): string {
   return `http://${normalizeHostForClient(server.host)}:${server.port}`;
 }
 
@@ -339,6 +346,7 @@ interface PatchEntrySnapshot {
   hasEntry: boolean;
   defaultProvider: string | null;
   defaultModel: string | null;
+  allowedModels: string[] | null;
 }
 
 /**
@@ -366,7 +374,7 @@ function readStringField(map: unknown, key: string): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-function readPatchSnapshot(raw: string): PatchEntrySnapshot {
+export function readPatchSnapshot(raw: string): PatchEntrySnapshot {
   const snapshot: PatchEntrySnapshot = {
     provider: null,
     baseUrl: null,
@@ -375,6 +383,7 @@ function readPatchSnapshot(raw: string): PatchEntrySnapshot {
     hasEntry: false,
     defaultProvider: null,
     defaultModel: null,
+    allowedModels: null,
   };
   const doc = parseDocument(raw);
   if (doc.errors.length > 0 || !isSeq(doc.contents)) return snapshot;
@@ -400,11 +409,28 @@ function readPatchSnapshot(raw: string): PatchEntrySnapshot {
       snapshot.defaultProvider = readStringField(config, 'provider');
       snapshot.defaultModel = readStringField(config, 'model');
     }
+    if (id === DSH_SUBAGENT_MODEL_ENTRY_ID && isMap(config)) {
+      const allowed = config.get('allowedModels');
+      if (
+        isSeq(allowed) &&
+        allowed.items.every(
+          item =>
+            isMap(item) &&
+            [DSH_NATIVE_PROVIDER_ID, DSH_LEGACY_PROVIDER_ID].includes(
+              String(scalarOf(item.get('provider')))
+            )
+        )
+      ) {
+        snapshot.allowedModels = allowed.items
+          .map(item => readStringField(item, 'model'))
+          .filter((model): model is string => !!model);
+      }
+    }
   }
   return snapshot;
 }
 
-function readCredentialRef(raw: string, ref: string): string | null {
+export function readCredentialRef(raw: string, ref: string): string | null {
   const doc = parseDocument(raw);
   if (doc.errors.length > 0) return null;
   const refs = doc.get('refs');
@@ -512,6 +538,10 @@ export async function detectDshRouting(
       : await listDshModelSources());
   const matchedSource =
     modelSources.find(source => sameModelSet(source.models, configuredModels)) ?? null;
+  const credential = options.routeSource ? null : await readDshRouteCredential();
+  const expectedSource = credential?.modelSourceId
+    ? modelSources.find(source => source.id === credential.modelSourceId)
+    : pickModelSource(modelSources, matchedSource?.id);
 
   let expectedBaseUrl: string;
   let expectedModels: string[];
@@ -521,11 +551,13 @@ export async function detectDshRouting(
   } else {
     const { unifiedConfigManager } = await import('./unified-config-manager');
     expectedBaseUrl = resolveBaseUrl(unifiedConfigManager.getRoutingConfig().server);
-    expectedModels = pickModelSource(modelSources, matchedSource?.id ?? null)?.models ?? [];
+    expectedModels = expectedSource
+      ? getDshWriteModels(credential?.model, expectedSource.models)
+      : [];
   }
 
   // 期望密钥只在已有 DSH 方案时才有得比；没有方案说明还没接入，交给 credential-ref-missing 报
-  const expectedApiKey = options.routeSource?.apiKey ?? (await readDshRouteCredential())?.apiKey;
+  const expectedApiKey = options.routeSource?.apiKey ?? credential?.apiKey;
 
   const drift: DshDriftReason[] = [];
   const missingModels = expectedModels.filter(model => !configuredModels.includes(model));
@@ -535,7 +567,7 @@ export async function detectDshRouting(
     drift.push('dsh-not-installed');
   } else if (!profileInitialized) {
     drift.push('profile-not-initialized');
-  } else if (modelSources.length === 0) {
+  } else if (modelSources.length === 0 || (!options.routeSource && !expectedSource)) {
     // 应用侧还没加供应商，这不是 DSH 的问题，但必须先解决
     drift.push('no-model-source');
   } else if (!patchRaw) {
@@ -577,13 +609,17 @@ export async function detectDshRouting(
     currentBaseUrl: snapshot?.baseUrl ?? null,
     expectedBaseUrl,
     configuredModelCount: configuredModels.length,
+    currentDefaultModel: snapshot?.defaultModel ?? null,
+    currentAllowedModels: snapshot?.allowedModels ?? null,
     missingModels,
     staleModels,
     sessionsOnLegacyProvider: sessions.legacy,
     sessionsTotal: sessions.total,
     restartRequired: !configured || sessions.legacy > 0,
     modelSources,
-    matchedModelSourceId: matchedSource?.id ?? null,
+    matchedModelSourceId:
+      matchedSource?.id ??
+      (expectedSource && sameModelSet(expectedModels, configuredModels) ? expectedSource.id : null),
   };
 
   return { ...base, summary: buildSummary(base) };
@@ -616,7 +652,14 @@ function asParsedNode(
  */
 export function applyPatchDocument(
   raw: string,
-  params: { baseUrl: string; models: string[]; defaultModel: string; allowedModels: string[] }
+  params: {
+    baseUrl: string;
+    models: string[];
+    defaultModel: string;
+    allowedModels: string[];
+    updateSelection?: boolean;
+    preserveSubagentSettings?: boolean;
+  }
 ): string {
   // 空文件按空数组处理；`parseDocument('')` 的 contents 是 null，赋节点类型很别扭
   const doc = parseDocument(raw.trim().length === 0 ? '[]\n' : raw);
@@ -666,7 +709,7 @@ export function applyPatchDocument(
     }
   }
 
-  // 2) 默认模型：只在缺失或仍指向 legacy provider 时改，避免踩掉用户选的 deepseek-account
+  // 2) 卡片显式应用时更新默认模型；旧接入入口仍保留已有账号选择。
   if (!defaultEntry) {
     seq.add(
       asParsedNode(doc, {
@@ -679,22 +722,42 @@ export function applyPatchDocument(
     const config = defaultEntry.get('config');
     if (isMap(config)) {
       const currentProvider = scalarOf(config.get('provider'));
-      if (currentProvider === null || currentProvider === DSH_LEGACY_PROVIDER_ID) {
+      if (
+        currentProvider === null ||
+        currentProvider === DSH_LEGACY_PROVIDER_ID ||
+        params.updateSelection
+      ) {
         config.set('provider', DSH_NATIVE_PROVIDER_ID);
         const currentModel = scalarOf(config.get('model'));
-        if (typeof currentModel !== 'string' || !params.models.includes(currentModel)) {
+        if (
+          params.updateSelection ||
+          typeof currentModel !== 'string' ||
+          !params.models.includes(currentModel)
+        ) {
           config.set('model', params.defaultModel);
         }
       }
     }
   }
 
+  if (params.preserveSubagentSettings) return doc.toString({ lineWidth: 0 });
+
   // 3) 子 agent 白名单：只在缺失或整表都指向 legacy provider 时替换
   const allowedModels =
     params.allowedModels.length > 0
       ? params.allowedModels
       : params.models.slice(0, DEFAULT_SUBAGENT_MODEL_COUNT);
-  if (subagentEntry) {
+  if (!subagentEntry && params.updateSelection) {
+    seq.add(
+      asParsedNode(doc, {
+        id: DSH_SUBAGENT_MODEL_ENTRY_ID,
+        name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings',
+        config: {
+          allowedModels: allowedModels.map(model => ({ provider: DSH_NATIVE_PROVIDER_ID, model })),
+        },
+      })
+    );
+  } else if (subagentEntry) {
     const config = subagentEntry.get('config');
     if (isMap(config)) {
       const current = config.get('allowedModels');
@@ -702,9 +765,12 @@ export function applyPatchDocument(
         !isSeq(current) ||
         current.items.length === 0 ||
         current.items.every(
-          item => isMap(item) && scalarOf(item.get('provider')) === DSH_LEGACY_PROVIDER_ID
+          item =>
+            isMap(item) &&
+            (scalarOf(item.get('provider')) === DSH_LEGACY_PROVIDER_ID ||
+              (params.updateSelection && scalarOf(item.get('provider')) === DSH_NATIVE_PROVIDER_ID))
         );
-      if (usesLegacy && allowedModels.length > 0) {
+      if (usesLegacy) {
         config.set(
           'allowedModels',
           allowedModels.map(model => ({ provider: DSH_NATIVE_PROVIDER_ID, model }))
@@ -758,7 +824,11 @@ const MANAGED_ENTRY_IDS = [
  * 不做整文件覆盖的原因：用户可能在接入之后又改了 patch（包括应用自己修过一次密钥），
  * 整文件还原要么被哈希守卫拦下变成"什么都没发生"，要么把用户的后续修改一起冲掉。
  */
-export function revertManagedPatchEntries(currentRaw: string, baselineRaw: string): string {
+export function revertManagedPatchEntries(
+  currentRaw: string,
+  baselineRaw: string,
+  preserveSubagentSettings = false
+): string {
   const doc = parseDocument(currentRaw.trim().length === 0 ? '[]\n' : currentRaw);
   if (doc.errors.length > 0) {
     throw new Error(`cordis.patch.yml 解析失败：${doc.errors[0]?.message ?? '未知错误'}`);
@@ -766,24 +836,24 @@ export function revertManagedPatchEntries(currentRaw: string, baselineRaw: strin
   if (!isSeq(doc.contents)) throw new Error('cordis.patch.yml 顶层必须是 YAML 数组');
 
   const baselineDoc = parseDocument(baselineRaw.trim().length === 0 ? '[]\n' : baselineRaw);
-  const baselineById = new Map<string, unknown>();
+  const baselineById = new Map<string, ParsedNode>();
   if (isSeq(baselineDoc.contents)) {
     for (const item of baselineDoc.contents.items) {
       if (!isMap(item)) continue;
       const id = scalarOf(item.get('id'));
       if (typeof id === 'string' && (MANAGED_ENTRY_IDS as readonly string[]).includes(id)) {
-        // toJS 的 ctx 形参在 d.ts 里是必填，但实现只读取其中的可选字段
-        baselineById.set(id, item.toJS({} as never));
+        baselineById.set(id, item);
       }
     }
   }
 
   const seq = doc.contents;
   for (const id of MANAGED_ENTRY_IDS) {
+    if (preserveSubagentSettings && id === DSH_SUBAGENT_MODEL_ENTRY_ID) continue;
     const index = seq.items.findIndex(item => isMap(item) && scalarOf(item.get('id')) === id);
     const baselineValue = baselineById.get(id);
     if (baselineValue !== undefined) {
-      const node = asParsedNode(doc, baselineValue);
+      const node = baselineValue.clone() as ParsedNode;
       if (index >= 0) seq.items[index] = node;
       else seq.add(node);
     } else if (index >= 0) {
@@ -1146,4 +1216,35 @@ export async function rollbackDshSessionRouting(
   const status = await detectDshRouting(options);
   log.info(`DSH 接入已回滚：${restoredFiles.length} 个文件被还原`);
   return { ok: true, restoredFiles, skippedFiles, status };
+}
+
+export async function prepareDshRollbackContent(
+  filePath: string,
+  current: string,
+  isPatch: boolean
+): Promise<string> {
+  const paths = resolveDshPaths(resolveDshHome());
+  const manifest = await readManifest(paths.manifestPath);
+  const legacyPath = manifest?.backupPaths[filePath] ?? (await findLatestBackup(filePath));
+  let baseline = legacyPath ? await readFileIfExists(legacyPath) : null;
+  if (baseline === null) {
+    const backups = await listConfigFileBackups(filePath);
+    const original = backups.find(backup => backup.kind === 'original');
+    if (original) baseline = await readConfigFileBackup(filePath, original.id, original.sha256);
+  }
+  if (
+    baseline === null &&
+    !manifest &&
+    !legacyPath &&
+    (isPatch
+      ? readPatchSnapshot(current).apiKeyEnv !== DSH_ROUTE_CREDENTIAL_REF
+      : readCredentialRef(current, DSH_ROUTE_CREDENTIAL_REF) === null)
+  ) {
+    return current;
+  }
+  return isPatch
+    ? revertManagedPatchEntries(current || '[]\n', baseline || '[]\n', true)
+    : current
+      ? revertCredentialRef(current, baseline, DSH_ROUTE_CREDENTIAL_REF)
+      : current;
 }

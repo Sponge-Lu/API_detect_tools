@@ -229,10 +229,66 @@ describe('UnifiedConfigManager', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.resetModules();
     vi.clearAllMocks();
     await fs.rm(userDataDir, { recursive: true, force: true });
   });
+
+  it.each([false, true])(
+    'preserves concurrent cache refreshes without replacing explicit draft caches (%s)',
+    async replaceCache => {
+      const manager = await loadManager();
+      await manager.saveConfig(createSampleConfig() as UnifiedConfig);
+      const committed = await manager.getConfig();
+      committed.sites[0].cached_data = { balance: 1 };
+      committed.accounts.push({
+        id: 'account-1',
+        site_id: 'site-1',
+        account_name: 'Test account',
+        user_id: 'user-1',
+        access_token: '',
+        auth_source: 'manual',
+        created_at: 1,
+        updated_at: 1,
+        cached_data: { balance: 1 },
+      });
+      const storageModule = await import('../main/storage/application-storage');
+      const commit = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(storageModule, 'getApplicationStorage').mockReturnValue({
+        coordinator: { version: () => ({ generation: 'test', scope: 'app-config', revision: 1 }) },
+        commitDocument: commit,
+      } as unknown as ReturnType<typeof storageModule.getApplicationStorage>);
+      let release!: () => void;
+      let started!: () => void;
+      const ready = new Promise<void>(resolve => {
+        started = resolve;
+      });
+      const pending = manager.mutateConfig(async () => {
+        const draft = await manager.getConfig();
+        draft.settings.timeout = 42;
+        if (replaceCache) {
+          draft.sites[0].cached_data = { balance: 3 };
+          draft.accounts[0].cached_data = { balance: 3 };
+        }
+        await manager.saveConfig();
+        started();
+        await new Promise<void>(resolve => {
+          release = resolve;
+        });
+      });
+      await ready;
+      committed.sites[0].cached_data = { balance: 2 };
+      committed.accounts[0].cached_data = { balance: 2 };
+      release();
+      await pending;
+      expect(commit).toHaveBeenCalledOnce();
+      const published = await manager.getConfig();
+      expect(published.settings.timeout).toBe(42);
+      expect(published.sites[0].cached_data?.balance).toBe(replaceCache ? 3 : 2);
+      expect(published.accounts[0].cached_data?.balance).toBe(replaceCache ? 3 : 2);
+    }
+  );
 
   it('restores the latest valid backup when config.json contains malformed JSON', async () => {
     const configPath = path.join(userDataDir, 'config.json');
@@ -442,7 +498,7 @@ describe('UnifiedConfigManager', () => {
 
   it('retries transient config read failures before restoring from backup', async () => {
     const configPath = path.join(userDataDir, 'config.json');
-    const recoveredConfig = { ...createSampleConfig(), version: '3.1' };
+    const recoveredConfig = { ...createSampleConfig(), version: '3.0.6' };
     await fs.writeFile(configPath, '\0'.repeat(64), 'utf-8');
 
     setTimeout(() => {
@@ -726,7 +782,7 @@ describe('UnifiedConfigManager', () => {
   it('migrates legacy site-level auth into the existing managed account and clears site-level auth fields', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
-    rawConfig.version = '3.1';
+    rawConfig.version = '3.0.6';
     rawConfig.sites[0] = {
       ...rawConfig.sites[0],
       access_token: 'legacy-token',
@@ -1295,7 +1351,7 @@ describe('UnifiedConfigManager', () => {
   it('hydrates route state files into the compatibility routing view', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
-    rawConfig.version = '3.1';
+    rawConfig.version = '3.0.6';
     await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
 
     const stateDir = path.join(userDataDir, 'state');
@@ -1455,7 +1511,7 @@ describe('UnifiedConfigManager', () => {
   it('keeps endpoint-differentiated analytics buckets distinct and merges key collisions additively', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
-    rawConfig.version = '3.1';
+    rawConfig.version = '3.0.6';
     await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
 
     const stateDir = path.join(userDataDir, 'state');
@@ -1639,7 +1695,7 @@ describe('UnifiedConfigManager', () => {
     );
   });
 
-  it('hydrates missing legacy site_type during v2 -> v3 migration when detection succeeds', async () => {
+  it('keeps missing legacy site_type unresolved during offline migration', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
     delete rawConfig.sites[0].site_type;
@@ -1650,9 +1706,9 @@ describe('UnifiedConfigManager', () => {
     });
     const loadedConfig = await manager.loadConfig();
 
-    expect(loadedConfig.sites[0].site_type).toBe('sub2api');
+    expect(loadedConfig.sites[0].site_type).toBeUndefined();
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
-    expect(persisted.sites[0].site_type).toBe('sub2api');
+    expect(persisted.sites[0].site_type).toBeUndefined();
   });
 
   it('drops orphan accounts when legacy save removes a site', async () => {
@@ -1707,7 +1763,7 @@ describe('UnifiedConfigManager', () => {
   it('does not auto-detect missing site_type on normal load when config is already current version', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
-    rawConfig.version = '3.1';
+    rawConfig.version = '3.0.6';
     delete rawConfig.sites[0].site_type;
     await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
 
@@ -2022,6 +2078,40 @@ describe('UnifiedConfigManager', () => {
     ]);
   });
 
+  it('persists automatic collection rules and exclusions even with no current sources', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as unknown as UnifiedConfig);
+    await manager.loadConfig();
+    await manager.upsertRouteModelDisplayItem({
+      id: 'automatic',
+      vendor: 'gpt',
+      canonicalName: 'my-model',
+      sourceKeys: [],
+      originalModelOrder: [],
+      autoCollect: {
+        modelKeys: ['openai/gpt-5.4', 'gpt-5-4'],
+        excludedModels: [' mirror/gpt-5.4 ', 'mirror/gpt-5.4'],
+      },
+      mode: 'manual',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.routing.modelRegistry.displayItems[0].autoCollect).toEqual({
+      modelKeys: ['gpt-5-4'],
+      excludedModels: ['mirror/gpt-5.4'],
+    });
+    await manager.loadConfig();
+    expect(manager.getRoutingConfig().modelRegistry.displayItems[0]).toMatchObject({
+      id: 'automatic',
+      sourceKeys: [],
+      autoCollect: {
+        modelKeys: ['gpt-5-4'],
+        excludedModels: ['mirror/gpt-5.4'],
+      },
+    });
+  });
+
   it('persists display item priority config under routing.modelRegistry.displayItems', async () => {
     const manager = await loadManager();
     await manager.saveConfig(createSampleConfig() as any);
@@ -2283,7 +2373,7 @@ describe('UnifiedConfigManager', () => {
   it('removes legacy cli_compatibility without creating endpoint test results', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
-    rawConfig.version = '3.1';
+    rawConfig.version = '3.0.6';
     rawConfig.accounts = [
       {
         id: 'acct-default',

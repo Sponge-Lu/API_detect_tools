@@ -227,7 +227,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
           </p>
         }
       >
-        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)]/72 p-3">
+        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] p-3">
           <button
             type="button"
             onClick={handleUpload}
@@ -300,7 +300,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
             {backups.map((backup, index) => (
               <div
                 key={backup.filename}
-                className="group flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-3 transition-colors hover:border-[var(--accent)]/35 hover:bg-[var(--surface-2)]"
+                className="group flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-3 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_35%,transparent)] hover:bg-[var(--surface-2)]"
               >
                 <FileJson className="h-8 w-8 flex-shrink-0 text-[var(--accent)]" />
                 <div className="min-w-0 flex-1">

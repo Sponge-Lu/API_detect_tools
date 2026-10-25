@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 import * as path from 'path';
 import { app } from 'electron';
 import type { RouteInstance, RouteSessionRoutingConfig } from '../shared/types/route-proxy';
@@ -65,6 +66,13 @@ function compactActivities(
 }
 
 export class RouteSessionActivityService {
+  invalidate(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.pending.clear();
+    this.state = null;
+    this.loadPromise = null;
+  }
   private state: RouteSessionActivityFile | null = null;
   private loadPromise: Promise<RouteSessionActivityFile> | null = null;
   private mutationQueue: Promise<void> = Promise.resolve();
@@ -94,6 +102,7 @@ export class RouteSessionActivityService {
         normalize: normalizeState,
       })
         .catch(error => {
+          if (getApplicationStorage() && error?.code !== 'ENOENT') throw error;
           Logger.warn('[RouteSessionActivity] Ignoring unreadable activity state:', error);
           return emptyState();
         })

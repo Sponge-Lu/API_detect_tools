@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 /**
  * 输入: WebDAV client (WebDAV 通信), BackupManager (本地备份), UnifiedConfigManager (配置管理)
  * 输出: WebDAVResult (操作结果), WebDAVBackupInfo (备份信息)
@@ -179,7 +180,10 @@ export class WebDAVManager {
     }
 
     try {
-      const content = await createPortableAppStorageBundleContent(undefined, config.includeSecrets === true);
+      const content = await createPortableAppStorageBundleContent(
+        undefined,
+        config.includeSecrets === true
+      );
 
       // 验证 JSON 格式和 stable config 内容
       try {
@@ -408,8 +412,10 @@ export class WebDAVManager {
       await fs.unlink(tempPath).catch(() => {});
 
       // 6. 重新加载配置并为隔离账户重建本机 slot
-      await unifiedConfigManager.loadConfig();
-      await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
+      if (!getApplicationStorage()) {
+        await unifiedConfigManager.loadConfig();
+        await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
+      }
 
       Logger.info(`✅ [WebDAVManager] 配置恢复成功: ${filename}`);
       return { success: true };

@@ -1,3 +1,4 @@
+import { currentDataEpoch } from '../services/data-generation';
 /**
  * 输入: DetectionStore (检测状态), ConfigStore (配置), UIStore (刷新消息), IPC 调用
  * 输出: 检测方法 (detectSingle, detectAllSites), 检测状态 (detectingSites Set)
@@ -23,7 +24,7 @@ import { useDetectionStore } from '../store/detectionStore';
 import { useConfigStore } from '../store/configStore';
 import { useUIStore } from '../store/uiStore';
 import { sessionEventLog } from '../services/sessionEventLog';
-import type { Config, DetectionResult, SiteConfig } from '../App';
+import type { Config, DetectionResult, SiteConfig } from '../../shared/types/renderer-config';
 import { BUILTIN_GROUP_IDS } from '../../shared/types/site';
 import type { DialogState } from '../components/ConfirmDialog';
 
@@ -112,6 +113,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
   // 检测单个站点（支持指定 accountId 进行 per-account 检测）
   const detectSingle = useCallback(
     async (site: SiteConfig, quickRefresh: boolean = true, config?: Config, accountId?: string) => {
+      const epoch = currentDataEpoch();
       const key = cardKey(site.name, accountId);
 
       if (isDetectingSite(key)) {
@@ -134,6 +136,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           accountId
         );
 
+        if (epoch !== currentDataEpoch()) return;
         // 标记结果所属的 accountId
         if (accountId) {
           rawResult.accountId = accountId;
@@ -199,6 +202,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         return result;
       } catch (error: any) {
         Logger.error('检测失败:', error);
+        if (epoch !== currentDataEpoch()) return;
         const errorMessage = error?.message || String(error);
         const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
         upsertResult(
@@ -243,6 +247,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       config: Config,
       accountsBySite?: Record<string, { id: string; account_name: string }[]>
     ) => {
+      const epoch = currentDataEpoch();
       const enabledSites = config.sites.filter(
         s => s.enabled && (s.group || 'default') !== BUILTIN_GROUP_IDS.UNAVAILABLE
       );
@@ -322,6 +327,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
             removeDetectingSite(key);
           }
 
+          if (epoch !== currentDataEpoch()) return rawResult as DetectionResult;
           const result: DetectionResult =
             rawResult.status === '失败' && existingResult
               ? { ...existingResult, status: rawResult.status, error: rawResult.error, accountId }
@@ -353,7 +359,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         const worker = async () => {
           while (true) {
             const index = cursor++;
-            if (index >= tasks.length) break;
+            if (index >= tasks.length || epoch !== currentDataEpoch()) break;
             const res = await runForTask(tasks[index]);
             resultsBuffer[index] = res;
           }
@@ -361,6 +367,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
+        if (epoch !== currentDataEpoch()) return [];
         if (authErrors.length > 0) {
           options.onAuthError?.(authErrors);
           sessionEventLog.warning('detection', `批量检测发现 ${authErrors.length} 个认证异常站点`);

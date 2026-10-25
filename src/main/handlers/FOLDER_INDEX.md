@@ -246,3 +246,24 @@ preload.ts (contextBridge 白名单)
 
 **版本**: 3.1.3
 **更新日期**: 2026-10-22
+
+## 架构与数据管理重构（2026-10-24）
+
+- [account-handlers.ts](account-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [anyrouter-handlers.ts](anyrouter-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [backup-handlers.ts](backup-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [browser-profile-handlers.ts](browser-profile-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [cli-compat-handlers.ts](cli-compat-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [close-behavior-handlers.ts](close-behavior-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [config-file-profile-handlers.ts](config-file-profile-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [custom-cli-config-handlers.ts](custom-cli-config-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [detection-handlers.ts](detection-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [dsh-integration-handlers.ts](dsh-integration-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [index.ts](index.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [overview-handlers.ts](overview-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [route-handlers.ts](route-handlers.ts): 路由版本化命令；代理启停在配置提交成功后执行
+- [theme-handlers.ts](theme-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [token-handlers.ts](token-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [unified-config-handlers.ts](unified-config-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [update-handlers.ts](update-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [webdav-handlers.ts](webdav-handlers.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为

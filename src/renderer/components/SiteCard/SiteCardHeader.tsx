@@ -11,6 +11,7 @@
 
 import { CircleAlert } from 'lucide-react';
 import { HistoryCell } from '../HistoryCell';
+import { buildSiteGridTemplate } from '../../utils/siteGridTemplate';
 import type { SiteCardHeaderProps } from './types';
 
 function formatNumber(num: number): string {
@@ -43,6 +44,7 @@ export function SiteCardHeader({
   accountId,
   accountName,
   onOpenSite,
+  actions,
 }: SiteCardHeaderProps) {
   const isCustomCli = accessPointType === 'custom-cli';
   const issueMessages = Array.from(
@@ -51,9 +53,9 @@ export function SiteCardHeader({
 
   return (
     <div
-      className="grid items-center gap-x-1 text-[13px] tabular-nums"
+      className="grid w-full items-center gap-x-1 text-[13px] tabular-nums"
       style={{
-        gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
+        gridTemplateColumns: buildSiteGridTemplate(columnWidths),
       }}
     >
       {/* 列 1: 站点名 */}
@@ -116,7 +118,7 @@ export function SiteCardHeader({
         siteResult.balance !== undefined &&
         siteResult.balance !== null ? (
           <span
-            className={`tnum truncate font-mono font-semibold tabular-nums ${
+            className={`tnum truncate font-semibold tabular-nums ${
               siteResult.balance === -1 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
             }`}
           >
@@ -131,7 +133,7 @@ export function SiteCardHeader({
       <div className="flex flex-col items-center justify-center text-center">
         {!isCustomCli && siteResult && siteResult.todayUsage !== undefined ? (
           <span
-            className={`tnum truncate font-mono font-semibold tabular-nums ${
+            className={`tnum truncate font-semibold tabular-nums ${
               siteResult.todayUsage === 0 ? 'text-[var(--text-tertiary)]' : 'text-[var(--warning)]'
             }`}
           >
@@ -153,13 +155,22 @@ export function SiteCardHeader({
         </span>
       </div>
 
-      {/* 列 7: History（端点选择 + 时间桶条形图）*/}
+      {/* 列 7: History（端点选择 + 时间桶条形图，弹性列）*/}
       <div
-        className="flex items-center px-2"
+        className="flex min-w-0 items-center px-2"
         onClick={event => event.stopPropagation()}
         onPointerDown={event => event.stopPropagation()}
       >
         <HistoryCell siteId={site.id || site.name} accountId={accountId || ''} />
+      </div>
+
+      {/* 列 8: 行末操作（固定宽度轨道，保证与表头右边界对齐）*/}
+      <div
+        className="flex items-center justify-end"
+        onClick={event => event.stopPropagation()}
+        onPointerDown={event => event.stopPropagation()}
+      >
+        {actions}
       </div>
     </div>
   );

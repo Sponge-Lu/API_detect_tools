@@ -551,7 +551,7 @@ describe('LogsPage', () => {
 
     await waitFor(() => expect(getRouteLogRowByRequestId('codex-1')).toBeInTheDocument());
     expect(screen.getByTestId('logs-page-surface')).not.toHaveClass(
-      'rounded-[var(--radius-lg)]',
+      'rounded-[var(--radius-md)]',
       'shadow-[var(--shadow-md)]'
     );
     const header = screen.getByTestId('route-request-log-header');

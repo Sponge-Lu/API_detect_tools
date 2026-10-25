@@ -43,8 +43,13 @@ export type ConfigFileTarget =
   | { kind: 'direct'; configId: string; model?: string | null };
 
 export type ConfigFileApplyMode = 'merge' | 'overwrite';
-export type ConfigFileFormat = 'auto' | 'json' | 'toml' | 'env' | 'text';
-export type ConfigFileOperation = 'apply' | 'direct-edit' | 'key-rotation' | 'backup-restore';
+export type ConfigFileFormat = 'auto' | 'json' | 'toml' | 'env' | 'yaml' | 'text';
+export type ConfigFileOperation =
+  | 'apply'
+  | 'direct-edit'
+  | 'key-rotation'
+  | 'backup-restore'
+  | 'dsh-rollback';
 
 export const CONFIG_FILE_AUTH_MODES = ['third-party', 'official'] as const;
 export type ConfigFileAuthMode = (typeof CONFIG_FILE_AUTH_MODES)[number];
@@ -76,7 +81,7 @@ export interface ConfigFileDefinition {
 }
 
 export interface ConfigFileBuiltinMetadata {
-  clientType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild';
+  clientType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild' | 'deepseekHarness';
   version: number;
   fingerprint: string;
   migrationSourceId?: string;
@@ -115,6 +120,7 @@ export interface ConfigSessionRecord {
 }
 
 export interface ConfigFileProfile {
+  requiresConfiguration?: boolean;
   id: string;
   name: string;
   agentLogoId?: AgentLogoId;
@@ -132,6 +138,7 @@ export interface ConfigFileProfile {
   lastApplied?: ConfigFileAppliedSnapshot;
   isExample?: boolean;
   builtin?: ConfigFileBuiltinMetadata;
+  dsh?: { modelSourceId?: string; allowedModels?: string[] };
   revision?: number;
   createdAt: number;
   updatedAt: number;
@@ -203,12 +210,14 @@ export interface ConfigFilePreviewTransaction {
   expiresAt: number;
   files: ConfigFilePreviewItem[];
   nextLocalRouteCredential?: ConfigFileProfileLocalRouteCredential;
+  dshConfigSignature?: string;
 }
 
 export interface PreviewConfigFileProfileInput {
   profileId: string;
   expectedRevision?: number;
   applyMode?: ConfigFileApplyMode;
+  restoreDsh?: boolean;
   /** Legacy direct-edit payload. New callers use PreviewConfigFileDirectEditInput. */
   edits?: Record<string, string>;
 }

@@ -155,7 +155,7 @@ export function DownloadUpdatePanel({
                 {/* 进度条 */}
                 <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
                   <div
-                    className="h-full bg-[var(--accent)] transition-all duration-300 ease-out"
+                    className="h-full bg-[var(--accent)] transition-[width] duration-300 ease-out"
                     style={{ width: `${downloadProgress?.percent || 0}%` }}
                   />
                 </div>

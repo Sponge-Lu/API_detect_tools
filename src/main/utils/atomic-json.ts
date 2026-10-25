@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { getApplicationStorage, readStorageText } from '../storage/application-storage';
 
 export interface AtomicTextWriteOptions {
   encoding?: BufferEncoding;
@@ -118,6 +119,7 @@ export async function writeTextFileAtomically(
   content: string,
   options: AtomicTextWriteOptions = {}
 ): Promise<void> {
+  if (getApplicationStorage()?.write(targetPath, content)) return;
   await runWriteForTarget(targetPath, async () => {
     const dir = path.dirname(targetPath);
     const tempPath = buildTempPath(targetPath);
@@ -199,7 +201,7 @@ export async function readJsonFile<T>(
   options: ReadJsonOptions<T> = {}
 ): Promise<T> {
   try {
-    const raw = await fs.readFile(targetPath, 'utf-8');
+    const raw = await readStorageText(targetPath);
     const parsed: unknown = JSON.parse(raw);
     return options.normalize ? options.normalize(parsed) : (parsed as T);
   } catch (error) {

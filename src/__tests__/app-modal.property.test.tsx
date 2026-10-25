@@ -55,7 +55,7 @@ describe('AppModal primitive contract', () => {
             dialogClassList.includes('opacity-100') || dialogClassList.includes('opacity-0')
           ).toBe(true);
           expect(
-            dialogClassList.includes('scale-100') || dialogClassList.includes('scale-95')
+            dialogClassList.includes('scale-100') || dialogClassList.includes('scale-[0.98]')
           ).toBe(true);
         }
 
@@ -87,7 +87,7 @@ describe('AppModal primitive contract', () => {
           };
 
           expect(classList).toContain(sizeClassMap[size]);
-          expect(classList).toContain('rounded-[var(--radius-xl)]');
+          expect(classList).toContain('rounded-[var(--radius-md)]');
           expect(classList).toContain('border-[var(--line-soft)]');
           expect(classList).toContain('bg-[var(--surface-1)]');
           expect(classList).toContain('shadow-[var(--shadow-xl)]');
@@ -116,7 +116,7 @@ describe('AppModal primitive contract', () => {
           expect(classList).toContain('absolute');
           expect(classList).toContain('inset-0');
           expect(classList).toContain('bg-[var(--overlay-mask)]');
-          expect(classList).toContain('backdrop-blur-[8px]');
+          expect(classList).toContain('backdrop-blur-[4px]');
           expect(classList).toContain('transition-opacity');
         }
 
@@ -156,8 +156,8 @@ describe('AppModal primitive contract', () => {
         if (footer) {
           const classList = footer.className;
           expect(classList).toContain('justify-end');
-          expect(classList).toContain('gap-3');
-          expect(classList).toContain('bg-[var(--surface-2)]');
+          expect(classList).toContain('gap-2');
+          expect(classList).toContain('bg-[var(--surface-1)]');
           expect(classList).toContain('border-t');
         }
 

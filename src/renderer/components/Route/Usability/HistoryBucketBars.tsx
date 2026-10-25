@@ -385,7 +385,7 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
       </div>
       <div
         data-testid="history-bucket-bars-summary"
-        className="flex w-[72px] items-center text-[10px] leading-none text-[var(--text-tertiary)] tabular-nums"
+        className="flex w-[72px] items-center text-[11px] leading-none text-[var(--text-tertiary)] tabular-nums"
         title="48 小时路由请求数 · 成功率"
       >
         <span className="min-w-0 flex-1 truncate text-right">{countLabel}次</span>

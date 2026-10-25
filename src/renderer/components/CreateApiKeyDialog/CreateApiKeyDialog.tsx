@@ -111,7 +111,7 @@ export function CreateApiKeyDialog({
           <select
             value={form.group}
             onChange={e => onFormChange({ group: e.target.value })}
-            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           >
             {Object.entries(groups).map(([groupName, groupInfo]) => (
               <option key={groupName} value={groupName}>
@@ -163,7 +163,7 @@ export function CreateApiKeyDialog({
             type="datetime-local"
             value={form.expiredTime}
             onChange={e => onFormChange({ expiredTime: e.target.value })}
-            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           />
         </div>
       </form>

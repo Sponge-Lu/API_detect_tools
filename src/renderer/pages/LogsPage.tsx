@@ -32,19 +32,22 @@ const ROUTE_OUTCOME_STYLES: Record<
   }
 > = {
   success: {
-    badge: 'border-[var(--success)]/20 bg-[var(--success-soft)] text-[var(--success)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--success)_20%,transparent)] bg-[var(--success-soft)] text-[var(--success)]',
     dot: 'bg-[var(--success)]',
     diagnostic: 'text-[var(--success)]',
     label: '成功',
   },
   failure: {
-    badge: 'border-[var(--danger)]/20 bg-[var(--danger-soft)] text-[var(--danger)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--danger)_20%,transparent)] bg-[var(--danger-soft)] text-[var(--danger)]',
     dot: 'bg-[var(--danger)]',
     diagnostic: 'text-[var(--danger)]',
     label: '失败',
   },
   neutral: {
-    badge: 'border-[var(--warning)]/20 bg-[var(--warning-soft)] text-[var(--warning)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--warning)_20%,transparent)] bg-[var(--warning-soft)] text-[var(--warning)]',
     dot: 'bg-[var(--warning)]',
     diagnostic: 'text-[var(--warning)]',
     label: '中性',

@@ -1,3 +1,10 @@
+import { ConfigEntityService } from './config/config-entity-service';
+import { DEFAULT_SETTINGS, DEFAULT_GROUP, UNAVAILABLE_GROUP } from './config/defaults';
+import {
+  normalizeCliConfigTargetProtocols,
+  migrateLegacyRouteTargetProtocol,
+} from './config/legacy-route-protocol';
+import { AsyncLocalStorage } from 'node:async_hooks';
 /**
  * 输入: FileSystem (文件系统), Electron app (应用路径), BackupManager (备份管理)
  * 输出: UnifiedConfig (统一配置), 配置操作方法, 账户 CRUD
@@ -18,6 +25,12 @@
  */
 
 import Logger from './utils/logger';
+import {
+  getApplicationStorage,
+  readStorageText,
+  compareVersions,
+  type StorageDocuments,
+} from './storage/application-storage';
 import { writeTextFileAtomically } from './utils/atomic-json';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -28,15 +41,14 @@ import { notifyAppDataChanged } from './app-data-events';
 import { runtimeCacheManager } from './runtime-cache-manager';
 import { endpointTestStateService } from './endpoint-test-state-service';
 import { routeStateManager } from './route-state-manager';
-import { routeStateAffinityService } from './route-state-affinity-service';
+
 import { routeSessionActivityService } from './route-session-activity-service';
-import { detectSiteType } from './site-type-detector';
 import { matchPattern } from './route-rule-engine';
+import { normalizeModelAutoCollect } from '../shared/utils/routeModelGrouping';
 import { encryptConfigFields, decryptConfigFields } from './config-field-crypto';
 import type {
   UnifiedConfig,
   UnifiedSite,
-  Site,
   SiteGroup,
   Settings,
   SiteConfig,
@@ -46,13 +58,10 @@ import type {
 } from '../shared/types/site';
 import {
   DEFAULT_RUNTIME_CACHE_FILE,
-  DEFAULT_SITE_TYPE,
   generateSiteId,
   generateAccountId,
   mergeDetectionCacheData,
   splitDetectionCacheData,
-  CURRENT_CONFIG_VERSION,
-  detectConfigVersion,
 } from '../shared/types/site';
 import type {
   RoutingConfig,
@@ -114,16 +123,6 @@ import {
 const CONFIG_VERSION = '3.0.6';
 const CONFIG_READ_RETRY_DELAYS_MS = [50, 100, 200, 400];
 
-const DEFAULT_SETTINGS: Settings = {
-  timeout: 30,
-  concurrent: true,
-  max_concurrent: 3,
-  show_disabled: false,
-  browser_path: '',
-};
-
-const DEFAULT_GROUP: SiteGroup = { id: 'default', name: '默认分组' };
-const UNAVAILABLE_GROUP: SiteGroup = { id: 'unavailable', name: '不可用' };
 const AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY = 0;
 const LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6';
 const LEGACY_ROUTE_REDIRECTION_EXAMPLE_AUTO_RULE_ID = 'auto-cli-model-claudeCode-claude-opus-4-6';
@@ -159,66 +158,6 @@ function normalizePriorityValue(value: unknown): number | null {
 }
 
 const ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS = 5 * 60 * 1000;
-
-function normalizeCliConfigTargetProtocols(
-  cliConfig?: Partial<
-    Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
-  > | null
-): void {
-  if (!cliConfig) {
-    return;
-  }
-
-  for (const cliType of ROUTE_CLI_TYPES) {
-    const item = cliConfig[cliType];
-    if (!item) {
-      continue;
-    }
-    if (
-      typeof item.targetProtocol === 'string' &&
-      CLI_TARGET_PROTOCOLS.includes(item.targetProtocol as CliTargetProtocol)
-    ) {
-      item.targetProtocol = normalizeCliTargetProtocol(item.targetProtocol);
-    } else {
-      delete item.targetProtocol;
-    }
-  }
-}
-
-function migrateLegacyRouteTargetProtocol(
-  owner: {
-    routeTargetProtocol?: CliTargetProtocol;
-    routeTargetProtocolNeedsConfirmation?: boolean;
-  },
-  cliConfig?: Partial<
-    Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
-  > | null
-): void {
-  if (
-    typeof owner.routeTargetProtocol === 'string' &&
-    CLI_TARGET_PROTOCOLS.includes(owner.routeTargetProtocol)
-  ) {
-    owner.routeTargetProtocol = normalizeCliTargetProtocol(owner.routeTargetProtocol);
-    return;
-  }
-  const legacyValues = new Set<CliTargetProtocol>();
-  for (const cliType of BUILTIN_CLI_TYPES) {
-    const value = cliConfig?.[cliType]?.targetProtocol;
-    if (typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value)) {
-      legacyValues.add(normalizeCliTargetProtocol(value));
-    }
-  }
-  if (legacyValues.size === 1) {
-    owner.routeTargetProtocol = Array.from(legacyValues)[0];
-    owner.routeTargetProtocolNeedsConfirmation = false;
-  } else if (legacyValues.size > 1) {
-    owner.routeTargetProtocol = 'native';
-    owner.routeTargetProtocolNeedsConfirmation = true;
-  } else {
-    owner.routeTargetProtocol = 'native';
-    owner.routeTargetProtocolNeedsConfirmation = false;
-  }
-}
 
 function normalizePriorityRecord(
   value: Record<string, number> | null | undefined
@@ -381,6 +320,7 @@ function normalizeRouteModelDisplayItem(displayItem: RouteModelDisplayItem): Rou
   return {
     ...displayItem,
     canonicalName: displayItem.canonicalName.trim(),
+    autoCollect: normalizeModelAutoCollect(displayItem.autoCollect),
     sourceKeys: Array.from(
       new Set(
         (displayItem.sourceKeys || [])
@@ -424,7 +364,10 @@ function normalizeRouteModelDisplayItems(items: RouteModelDisplayItem[]): RouteM
 
   for (const item of items) {
     const normalizedItem = normalizeRouteModelDisplayItem(item);
-    if (!normalizedItem.canonicalName || normalizedItem.sourceKeys.length === 0) {
+    if (
+      !normalizedItem.canonicalName ||
+      (normalizedItem.sourceKeys.length === 0 && !normalizedItem.autoCollect)
+    ) {
       continue;
     }
     if (normalizedItem.mode !== 'manual') {
@@ -441,8 +384,176 @@ function normalizeRouteModelDisplayItems(items: RouteModelDisplayItem[]): RouteM
 }
 
 export class UnifiedConfigManager {
+  private readonly entities = new ConfigEntityService({
+    current: () => this.config,
+    load: () => this.loadConfig(),
+    save: () => this.saveConfig(),
+    mutate: operation => this.mutateConfig(operation),
+    notify: delay => this.notifySiteConfigChanged(delay),
+    afterCommit: operation => this.afterStableCommit(operation),
+  });
   private configPath: string;
-  private config: UnifiedConfig | null = null;
+  private committedConfig: UnifiedConfig | null = null;
+  private readonly mutationContext = new AsyncLocalStorage<{
+    config: UnifiedConfig | null;
+    dirty: boolean;
+    notify: boolean;
+    open: boolean;
+    afterCommit: Array<() => Promise<unknown>>;
+    documents: StorageDocuments;
+  }>();
+  private mutationQueue: Promise<void> = Promise.resolve();
+
+  private get config(): UnifiedConfig | null {
+    const context = this.mutationContext.getStore();
+    return context?.open ? context.config : this.committedConfig;
+  }
+  private set config(value: UnifiedConfig | null) {
+    const context = this.mutationContext.getStore();
+    if (context?.open) context.config = value;
+    else this.committedConfig = value;
+  }
+
+  async mutateConfig<T>(operation: () => Promise<T>): Promise<T> {
+    const storage = getApplicationStorage();
+    if (!storage || this.mutationContext.getStore()?.open) return operation();
+    const run = async () => {
+      const version = storage.coordinator.version('app-config');
+      const siteCaches = new Map(
+        this.committedConfig?.sites.map(site => [site.id, site.cached_data])
+      );
+      const accountCaches = new Map(
+        this.committedConfig?.accounts.map(account => [account.id, account.cached_data])
+      );
+      const draft = this.committedConfig
+        ? structuredClone(this.createPersistableConfig(this.committedConfig))
+        : null;
+      const runtimeKeys = [
+        'stats',
+        'health',
+        'routePathStates',
+        'routeEndpointCapabilities',
+        'endpointTests',
+      ] as const;
+      if (draft?.routing && this.committedConfig?.routing) {
+        for (const key of runtimeKeys)
+          Object.assign(draft.routing, {
+            [key]: structuredClone(this.committedConfig.routing[key]),
+          });
+        draft.routing.analytics.buckets = this.committedConfig.routing.analytics.buckets;
+        draft.routing.modelRegistry.sources = this.committedConfig.routing.modelRegistry.sources;
+        draft.routing.modelRegistry.entries = this.committedConfig.routing.modelRegistry.entries;
+        for (const instance of Object.values(draft.routing.sessionRouting?.instances ?? {}))
+          instance.lastRequestAt =
+            this.committedConfig.routing.sessionRouting?.instances[instance.id]?.lastRequestAt;
+      }
+      if (draft && this.committedConfig) {
+        for (const site of draft.sites)
+          site.cached_data = this.committedConfig.sites.find(
+            item => item.id === site.id
+          )?.cached_data;
+        for (const account of draft.accounts)
+          account.cached_data = this.committedConfig.accounts.find(
+            item => item.id === account.id
+          )?.cached_data;
+      }
+      const context = {
+        config: draft,
+        dirty: false,
+        notify: false,
+        open: true,
+        afterCommit: [] as Array<() => Promise<unknown>>,
+        documents: {} as StorageDocuments,
+      };
+      const runtimeBefore = new Map(
+        runtimeKeys.map(key => [key, JSON.stringify(context.config?.routing?.[key])])
+      );
+      try {
+        return await this.mutationContext.run(context, async () => {
+          const result = await operation();
+          if (context.dirty && context.config) {
+            const removedSites = new Set(
+              this.committedConfig?.sites
+                .filter(site => !context.config!.sites.some(next => next.id === site.id))
+                .map(site => site.id)
+            );
+            const removedAccounts = new Set(
+              this.committedConfig?.accounts
+                .filter(account => !context.config!.accounts.some(next => next.id === account.id))
+                .map(account => account.id)
+            );
+            for (const rule of context.config.routing?.rules ?? []) {
+              for (const [key, removed] of [
+                ['allowedSiteIds', removedSites],
+                ['allowedAccountIds', removedAccounts],
+              ] as const) {
+                const previous = rule[key];
+                if (previous?.some(id => removed.has(id))) {
+                  rule[key] = previous.filter(id => !removed.has(id));
+                  if (!rule[key]!.length) rule.enabled = false;
+                }
+              }
+            }
+            const persisted = this.createPersistableConfig(context.config);
+            const changed =
+              JSON.stringify(persisted) !==
+              JSON.stringify(
+                this.committedConfig ? this.createPersistableConfig(this.committedConfig) : null
+              );
+            if (changed) persisted.last_updated = Date.now();
+            await storage.commitDocument(
+              'stable-config',
+              'app-config',
+              version,
+              persisted,
+              context.documents,
+              changed
+            );
+            const latest = this.committedConfig;
+            // Runtime requests may complete while a stable draft is being prepared.
+            if (latest?.routing && context.config.routing) {
+              for (const key of runtimeKeys) {
+                if (JSON.stringify(context.config.routing[key]) === runtimeBefore.get(key)) {
+                  Object.assign(context.config.routing, { [key]: latest.routing[key] });
+                }
+              }
+            }
+            const latestSites = new Map(latest?.sites.map(site => [site.id, site]));
+            const latestAccounts = new Map(latest?.accounts.map(account => [account.id, account]));
+            for (const site of context.config.sites) {
+              if (site.cached_data === siteCaches.get(site.id) && latestSites.has(site.id))
+                site.cached_data = latestSites.get(site.id)!.cached_data;
+            }
+            for (const account of context.config.accounts) {
+              if (
+                account.cached_data === accountCaches.get(account.id) &&
+                latestAccounts.has(account.id)
+              )
+                account.cached_data = latestAccounts.get(account.id)!.cached_data;
+            }
+            this.committedConfig = context.config;
+            for (const action of context.afterCommit) {
+              try {
+                await action();
+              } catch (error) {
+                Logger.warn('Post-commit state cleanup failed', error);
+              }
+            }
+            if (context.notify) notifyAppDataChanged('site-config', 120);
+          }
+          return result;
+        });
+      } finally {
+        context.open = false;
+      }
+    };
+    const pending = this.mutationQueue.then(run);
+    this.mutationQueue = pending.then(
+      () => undefined,
+      () => undefined
+    );
+    return pending;
+  }
 
   constructor() {
     const userDataPath = app.getPath('userData');
@@ -450,8 +561,124 @@ export class UnifiedConfigManager {
     Logger.info(`📁 [UnifiedConfigManager] 配置文件路径: ${this.configPath}`);
   }
 
+  private async afterStableCommit(operation: () => Promise<unknown>): Promise<void> {
+    const context = this.mutationContext.getStore();
+    if (context?.open) {
+      context.afterCommit.push(operation);
+      return;
+    }
+    await operation();
+  }
+
   getConfigPath(): string {
     return this.configPath;
+  }
+
+  async prepareLegacyDocuments(documents: StorageDocuments): Promise<StorageDocuments> {
+    if (documents['config-file-profiles']) {
+      const { prepareConfigFileProfiles } = await import('./config-file-profile-service');
+      documents['config-file-profiles'] = prepareConfigFileProfiles(
+        documents['config-file-profiles']
+      );
+    }
+    if (documents['custom-cli-configs']) {
+      const { prepareCustomCliConfigs } = await import('./custom-cli-config-service');
+      documents['custom-cli-configs'] = prepareCustomCliConfigs(documents['custom-cli-configs']);
+    }
+    let config = structuredClone(
+      documents['stable-config'] ?? this.createDefaultConfig()
+    ) as UnifiedConfig;
+    this.assertConfigShape(config, 'legacy configuration');
+    if (config.version && compareVersions(config.version, CONFIG_VERSION) > 0)
+      throw new Error('Unsupported future configuration version');
+    config.accounts ??= [];
+    config = decryptConfigFields(config);
+    if (!config.version || config.version.startsWith('2.')) config = await this.migrateToV3(config);
+    if (compareVersions(config.version, CONFIG_VERSION) < 0)
+      config = await this.migrateToV306(config);
+    this.repairLegacySiteAccounts(config);
+    this.migrateManagedSiteLegacyAuthToAccounts(config);
+    this.migrateCanonicalRouteRules(config);
+    this.cleanupLegacyOpenCodeRouteProtocol(config);
+    this.cleanupLegacyRouteRedirectionExample(config);
+    config = this.normalizeConfig(config);
+    const runtimeCache = this.createRuntimeCacheSnapshot(
+      documents['runtime-detection-cache'] as RuntimeCacheFile | undefined
+    );
+    this.extractLegacyRuntimeCache(config, runtimeCache);
+    const routing = config.routing!;
+    routeStateManager.applySnapshotToRouting(routing, {
+      runtime: {
+        version: '1',
+        stats: {},
+        routePathStates: {},
+        routeEndpointCapabilities: {},
+        health: {},
+        last_updated: 0,
+        ...documents['route-runtime-state'],
+      },
+      analytics: {
+        version: '1',
+        buckets: {},
+        last_updated: 0,
+        ...documents['route-analytics-state'],
+      },
+      modelSources: {
+        version: '1',
+        sources: [],
+        last_updated: 0,
+        ...documents['model-registry-source-state'],
+      },
+    });
+    routing.endpointTests = {
+      ...documents['route-endpoint-test-state']?.targets,
+      ...routing.endpointTests,
+    };
+    const instances = { ...documents['route-session-activity']?.instances };
+    for (const instance of Object.values(routing.sessionRouting?.instances ?? {})) {
+      if (
+        instance.profileId &&
+        instance.lastRequestAt &&
+        instance.lastRequestAt > (instances[instance.id]?.lastRequestAt ?? 0)
+      ) {
+        instances[instance.id] = {
+          instanceId: instance.id,
+          profileId: instance.profileId,
+          lastRequestAt: instance.lastRequestAt,
+        };
+      }
+    }
+    this.cleanupLegacyCliCompatibility(config);
+    return {
+      ...documents,
+      'stable-config': this.createPersistableConfig(config),
+      'runtime-detection-cache': runtimeCache,
+      'route-runtime-state': {
+        version: '1',
+        stats: routing.stats,
+        routePathStates: routing.routePathStates,
+        routeEndpointCapabilities: routing.routeEndpointCapabilities ?? {},
+        health: routing.health,
+        last_updated: 0,
+      },
+      'route-analytics-state': {
+        version: '1',
+        buckets: routing.analytics.buckets,
+        last_updated: 0,
+      },
+      'model-registry-source-state': {
+        version: '1',
+        sources: routing.modelRegistry.sources,
+        entries: routing.modelRegistry.entries,
+        last_updated: 0,
+      },
+      'route-endpoint-test-state': {
+        version: '1',
+        targets: routing.endpointTests,
+        last_updated: 0,
+      },
+      'route-session-activity': { version: '1', instances, lastUpdated: 0 },
+    };
   }
 
   /**
@@ -471,6 +698,7 @@ export class UnifiedConfigManager {
   }
 
   async loadConfig(): Promise<UnifiedConfig> {
+    if (getApplicationStorage()) runtimeCacheManager.invalidate();
     let loadError: any = null;
 
     try {
@@ -495,6 +723,7 @@ export class UnifiedConfigManager {
       );
       return this.config;
     } catch (error: any) {
+      if (getApplicationStorage()) throw error;
       loadError = error;
       if (error.code !== 'ENOENT') {
         Logger.error('❌ [UnifiedConfigManager] 加载配置失败:', error.message);
@@ -571,8 +800,10 @@ export class UnifiedConfigManager {
    * 从指定路径读取并规范化配置
    */
   private async readConfigFromPath(configPath: string): Promise<ReadConfigResult> {
-    const data = await fs.readFile(configPath, 'utf-8');
+    const data = await readStorageText(configPath);
     const parsed = JSON.parse(data);
+    if (parsed.version && compareVersions(parsed.version, CONFIG_VERSION) > 0)
+      throw new Error('Unsupported future configuration version');
 
     this.assertConfigShape(parsed, configPath);
 
@@ -590,7 +821,7 @@ export class UnifiedConfigManager {
       }
 
       // v3.0.5 或更早 → v3.0.6 迁移
-      if (config.version && config.version < CONFIG_VERSION) {
+      if (config.version && compareVersions(config.version, CONFIG_VERSION) < 0) {
         config = await this.migrateToV306(config);
         needsSave = true;
       }
@@ -915,6 +1146,8 @@ export class UnifiedConfigManager {
       routing: config.routing
         ? {
             ...config.routing,
+            storageVersion: undefined,
+            rules: config.routing.rules.map(({ storageVersion: _version, ...rule }) => rule),
             sessionRouting: config.routing.sessionRouting
               ? {
                   ...config.routing.sessionRouting,
@@ -935,7 +1168,12 @@ export class UnifiedConfigManager {
             health: {},
             modelRegistry: {
               ...config.routing.modelRegistry,
+              storageVersion: undefined,
+              displayItems: config.routing.modelRegistry.displayItems.map(
+                ({ storageVersion: _version, ...item }) => item
+              ),
               sources: [],
+              entries: {},
               lastAggregatedAt: undefined,
             },
             endpointTests: {},
@@ -1037,40 +1275,6 @@ export class UnifiedConfigManager {
     this.normalizeRoutingConfig(config);
 
     return config;
-  }
-
-  private async hydrateMissingSiteTypes(config: UnifiedConfig): Promise<number> {
-    let hydratedCount = 0;
-
-    for (const site of config.sites) {
-      if (site.site_type || !site.url) {
-        continue;
-      }
-
-      try {
-        const detection = await detectSiteType(site.url);
-        if (detection.detectionMethod === 'fallback') {
-          Logger.warn(`⚠️ [UnifiedConfigManager] 迁移阶段未能识别站点类型，保持未决: ${site.url}`);
-          continue;
-        }
-
-        site.site_type = detection.siteType;
-        hydratedCount += 1;
-        Logger.info('🧭 [UnifiedConfigManager] 迁移阶段自动识别并写回 site_type', {
-          siteUrl: site.url,
-          siteType: detection.siteType,
-          detectionMethod: detection.detectionMethod,
-        });
-      } catch (error: any) {
-        Logger.warn(
-          `⚠️ [UnifiedConfigManager] 迁移阶段识别站点类型失败，保持未决: ${site.url} - ${
-            error?.message || error
-          }`
-        );
-      }
-    }
-
-    return hydratedCount;
   }
 
   /**
@@ -1638,6 +1842,17 @@ export class UnifiedConfigManager {
    * 保存配置
    */
   async saveConfig(config?: UnifiedConfig): Promise<void> {
+    if (getApplicationStorage()) {
+      if (!this.mutationContext.getStore()?.open)
+        return this.mutateConfig(() => this.saveConfig(config));
+      if (config) {
+        this.assertConfigShape(config, this.configPath);
+        this.config = this.normalizeConfig(structuredClone(config));
+      }
+      if (!this.config) throw new Error('No config to save');
+      this.mutationContext.getStore()!.dirty = true;
+      return;
+    }
     if (config) {
       this.assertConfigShape(config, this.configPath);
       this.config = this.normalizeConfig(config);
@@ -1657,6 +1872,10 @@ export class UnifiedConfigManager {
     const encryptedConfig = encryptConfigFields(persistableConfig);
 
     await writeTextFileAtomically(this.configPath, JSON.stringify(encryptedConfig, null, 2));
+    if (getApplicationStorage()) {
+      Logger.info('💾 [UnifiedConfigManager] Stable configuration committed to SQLite');
+      return;
+    }
     try {
       await runtimeCacheManager.saveCache(runtimeCache);
     } catch (error) {
@@ -1680,6 +1899,11 @@ export class UnifiedConfigManager {
   }
 
   private notifySiteConfigChanged(debounceMs: number = 120): void {
+    const context = this.mutationContext.getStore();
+    if (context?.open) {
+      context.notify = true;
+      return;
+    }
     notifyAppDataChanged('site-config', debounceMs);
   }
 
@@ -1735,15 +1959,6 @@ export class UnifiedConfigManager {
   private async migrateToV3(config: any): Promise<UnifiedConfig> {
     Logger.info('🔄 [UnifiedConfigManager] 开始 v2 → v3 迁移...');
 
-    // 备份旧配置
-    const backupPath = this.configPath.replace('.json', `.v2.backup.${Date.now()}.json`);
-    try {
-      await fs.writeFile(backupPath, JSON.stringify(config, null, 2), 'utf-8');
-      Logger.info(`📦 [UnifiedConfigManager] 旧配置已备份: ${backupPath}`);
-    } catch (e: any) {
-      Logger.warn(`⚠️ [UnifiedConfigManager] 备份失败: ${e.message}`);
-    }
-
     // 初始化 accounts 数组
     const accounts: AccountCredential[] = config.accounts || [];
     const sites: UnifiedSite[] = config.sites || [];
@@ -1771,13 +1986,6 @@ export class UnifiedConfigManager {
       }
     }
 
-    const hydratedSiteTypes = await this.hydrateMissingSiteTypes(config as UnifiedConfig);
-    if (hydratedSiteTypes > 0) {
-      Logger.info(
-        `🧭 [UnifiedConfigManager] v2 → v3 迁移阶段补全 site_type ${hydratedSiteTypes} 个`
-      );
-    }
-
     config.version = CONFIG_VERSION;
     config.accounts = accounts;
     config.sites = sites;
@@ -1791,15 +1999,6 @@ export class UnifiedConfigManager {
    */
   private async migrateToV306(config: any): Promise<UnifiedConfig> {
     Logger.info('🔄 [UnifiedConfigManager] 开始 v3.0.5 → v3.0.6 迁移...');
-
-    // 备份旧配置
-    const backupPath = this.configPath.replace('.json', `.v3.0.5.backup.${Date.now()}.json`);
-    try {
-      await fs.writeFile(backupPath, JSON.stringify(config, null, 2), 'utf-8');
-      Logger.info(`📦 [UnifiedConfigManager] 旧配置已备份: ${backupPath}`);
-    } catch (e: any) {
-      Logger.warn(`⚠️ [UnifiedConfigManager] 备份失败: ${e.message}`);
-    }
 
     const accounts: AccountCredential[] = config.accounts || [];
     const sites: UnifiedSite[] = config.sites || [];
@@ -1865,13 +2064,6 @@ export class UnifiedConfigManager {
       delete site.cached_data; // 运行时缓存不再保存在站点级
     }
 
-    const hydratedSiteTypes = await this.hydrateMissingSiteTypes(config as UnifiedConfig);
-    if (hydratedSiteTypes > 0) {
-      Logger.info(
-        `🧭 [UnifiedConfigManager] v3.0.x → 当前版本迁移阶段补全 site_type ${hydratedSiteTypes} 个`
-      );
-    }
-
     config.version = CONFIG_VERSION;
     config.accounts = accounts;
     config.sites = sites;
@@ -1891,152 +2083,54 @@ export class UnifiedConfigManager {
    * 获取所有站点
    */
   getSites(): UnifiedSite[] {
-    return this.config?.sites || [];
+    return this.entities.getSites();
   }
 
   /**
    * 根据 ID 获取站点
    */
   getSiteById(id: string): UnifiedSite | null {
-    return this.config?.sites.find(s => s.id === id) || null;
+    return this.entities.getSiteById(id);
   }
 
   /**
    * 根据 URL 获取站点
    */
   getSiteByUrl(url: string): UnifiedSite | null {
-    try {
-      const target = new URL(url);
-      const targetPath = target.pathname.replace(/\/+$/, '');
-      return (
-        this.config?.sites.find(s => {
-          try {
-            const candidate = new URL(s.url);
-            return (
-              candidate.origin === target.origin &&
-              candidate.pathname.replace(/\/+$/, '') === targetPath
-            );
-          } catch {
-            return false;
-          }
-        }) || null
-      );
-    } catch {
-      return null;
-    }
+    return this.entities.getSiteByUrl(url);
   }
 
   /**
    * 添加站点
    */
   async addSite(site: Omit<UnifiedSite, 'id'> & { id?: string }): Promise<UnifiedSite> {
-    if (!this.config) await this.loadConfig();
-
-    const newSite: UnifiedSite = {
-      ...site,
-      id: site.id || generateSiteId(),
-      site_type: site.site_type,
-      group: site.group || 'default',
-      enabled: site.enabled !== false,
-      created_at: Date.now(),
-      updated_at: Date.now(),
-    };
-
-    this.config!.sites.push(newSite);
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      this.config!.sites = this.config!.sites.filter(item => item !== newSite);
-      throw error;
-    }
-    this.notifySiteConfigChanged();
-    return newSite;
+    return this.entities.addSite(site);
   }
 
   /**
    * 更新站点
    */
   async updateSite(id: string, updates: Partial<UnifiedSite>): Promise<boolean> {
-    if (!this.config) return false;
-
-    const index = this.config.sites.findIndex(s => s.id === id);
-    if (index === -1) return false;
-
-    const previous = this.config.sites[index];
-    const next = {
-      ...this.config.sites[index],
-      ...updates,
-      id, // 确保 ID 不变
-      updated_at: Date.now(),
-    };
-    this.config.sites[index] = next;
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      const currentIndex = this.config.sites.indexOf(next);
-      if (currentIndex !== -1) this.config.sites[currentIndex] = previous;
-      throw error;
-    }
-    this.notifySiteConfigChanged();
-    return true;
+    return this.entities.updateSite(id, updates);
   }
 
   /**
    * 删除站点（同时删除关联的所有账户）
    */
   async deleteSite(id: string): Promise<boolean> {
-    if (!this.config) return false;
-
-    const previousSites = this.config.sites;
-    const previousAccounts = this.config.accounts;
-    const initialLength = previousSites.length;
-    this.config.sites = this.config.sites.filter(s => s.id !== id);
-
-    if (this.config.sites.length < initialLength) {
-      // 删除关联的所有账户
-      this.config.accounts = this.config.accounts.filter(a => a.site_id !== id);
-      const nextSites = this.config.sites;
-      const nextAccounts = this.config.accounts;
-      try {
-        await this.saveConfig();
-      } catch (error) {
-        if (this.config.sites === nextSites) this.config.sites = previousSites;
-        if (this.config.accounts === nextAccounts) this.config.accounts = previousAccounts;
-        throw error;
-      }
-      try {
-        await routeStateAffinityService.removeBySite(id);
-      } catch (error) {
-        Logger.warn('Site removed; affinity cleanup failed:', error);
-      }
-      this.notifySiteConfigChanged();
-      return true;
-    }
-    return false;
+    return this.entities.deleteSite(id);
   }
 
   /**
    * 更新站点令牌
    */
   async updateSiteToken(id: string, accessToken: string): Promise<boolean> {
-    return this.updateSite(id, { access_token: accessToken });
+    return this.entities.updateSiteToken(id, accessToken);
   }
 
   /**
    * URL 匹配（比较 origin）
    */
-  private urlMatches(url1: string, url2: string): boolean {
-    try {
-      const first = new URL(url1);
-      const second = new URL(url2);
-      return (
-        first.origin === second.origin &&
-        first.pathname.replace(/\/+$/, '') === second.pathname.replace(/\/+$/, '')
-      );
-    } catch {
-      return false;
-    }
-  }
 
   // ============= 账户操作 =============
 
@@ -2044,14 +2138,14 @@ export class UnifiedConfigManager {
    * 根据 ID 获取单个账户
    */
   getAccountById(accountId: string): AccountCredential | undefined {
-    return this.config?.accounts.find(a => a.id === accountId);
+    return this.entities.getAccountById(accountId);
   }
 
   /**
    * 获取站点的所有账户
    */
   getAccountsBySiteId(siteId: string): AccountCredential[] {
-    return this.config?.accounts.filter(a => a.site_id === siteId) || [];
+    return this.entities.getAccountsBySiteId(siteId);
   }
 
   /**
@@ -2060,124 +2154,7 @@ export class UnifiedConfigManager {
   async addAccount(
     account: Omit<AccountCredential, 'id' | 'created_at' | 'updated_at'> & { id?: string }
   ): Promise<AccountCredential> {
-    if (!this.config) await this.loadConfig();
-
-    const now = Date.now();
-    const site = this.config!.sites.find(s => s.id === account.site_id);
-    if (!site) throw new Error(`Site not found: ${account.site_id}`);
-    let addedLegacyAccount: AccountCredential | undefined;
-    const accountInput = { ...account } as typeof account & { status?: unknown };
-    delete accountInput.status;
-    migrateLegacyRouteTargetProtocol(
-      accountInput,
-      accountInput.cli_config as Partial<
-        Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
-      >
-    );
-    accountInput.routeTargetProtocolNeedsConfirmation = Boolean(
-      accountInput.routeTargetProtocolNeedsConfirmation
-    );
-    accountInput.supportedProtocols = normalizeCliUpstreamProtocolsWithDefault(
-      accountInput.supportedProtocols
-    );
-    if (accountInput.routeAuthScheme !== 'bearer' && accountInput.routeAuthScheme !== 'x-api-key') {
-      delete accountInput.routeAuthScheme;
-    }
-
-    // 站点有 legacy 凭证但无账户记录 → 先补建默认账户，防止原凭证被覆盖丢失
-    if (site) {
-      const existingAccounts = this.config!.accounts.filter(
-        a => a.site_id === accountInput.site_id
-      );
-      if (existingAccounts.length === 0 && (site.access_token || site.user_id)) {
-        const defaultAccount: AccountCredential = {
-          id: generateAccountId(),
-          site_id: accountInput.site_id,
-          account_name: '默认账户',
-          user_id: site.user_id || '',
-          access_token: site.access_token || '',
-          api_key: site.api_key,
-          auth_source: 'manual',
-          routeTargetProtocol: 'native',
-          routeTargetProtocolNeedsConfirmation: false,
-          supportedProtocols: normalizeCliUpstreamProtocolsWithDefault(undefined),
-          cached_data: site.cached_data ? { ...site.cached_data } : undefined,
-          created_at: now,
-          updated_at: now,
-        };
-        this.config!.accounts.push(defaultAccount);
-        addedLegacyAccount = defaultAccount;
-        Logger.info(
-          `🔄 [UnifiedConfigManager] 自动补建默认账户: ${defaultAccount.id} (site=${accountInput.site_id})`
-        );
-      }
-    }
-
-    const siteAccounts = this.config!.accounts.filter(
-      existing => existing.site_id === accountInput.site_id
-    );
-    const reusablePlaceholderId =
-      siteAccounts.length === 1 &&
-      !siteAccounts[0].user_id &&
-      !siteAccounts[0].access_token &&
-      !siteAccounts[0].api_key &&
-      (accountInput.user_id || accountInput.access_token)
-        ? siteAccounts[0].id
-        : undefined;
-
-    // 同一站点 + 同一用户只保留一个账户记录；首次补充凭证时复用唯一的空凭证账户。
-    const duplicateIndex = this.config!.accounts.findIndex(
-      existing =>
-        existing.id === reusablePlaceholderId ||
-        (Boolean(accountInput.user_id) &&
-          existing.site_id === accountInput.site_id &&
-          existing.user_id === accountInput.user_id)
-    );
-    if (duplicateIndex >= 0) {
-      const mergedAccount: AccountCredential = {
-        ...this.config!.accounts[duplicateIndex],
-        ...accountInput,
-        id: this.config!.accounts[duplicateIndex].id,
-        created_at: this.config!.accounts[duplicateIndex].created_at,
-        updated_at: now,
-      };
-      const previous = this.config!.accounts[duplicateIndex];
-      this.config!.accounts[duplicateIndex] = mergedAccount;
-      try {
-        await this.saveConfig();
-      } catch (error) {
-        const currentIndex = this.config!.accounts.indexOf(mergedAccount);
-        if (currentIndex !== -1) this.config!.accounts[currentIndex] = previous;
-        if (addedLegacyAccount)
-          this.config!.accounts = this.config!.accounts.filter(item => item !== addedLegacyAccount);
-        throw error;
-      }
-      this.notifySiteConfigChanged();
-      Logger.info(
-        `🔁 [UnifiedConfigManager] 复用已有账户记录: ${mergedAccount.id} (site=${accountInput.site_id}, user=${accountInput.user_id})`
-      );
-      return mergedAccount;
-    }
-
-    const newAccount: AccountCredential = {
-      ...accountInput,
-      id: accountInput.id || generateAccountId(),
-      created_at: now,
-      updated_at: now,
-    };
-
-    this.config!.accounts.push(newAccount);
-
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      this.config!.accounts = this.config!.accounts.filter(
-        item => item !== newAccount && item !== addedLegacyAccount
-      );
-      throw error;
-    }
-    this.notifySiteConfigChanged();
-    return newAccount;
+    return this.entities.addAccount(account);
   }
 
   /**
@@ -2208,29 +2185,7 @@ export class UnifiedConfigManager {
       >
     >
   ): Promise<boolean> {
-    if (!this.config) return false;
-
-    const index = this.config.accounts.findIndex(a => a.id === accountId);
-    if (index === -1) return false;
-    const normalizedUpdates = { ...updates } as typeof updates & { status?: unknown };
-    delete normalizedUpdates.status;
-
-    const previous = this.config.accounts[index];
-    const next = {
-      ...this.config.accounts[index],
-      ...normalizedUpdates,
-      updated_at: Date.now(),
-    };
-    this.config.accounts[index] = next;
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      const currentIndex = this.config.accounts.indexOf(next);
-      if (currentIndex !== -1) this.config.accounts[currentIndex] = previous;
-      throw error;
-    }
-    this.notifySiteConfigChanged();
-    return true;
+    return this.entities.updateAccount(accountId, updates);
   }
 
   /**
@@ -2240,58 +2195,14 @@ export class UnifiedConfigManager {
     accountId: string,
     updater: (current?: DetectionCacheData) => DetectionCacheData
   ): Promise<boolean> {
-    if (!this.config) await this.loadConfig();
-    if (!this.config) return false;
-
-    const index = this.config.accounts.findIndex(a => a.id === accountId);
-    if (index === -1) return false;
-
-    const current = this.config.accounts[index].cached_data;
-    this.config.accounts[index] = {
-      ...this.config.accounts[index],
-      cached_data: updater(current),
-      updated_at: Date.now(),
-    };
-
-    await this.saveConfig();
-    this.notifySiteConfigChanged();
-    return true;
+    return this.entities.updateAccountCachedData(accountId, updater);
   }
 
   /**
    * 删除账户
    */
   async deleteAccount(accountId: string): Promise<boolean> {
-    if (!this.config) return false;
-
-    const account = this.config.accounts.find(a => a.id === accountId);
-    if (!account) return false;
-
-    const previousSites = this.config.sites;
-    const previousAccounts = this.config.accounts;
-    this.config.accounts = this.config.accounts.filter(a => a.id !== accountId);
-
-    const remainingAccounts = this.config.accounts.filter(a => a.site_id === account.site_id);
-    if (remainingAccounts.length === 0) {
-      this.config.sites = this.config.sites.filter(site => site.id !== account.site_id);
-    }
-
-    const nextSites = this.config.sites;
-    const nextAccounts = this.config.accounts;
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      if (this.config.sites === nextSites) this.config.sites = previousSites;
-      if (this.config.accounts === nextAccounts) this.config.accounts = previousAccounts;
-      throw error;
-    }
-    try {
-      await routeStateAffinityService.removeByAccount(accountId);
-    } catch (error) {
-      Logger.warn('Account removed; affinity cleanup failed:', error);
-    }
-    this.notifySiteConfigChanged();
-    return true;
+    return this.entities.deleteAccount(accountId);
   }
 
   // ============= 兼容层（供前端使用） =============
@@ -2309,37 +2220,7 @@ export class UnifiedConfigManager {
     settings: Settings;
     siteGroups: SiteGroup[];
   } {
-    if (!this.config) {
-      return { sites: [], accounts: [], settings: DEFAULT_SETTINGS, siteGroups: [DEFAULT_GROUP] };
-    }
-
-    // 转换为旧格式，保留 cached_data 和 cli_config
-    // v3.0.6: api_key/access_token/user_id 已移至账户级，这里返回空字符串以兼容旧接口
-    const sites = this.config.sites.map(site => ({
-      id: site.id, // 站点 ID（多账户操作需要）
-      name: site.name,
-      url: site.url,
-      site_type: site.site_type,
-      api_key: '', // v3.0.6: 已迁移到账户级
-      system_token: undefined, // v3.0.6: 已迁移到账户级
-      user_id: undefined, // v3.0.6: 已迁移到账户级
-      enabled: site.enabled,
-      group: site.group,
-      has_checkin: site.has_checkin,
-      force_enable_checkin: site.force_enable_checkin,
-      extra_links: site.extra_links,
-      proxy_url: site.proxy_url,
-      auto_refresh: site.auto_refresh, // 站点独立的自动刷新开关
-      auto_refresh_interval: site.auto_refresh_interval, // 自动刷新间隔
-      cached_data: undefined, // v3.0.6: 运行时缓存不再保存在配置中
-    }));
-
-    return {
-      sites,
-      accounts: this.config.accounts.map(a => ({ ...a })),
-      settings: this.config.settings,
-      siteGroups: this.config.siteGroups,
-    };
+    return this.entities.getLegacyConfig();
   }
 
   /**
@@ -2350,104 +2231,7 @@ export class UnifiedConfigManager {
     settings: Settings;
     siteGroups?: SiteGroup[];
   }): Promise<void> {
-    if (!this.config) await this.loadConfig();
-
-    // 更新设置和分组，保留现有的 webdav 和 browser_profile 配置（如果前端没有传递）
-    const previous = {
-      settings: this.config!.settings,
-      siteGroups: this.config!.siteGroups,
-      sites: this.config!.sites,
-      accounts: this.config!.accounts,
-    };
-    const existingWebdav = this.config!.settings?.webdav;
-    const existingBrowserProfile = this.config!.settings?.browser_profile;
-    this.config!.settings = {
-      ...legacyConfig.settings,
-      webdav: legacyConfig.settings.webdav || existingWebdav,
-      browser_profile: (legacyConfig.settings as any).browser_profile || existingBrowserProfile,
-    };
-    if (legacyConfig.siteGroups) {
-      this.config!.siteGroups = legacyConfig.siteGroups;
-    }
-
-    // 合并站点更新（保留 ID 和认证信息）
-    const newSites: UnifiedSite[] = legacyConfig.sites.map(oldSite => {
-      // 查找现有站点：优先按 ID 匹配（保护账户 site_id 引用），其次按 URL
-      const existing =
-        (oldSite.id ? this.config!.sites.find(s => s.id === oldSite.id) : undefined) ||
-        this.config!.sites.find(s => this.urlMatches(s.url, oldSite.url));
-
-      if (existing) {
-        // 更新现有站点，保留 ID 和未在旧格式中的字段
-        const updated: UnifiedSite = {
-          ...existing,
-          name: oldSite.name,
-          url: oldSite.url,
-          site_type: oldSite.site_type ?? existing.site_type,
-          api_key: oldSite.api_key,
-          access_token: oldSite.system_token || existing.access_token,
-          user_id: oldSite.user_id || existing.user_id,
-          enabled: oldSite.enabled,
-          group: oldSite.group || existing.group,
-          has_checkin: oldSite.has_checkin,
-          force_enable_checkin: oldSite.force_enable_checkin,
-          extra_links: oldSite.extra_links,
-          proxy_url: oldSite.proxy_url,
-          auto_refresh: oldSite.auto_refresh,
-          auto_refresh_interval: oldSite.auto_refresh_interval,
-          cached_data: (oldSite as any).cached_data || existing.cached_data,
-          updated_at: Date.now(),
-        };
-
-        return updated;
-      } else {
-        // 新站点
-        return {
-          id: oldSite.id || generateSiteId(),
-          name: oldSite.name,
-          url: oldSite.url,
-          site_type: oldSite.site_type,
-          api_key: oldSite.api_key,
-          access_token: oldSite.system_token,
-          user_id: oldSite.user_id,
-          enabled: oldSite.enabled,
-          group: oldSite.group || 'default',
-          has_checkin: oldSite.has_checkin,
-          force_enable_checkin: oldSite.force_enable_checkin,
-          extra_links: oldSite.extra_links,
-          proxy_url: oldSite.proxy_url,
-          auto_refresh: oldSite.auto_refresh,
-          auto_refresh_interval: oldSite.auto_refresh_interval,
-          cached_data: (oldSite as any).cached_data,
-          created_at: Date.now(),
-          updated_at: Date.now(),
-        };
-      }
-    });
-
-    const activeSiteIds = new Set(newSites.map(site => site.id));
-    this.config!.accounts = this.config!.accounts.filter(account =>
-      activeSiteIds.has(account.site_id)
-    );
-
-    this.config!.sites = newSites;
-    const next = {
-      settings: this.config!.settings,
-      siteGroups: this.config!.siteGroups,
-      sites: this.config!.sites,
-      accounts: this.config!.accounts,
-    };
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      if (this.config!.settings === next.settings) this.config!.settings = previous.settings;
-      if (this.config!.siteGroups === next.siteGroups)
-        this.config!.siteGroups = previous.siteGroups;
-      if (this.config!.sites === next.sites) this.config!.sites = previous.sites;
-      if (this.config!.accounts === next.accounts) this.config!.accounts = previous.accounts;
-      throw error;
-    }
-    this.notifySiteConfigChanged();
+    return this.entities.saveLegacyConfig(legacyConfig);
   }
 
   // ============= 导入导出 =============
@@ -2464,6 +2248,11 @@ export class UnifiedConfigManager {
    * 导入配置
    */
   async importConfig(data: UnifiedConfig | any): Promise<void> {
+    const storage = getApplicationStorage();
+    if (storage) {
+      await storage.restore({ 'stable-config': data });
+      return;
+    }
     // 支持导入旧格式
     if (data.sites && !data.version) {
       // 旧格式，转换
@@ -2493,42 +2282,48 @@ export class UnifiedConfigManager {
    * 更新路由服务器配置
    */
   async updateRouteServerConfig(updates: Partial<RoutingConfig['server']>): Promise<void> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.server = { ...this.config.routing!.server, ...updates };
-    await this.saveConfig();
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      this.config.routing!.server = { ...this.config.routing!.server, ...updates };
+      await this.saveConfig();
+    });
   }
 
   /**
    * 插入或更新路由规则
    */
   async upsertRouteRule(rule: RouteRule): Promise<RouteRule> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const rules = this.config.routing!.rules;
-    const idx = rules.findIndex(r => r.id === rule.id);
-    if (idx >= 0) {
-      rules[idx] = { ...rule, updatedAt: Date.now() };
-    } else {
-      rules.push({ ...rule, createdAt: Date.now(), updatedAt: Date.now() });
-    }
-    await this.saveConfig();
-    return idx >= 0 ? rules[idx] : rules[rules.length - 1];
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const rules = this.config.routing!.rules;
+      const idx = rules.findIndex(r => r.id === rule.id);
+      if (idx >= 0) {
+        rules[idx] = { ...rule, updatedAt: Date.now() };
+      } else {
+        rules.push({ ...rule, createdAt: Date.now(), updatedAt: Date.now() });
+      }
+      await this.saveConfig();
+      return idx >= 0 ? rules[idx] : rules[rules.length - 1];
+    });
   }
 
   /**
    * 删除路由规则
    */
   async deleteRouteRule(ruleId: string): Promise<boolean> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const before = this.config.routing!.rules.length;
-    this.config.routing!.rules = this.config.routing!.rules.filter(r => r.id !== ruleId);
-    if (this.config.routing!.rules.length < before) {
-      await this.saveConfig();
-      return true;
-    }
-    return false;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const before = this.config.routing!.rules.length;
+      this.config.routing!.rules = this.config.routing!.rules.filter(r => r.id !== ruleId);
+      if (this.config.routing!.rules.length < before) {
+        await this.saveConfig();
+        return true;
+      }
+      return false;
+    });
   }
 
   /**
@@ -2624,127 +2419,129 @@ export class UnifiedConfigManager {
    * 重置路由路径禁用状态，不清除常规统计
    */
   async resetRoutePathStates(params: RoutePathStateResetParams = {}): Promise<number> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
 
-    const routeRuleId = params.routeRuleId?.trim();
-    const canonicalModel = params.canonicalModel?.trim();
-    const siteId = params.siteId?.trim();
-    const accountId = params.accountId?.trim();
-    const apiKeyId = params.apiKeyId?.trim();
-    const resolvedModel = params.resolvedModel?.trim();
-    const targetProtocol = params.targetProtocol
-      ? normalizeCliTargetProtocol(params.targetProtocol)
-      : undefined;
-    const routePathStates = this.config.routing!.routePathStates;
-    let cleared = 0;
-    const suppressAffinity = Boolean(canonicalModel && siteId && accountId && apiKeyId);
-    const suppressedStates: RoutePathState[] = [];
-    const now = Date.now();
-
-    if (suppressAffinity) {
-      const displayItem = this.config.routing!.modelRegistry.displayItems.find(
-        item => item.canonicalName === canonicalModel
-      );
-      if (displayItem) {
-        const priorityConfig = normalizeDisplayItemPriorityConfig(displayItem.priorityConfig);
-        displayItem.priorityConfig = {
-          ...priorityConfig,
-          affinityInvalidatedAt: nextAffinityInvalidationBoundary(
-            priorityConfig.affinityInvalidatedAt,
-            now
-          ),
-        };
-        displayItem.updatedAt = now;
-        await this.saveConfig();
-      }
-    }
-
-    if (
-      !routeRuleId &&
-      !canonicalModel &&
-      !siteId &&
-      !accountId &&
-      !apiKeyId &&
-      !resolvedModel &&
-      !targetProtocol
-    ) {
-      cleared = Object.keys(routePathStates).length;
-      this.config.routing!.routePathStates = {};
-      await this.saveRouteRuntimeState();
-      return cleared;
-    }
-
-    for (const [key, state] of Object.entries(routePathStates)) {
-      if (routeRuleId && state.routeRuleId !== routeRuleId) {
-        continue;
-      }
-
-      if (canonicalModel && state.canonicalModel !== canonicalModel) {
-        continue;
-      }
-
-      if (siteId && state.siteId !== siteId) {
-        continue;
-      }
-
-      if (accountId && state.accountId !== accountId) {
-        continue;
-      }
-
-      if (apiKeyId && state.apiKeyId !== apiKeyId) {
-        continue;
-      }
-
-      if (resolvedModel && state.resolvedModel !== resolvedModel) {
-        continue;
-      }
-
-      if (targetProtocol && normalizeCliTargetProtocol(state.targetProtocol) !== targetProtocol) {
-        continue;
-      }
+      const routeRuleId = params.routeRuleId?.trim();
+      const canonicalModel = params.canonicalModel?.trim();
+      const siteId = params.siteId?.trim();
+      const accountId = params.accountId?.trim();
+      const apiKeyId = params.apiKeyId?.trim();
+      const resolvedModel = params.resolvedModel?.trim();
+      const targetProtocol = params.targetProtocol
+        ? normalizeCliTargetProtocol(params.targetProtocol)
+        : undefined;
+      const routePathStates = this.config.routing!.routePathStates;
+      let cleared = 0;
+      const suppressAffinity = Boolean(canonicalModel && siteId && accountId && apiKeyId);
+      const suppressedStates: RoutePathState[] = [];
+      const now = Date.now();
 
       if (suppressAffinity) {
+        const displayItem = this.config.routing!.modelRegistry.displayItems.find(
+          item => item.canonicalName === canonicalModel
+        );
+        if (displayItem) {
+          const priorityConfig = normalizeDisplayItemPriorityConfig(displayItem.priorityConfig);
+          displayItem.priorityConfig = {
+            ...priorityConfig,
+            affinityInvalidatedAt: nextAffinityInvalidationBoundary(
+              priorityConfig.affinityInvalidatedAt,
+              now
+            ),
+          };
+          displayItem.updatedAt = now;
+          await this.saveConfig();
+        }
+      }
+
+      if (
+        !routeRuleId &&
+        !canonicalModel &&
+        !siteId &&
+        !accountId &&
+        !apiKeyId &&
+        !resolvedModel &&
+        !targetProtocol
+      ) {
+        cleared = Object.keys(routePathStates).length;
+        this.config.routing!.routePathStates = {};
+        await this.saveRouteRuntimeState();
+        return cleared;
+      }
+
+      for (const [key, state] of Object.entries(routePathStates)) {
+        if (routeRuleId && state.routeRuleId !== routeRuleId) {
+          continue;
+        }
+
+        if (canonicalModel && state.canonicalModel !== canonicalModel) {
+          continue;
+        }
+
+        if (siteId && state.siteId !== siteId) {
+          continue;
+        }
+
+        if (accountId && state.accountId !== accountId) {
+          continue;
+        }
+
+        if (apiKeyId && state.apiKeyId !== apiKeyId) {
+          continue;
+        }
+
+        if (resolvedModel && state.resolvedModel !== resolvedModel) {
+          continue;
+        }
+
+        if (targetProtocol && normalizeCliTargetProtocol(state.targetProtocol) !== targetProtocol) {
+          continue;
+        }
+
+        if (suppressAffinity) {
+          suppressedStates.push({
+            ...state,
+            lastOutcome: undefined,
+            lastSuccessAt: undefined,
+            lastSuccessRequestStartedAt: undefined,
+            affinitySuppressedAt: now,
+            affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
+            updatedAt: now,
+          });
+        }
+
+        delete routePathStates[key];
+        cleared += 1;
+      }
+
+      if (suppressAffinity && (suppressedStates.length === 0 || !resolvedModel)) {
         suppressedStates.push({
-          ...state,
-          lastOutcome: undefined,
-          lastSuccessAt: undefined,
-          lastSuccessRequestStartedAt: undefined,
+          routeRuleId,
+          siteId: siteId!,
+          accountId: accountId!,
+          apiKeyId: apiKeyId!,
+          targetProtocol,
+          canonicalModel,
+          resolvedModel,
+          windowStartedAt: now,
+          windowRequestCount: 0,
+          windowSuccessCount: 0,
+          successRate: 1,
           affinitySuppressedAt: now,
           affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
           updatedAt: now,
         });
       }
 
-      delete routePathStates[key];
-      cleared += 1;
-    }
+      for (const suppressedState of suppressedStates) {
+        routePathStates[buildRoutePathStateKey(suppressedState)] = suppressedState;
+      }
 
-    if (suppressAffinity && (suppressedStates.length === 0 || !resolvedModel)) {
-      suppressedStates.push({
-        routeRuleId,
-        siteId: siteId!,
-        accountId: accountId!,
-        apiKeyId: apiKeyId!,
-        targetProtocol,
-        canonicalModel,
-        resolvedModel,
-        windowStartedAt: now,
-        windowRequestCount: 0,
-        windowSuccessCount: 0,
-        successRate: 1,
-        affinitySuppressedAt: now,
-        affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
-        updatedAt: now,
-      });
-    }
-
-    for (const suppressedState of suppressedStates) {
-      routePathStates[buildRoutePathStateKey(suppressedState)] = suppressedState;
-    }
-
-    await this.saveRouteRuntimeState();
-    return cleared;
+      await this.saveRouteRuntimeState();
+      return cleared;
+    });
   }
 
   /**
@@ -2778,40 +2575,42 @@ export class UnifiedConfigManager {
     sourceProtocol: RouteSourceProtocol,
     canonicalModel: string | null | undefined
   ): Promise<RouteRule | null> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
 
-    const normalizedModel = canonicalModel?.trim();
-    if (!normalizedModel) {
-      return null;
-    }
+      const normalizedModel = canonicalModel?.trim();
+      if (!normalizedModel) {
+        return null;
+      }
 
-    const routing = this.config.routing!;
-    if (
-      routing.rules.some(rule =>
-        routeRuleMatchesProtocolModel(rule, sourceProtocol, normalizedModel)
-      )
-    ) {
-      return null;
-    }
+      const routing = this.config.routing!;
+      if (
+        routing.rules.some(rule =>
+          routeRuleMatchesProtocolModel(rule, sourceProtocol, normalizedModel)
+        )
+      ) {
+        return null;
+      }
 
-    const now = Date.now();
-    const ruleId = buildAutoProtocolModelRouteRuleId(sourceProtocol, normalizedModel);
-    const rule: RouteRule = {
-      id: ruleId,
-      name: `${sourceProtocol} / ${normalizedModel}`,
-      enabled: true,
-      priority: AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY,
-      sourceProtocol,
-      patternType: 'exact',
-      pattern: normalizedModel,
-      notes: 'Auto-generated so the selected protocol and model have a matching route rule.',
-      createdAt: now,
-      updatedAt: now,
-    };
-    routing.rules.push(rule);
-    await this.saveConfig();
-    return rule;
+      const now = Date.now();
+      const ruleId = buildAutoProtocolModelRouteRuleId(sourceProtocol, normalizedModel);
+      const rule: RouteRule = {
+        id: ruleId,
+        name: `${sourceProtocol} / ${normalizedModel}`,
+        enabled: true,
+        priority: AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY,
+        sourceProtocol,
+        patternType: 'exact',
+        pattern: normalizedModel,
+        notes: 'Auto-generated so the selected protocol and model have a matching route rule.',
+        createdAt: now,
+        updatedAt: now,
+      };
+      routing.rules.push(rule);
+      await this.saveConfig();
+      return rule;
+    });
   }
 
   // ============= CLI 模型选择 =============
@@ -2819,169 +2618,187 @@ export class UnifiedConfigManager {
   async updateRouteCliModelSelections(
     selections: Partial<Record<RouteCliType, string | null>>
   ): Promise<Record<RouteCliType, string | null>> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const mergedSelections = {
-      ...this.config.routing!.cliModelSelections,
-      ...selections,
-    };
-    this.config.routing!.cliModelSelections = normalizeRouteCliSelections(
-      mergedSelections,
-      this.config.routing!.modelRegistry.entries
-    );
-    await this.saveConfig();
-    return this.config.routing!.cliModelSelections;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const mergedSelections = {
+        ...this.config.routing!.cliModelSelections,
+        ...selections,
+      };
+      this.config.routing!.cliModelSelections = normalizeRouteCliSelections(
+        mergedSelections,
+        this.config.routing!.modelRegistry.entries
+      );
+      await this.saveConfig();
+      return this.config.routing!.cliModelSelections;
+    });
   }
 
   async updateRouteInstance(
     instanceId: string,
     updates: RouteInstanceUpdate
   ): Promise<RouteInstance> {
-    const sessionRouting = this.getRoutingConfig().sessionRouting;
-    if (!sessionRouting?.instances[instanceId]) throw new Error('路由实例不存在');
-    const previous = structuredClone(sessionRouting.instances[instanceId]);
-    try {
-      const saved = updateRouteInstance(sessionRouting, instanceId, updates);
-      await this.saveConfig();
-      return saved;
-    } catch (error) {
-      const current = this.getRoutingConfig().sessionRouting;
-      if (current) current.instances[instanceId] = previous;
-      throw error;
-    }
+    return this.mutateConfig(async () => {
+      const sessionRouting = this.getRoutingConfig().sessionRouting;
+      if (!sessionRouting?.instances[instanceId]) throw new Error('路由实例不存在');
+      const previous = structuredClone(sessionRouting.instances[instanceId]);
+      try {
+        const saved = updateRouteInstance(sessionRouting, instanceId, updates);
+        await this.saveConfig();
+        return saved;
+      } catch (error) {
+        const current = this.getRoutingConfig().sessionRouting;
+        if (current) current.instances[instanceId] = previous;
+        throw error;
+      }
+    });
   }
 
   async updateRouteClientRouting(
     profileId: string,
     updates: Partial<RouteClientRoutingConfig>
   ): Promise<RouteClientRoutingConfig> {
-    if (!this.config) throw new Error('Config not loaded');
-    if (!profileId?.trim()) throw new Error('客户端 ID 不能为空');
-    if (!updates || typeof updates !== 'object') throw new Error('路由配置无效');
-    if (updates.mode !== undefined && !['client', 'session'].includes(updates.mode)) {
-      throw new Error('路由模式无效');
-    }
-    if (
-      updates.modelId !== undefined &&
-      updates.modelId !== null &&
-      typeof updates.modelId !== 'string'
-    ) {
-      throw new Error('路由模型无效');
-    }
-    if (
-      updates.reasoningEffort !== undefined &&
-      updates.reasoningEffort !== null &&
-      typeof updates.reasoningEffort !== 'string'
-    ) {
-      throw new Error('思考强度无效');
-    }
-    if (updates.pinned !== undefined && typeof updates.pinned !== 'boolean') {
-      throw new Error('钉住状态无效');
-    }
-    const routing = this.getRoutingConfig();
-    const previous = routing.clientRouting || {};
-    const next = normalizeRouteClientRoutingConfig({ ...previous[profileId], ...updates });
-    routing.clientRouting = { ...previous, [profileId]: next };
-    try {
-      await this.saveConfig();
-    } catch (error) {
-      const latest = this.getRoutingConfig();
-      const current = latest.clientRouting?.[profileId];
-      if (
-        current &&
-        current.mode === next.mode &&
-        current.modelId === next.modelId &&
-        current.reasoningEffort === next.reasoningEffort &&
-        current.pinned === next.pinned
-      ) {
-        const restored = { ...latest.clientRouting };
-        if (previous[profileId]) restored[profileId] = previous[profileId];
-        else delete restored[profileId];
-        latest.clientRouting = restored;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      if (!profileId?.trim()) throw new Error('客户端 ID 不能为空');
+      if (!updates || typeof updates !== 'object') throw new Error('路由配置无效');
+      if (updates.mode !== undefined && !['client', 'session'].includes(updates.mode)) {
+        throw new Error('路由模式无效');
       }
-      throw error;
-    }
-    return next;
+      if (
+        updates.modelId !== undefined &&
+        updates.modelId !== null &&
+        typeof updates.modelId !== 'string'
+      ) {
+        throw new Error('路由模型无效');
+      }
+      if (
+        updates.reasoningEffort !== undefined &&
+        updates.reasoningEffort !== null &&
+        typeof updates.reasoningEffort !== 'string'
+      ) {
+        throw new Error('思考强度无效');
+      }
+      if (updates.pinned !== undefined && typeof updates.pinned !== 'boolean') {
+        throw new Error('钉住状态无效');
+      }
+      const routing = this.getRoutingConfig();
+      const previous = routing.clientRouting || {};
+      const next = normalizeRouteClientRoutingConfig({ ...previous[profileId], ...updates });
+      routing.clientRouting = { ...previous, [profileId]: next };
+      try {
+        await this.saveConfig();
+      } catch (error) {
+        const latest = this.getRoutingConfig();
+        const current = latest.clientRouting?.[profileId];
+        if (
+          current &&
+          current.mode === next.mode &&
+          current.modelId === next.modelId &&
+          current.reasoningEffort === next.reasoningEffort &&
+          current.pinned === next.pinned
+        ) {
+          const restored = { ...latest.clientRouting };
+          if (previous[profileId]) restored[profileId] = previous[profileId];
+          else delete restored[profileId];
+          latest.clientRouting = restored;
+        }
+        throw error;
+      }
+      return next;
+    });
   }
 
   async updateRouteCliThinkingEffortSelections(
     selections: Partial<Record<RouteCliType, RouteThinkingEffort | null>>
   ): Promise<Record<RouteCliType, RouteThinkingEffort | null>> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections({
-      ...this.config.routing!.cliThinkingEffortSelections,
-      ...selections,
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      this.config.routing!.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections({
+        ...this.config.routing!.cliThinkingEffortSelections,
+        ...selections,
+      });
+      await this.saveConfig();
+      return this.config.routing!.cliThinkingEffortSelections;
     });
-    await this.saveConfig();
-    return this.config.routing!.cliThinkingEffortSelections;
   }
 
   async upsertRouteSessionOverride(override: RouteSessionOverride): Promise<RouteSessionOverride> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const key = `${override.namespace.trim()}:${override.sessionId.trim()}`;
-    const existing = this.config.routing!.sessionRouting!.overrides[key];
-    const normalized = normalizeRouteSessionOverride(
-      { ...override, updatedAt: Date.now() },
-      existing?.associationLevel || 'exact'
-    );
-    this.config.routing!.sessionRouting!.overrides[normalized.key] = normalized;
-    await this.saveConfig();
-    return normalized;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const key = `${override.namespace.trim()}:${override.sessionId.trim()}`;
+      const existing = this.config.routing!.sessionRouting!.overrides[key];
+      const normalized = normalizeRouteSessionOverride(
+        { ...override, updatedAt: Date.now() },
+        existing?.associationLevel || 'exact'
+      );
+      this.config.routing!.sessionRouting!.overrides[normalized.key] = normalized;
+      await this.saveConfig();
+      return normalized;
+    });
   }
 
   async deleteRouteSessionOverride(key: string): Promise<boolean> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const overrides = this.config.routing!.sessionRouting!.overrides;
-    if (!overrides[key]) return false;
-    delete overrides[key];
-    await this.saveConfig();
-    return true;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const overrides = this.config.routing!.sessionRouting!.overrides;
+      if (!overrides[key]) return false;
+      delete overrides[key];
+      await this.saveConfig();
+      return true;
+    });
   }
 
   async pruneExpiredRouteSessionOverrides(now = Date.now()): Promise<number> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const sessionRouting = this.config.routing!.sessionRouting!;
-    const retentionMs = Math.max(1, sessionRouting.overrideRetentionDays || 90) * 86_400_000;
-    let removed = 0;
-    for (const [key, override] of Object.entries(sessionRouting.overrides)) {
-      if (now - override.updatedAt <= retentionMs) continue;
-      delete sessionRouting.overrides[key];
-      removed += 1;
-    }
-    if (removed > 0) await this.saveConfig();
-    return removed;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const sessionRouting = this.config.routing!.sessionRouting!;
+      const retentionMs = Math.max(1, sessionRouting.overrideRetentionDays || 90) * 86_400_000;
+      let removed = 0;
+      for (const [key, override] of Object.entries(sessionRouting.overrides)) {
+        if (now - override.updatedAt <= retentionMs) continue;
+        delete sessionRouting.overrides[key];
+        removed += 1;
+      }
+      if (removed > 0) await this.saveConfig();
+      return removed;
+    });
   }
 
   async upsertRouteSessionRule(
     rule: RouteSessionExtractionRule
   ): Promise<RouteSessionExtractionRule> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const rules = this.config.routing!.sessionRouting!.extractionRules;
-    const index = rules.findIndex(item => item.id === rule.id);
-    const normalized = normalizeRouteSessionRule(rule, index >= 0 ? rules[index] : undefined);
-    if (rules.some((item, itemIndex) => item.id === normalized.id && itemIndex !== index)) {
-      throw new Error('会话规则 ID 必须唯一');
-    }
-    if (index >= 0) rules[index] = normalized;
-    else rules.push(normalized);
-    await this.saveConfig();
-    return normalized;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const rules = this.config.routing!.sessionRouting!.extractionRules;
+      const index = rules.findIndex(item => item.id === rule.id);
+      const normalized = normalizeRouteSessionRule(rule, index >= 0 ? rules[index] : undefined);
+      if (rules.some((item, itemIndex) => item.id === normalized.id && itemIndex !== index)) {
+        throw new Error('会话规则 ID 必须唯一');
+      }
+      if (index >= 0) rules[index] = normalized;
+      else rules.push(normalized);
+      await this.saveConfig();
+      return normalized;
+    });
   }
 
   async deleteRouteSessionRule(ruleId: string): Promise<boolean> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const rules = this.config.routing!.sessionRouting!.extractionRules;
-    const next = rules.filter(rule => rule.id !== ruleId);
-    if (next.length === rules.length) return false;
-    this.config.routing!.sessionRouting!.extractionRules = next;
-    await this.saveConfig();
-    return true;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const rules = this.config.routing!.sessionRouting!.extractionRules;
+      const next = rules.filter(rule => rule.id !== ruleId);
+      if (next.length === rules.length) return false;
+      this.config.routing!.sessionRouting!.extractionRules = next;
+      await this.saveConfig();
+      return true;
+    });
   }
 
   async updateRouteSessionSettings(settings: {
@@ -2990,177 +2807,206 @@ export class UnifiedConfigManager {
     historyRetentionDays?: number;
     overrideRetentionDays?: number;
   }): Promise<void> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const sessionRouting = this.config.routing!.sessionRouting!;
-    for (const [key, value] of Object.entries(settings)) {
-      if (!Number.isFinite(value) || Number(value) <= 0) throw new Error('会话保留时间必须大于 0');
-      Object.assign(sessionRouting, { [key]: Math.round(Number(value)) });
-    }
-    await this.saveConfig();
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const sessionRouting = this.config.routing!.sessionRouting!;
+      for (const [key, value] of Object.entries(settings)) {
+        if (!Number.isFinite(value) || Number(value) <= 0)
+          throw new Error('会话保留时间必须大于 0');
+        Object.assign(sessionRouting, { [key]: Math.round(Number(value)) });
+      }
+      await this.saveConfig();
+    });
   }
 
   // ============= 模型注册表 =============
 
   async updateRouteModelRegistry(registry: RouteModelRegistryConfig): Promise<void> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.modelRegistry = registry;
-    this.config.routing!.cliModelSelections = normalizeRouteCliSelections(
-      this.config.routing!.cliModelSelections,
-      registry.entries
-    );
-    await this.saveConfig();
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      this.config.routing!.modelRegistry = registry;
+      this.config.routing!.cliModelSelections = normalizeRouteCliSelections(
+        this.config.routing!.cliModelSelections,
+        registry.entries
+      );
+      await this.saveConfig();
+      const context = this.mutationContext.getStore();
+      if (getApplicationStorage() && context?.open)
+        context.documents['model-registry-source-state'] = {
+          version: '1',
+          sources: registry.sources,
+          entries: registry.entries,
+          last_updated: Date.now(),
+        };
+    });
   }
 
   async upsertRouteModelMappingOverride(
     override: RouteModelMappingOverride
   ): Promise<RouteModelMappingOverride> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const overrides = this.config.routing!.modelRegistry.overrides;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const overrides = this.config.routing!.modelRegistry.overrides;
 
-    const normalizedSourceKey = override.sourceKey?.trim();
-    const normalizedCanonicalName = override.canonicalName.trim();
-    if (!normalizedSourceKey) {
-      throw new Error('Model mapping override requires sourceKey');
-    }
-
-    const normalizedOverride: RouteModelMappingOverride = {
-      ...override,
-      sourceKey: normalizedSourceKey,
-      canonicalName: normalizedCanonicalName,
-    };
-
-    const idx = overrides.findIndex(existing => {
-      if (existing.id === normalizedOverride.id) {
-        return true;
+      const normalizedSourceKey = override.sourceKey?.trim();
+      const normalizedCanonicalName = override.canonicalName.trim();
+      if (!normalizedSourceKey) {
+        throw new Error('Model mapping override requires sourceKey');
       }
 
-      return existing.sourceKey === normalizedSourceKey;
-    });
-
-    if (idx >= 0) {
-      overrides[idx] = {
-        ...overrides[idx],
-        ...normalizedOverride,
-        id: overrides[idx].id,
-        createdAt: overrides[idx].createdAt,
-        updatedAt: Date.now(),
+      const normalizedOverride: RouteModelMappingOverride = {
+        ...override,
+        sourceKey: normalizedSourceKey,
+        canonicalName: normalizedCanonicalName,
       };
-    } else {
-      overrides.push({
-        ...normalizedOverride,
-        id: normalizedOverride.id,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+
+      const idx = overrides.findIndex(existing => {
+        if (existing.id === normalizedOverride.id) {
+          return true;
+        }
+
+        return existing.sourceKey === normalizedSourceKey;
       });
-    }
-    await this.saveConfig();
-    return idx >= 0 ? overrides[idx] : overrides[overrides.length - 1];
+
+      if (idx >= 0) {
+        overrides[idx] = {
+          ...overrides[idx],
+          ...normalizedOverride,
+          id: overrides[idx].id,
+          createdAt: overrides[idx].createdAt,
+          updatedAt: Date.now(),
+        };
+      } else {
+        overrides.push({
+          ...normalizedOverride,
+          id: normalizedOverride.id,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+      await this.saveConfig();
+      return idx >= 0 ? overrides[idx] : overrides[overrides.length - 1];
+    });
   }
 
   async upsertRouteModelDisplayItem(
     displayItem: RouteModelDisplayItem
   ): Promise<RouteModelDisplayItem> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const items = this.config.routing!.modelRegistry.displayItems;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const items = this.config.routing!.modelRegistry.displayItems;
 
-    const normalizedDisplayItem = normalizeRouteModelDisplayItem(displayItem);
-    if (!normalizedDisplayItem.canonicalName) {
-      throw new Error('Model display item requires canonicalName');
-    }
-    if (normalizedDisplayItem.sourceKeys.length === 0) {
-      throw new Error('Model display item requires sourceKeys');
-    }
+      const normalizedDisplayItem = normalizeRouteModelDisplayItem(displayItem);
+      if (!normalizedDisplayItem.canonicalName) {
+        throw new Error('Model display item requires canonicalName');
+      }
+      if (normalizedDisplayItem.sourceKeys.length === 0 && !normalizedDisplayItem.autoCollect) {
+        throw new Error('Model display item requires sourceKeys');
+      }
 
-    const duplicate = items.find(
-      existing =>
-        existing.canonicalName === normalizedDisplayItem.canonicalName &&
-        existing.id !== normalizedDisplayItem.id
-    );
-    if (duplicate) {
-      throw new Error(
-        `Model display item already exists for ${normalizedDisplayItem.canonicalName}`
+      const duplicate = items.find(
+        existing =>
+          existing.canonicalName === normalizedDisplayItem.canonicalName &&
+          existing.id !== normalizedDisplayItem.id
       );
-    }
+      if (duplicate) {
+        throw new Error(
+          `Model display item already exists for ${normalizedDisplayItem.canonicalName}`
+        );
+      }
 
-    const idx = items.findIndex(existing => existing.id === normalizedDisplayItem.id);
-    const existingItem = idx >= 0 ? items[idx] : undefined;
-    const existingPriorityConfig = normalizeDisplayItemPriorityConfig(existingItem?.priorityConfig);
-    const priorityChanged =
-      !existingItem ||
-      !hasSameRoutingPriorityConfig(existingPriorityConfig, normalizedDisplayItem.priorityConfig!);
-    const affinityInvalidatedAt = priorityChanged
-      ? nextAffinityInvalidationBoundary(existingPriorityConfig.affinityInvalidatedAt, Date.now())
-      : existingPriorityConfig.affinityInvalidatedAt;
-    const nextDisplayItem: RouteModelDisplayItem = {
-      ...normalizedDisplayItem,
-      priorityConfig: {
-        ...normalizedDisplayItem.priorityConfig!,
-        ...(affinityInvalidatedAt ? { affinityInvalidatedAt } : {}),
-      },
-    };
-
-    if (idx >= 0) {
-      items[idx] = {
-        ...items[idx],
-        ...nextDisplayItem,
-        createdAt: items[idx].createdAt,
-        updatedAt: Date.now(),
+      const idx = items.findIndex(existing => existing.id === normalizedDisplayItem.id);
+      const existingItem = idx >= 0 ? items[idx] : undefined;
+      const existingPriorityConfig = normalizeDisplayItemPriorityConfig(
+        existingItem?.priorityConfig
+      );
+      const priorityChanged =
+        !existingItem ||
+        !hasSameRoutingPriorityConfig(
+          existingPriorityConfig,
+          normalizedDisplayItem.priorityConfig!
+        );
+      const affinityInvalidatedAt = priorityChanged
+        ? nextAffinityInvalidationBoundary(existingPriorityConfig.affinityInvalidatedAt, Date.now())
+        : existingPriorityConfig.affinityInvalidatedAt;
+      const nextDisplayItem: RouteModelDisplayItem = {
+        ...normalizedDisplayItem,
+        priorityConfig: {
+          ...normalizedDisplayItem.priorityConfig!,
+          ...(affinityInvalidatedAt ? { affinityInvalidatedAt } : {}),
+        },
       };
-    } else {
-      items.push({
-        ...nextDisplayItem,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-    }
 
-    await this.saveConfig();
-    return idx >= 0 ? items[idx] : items[items.length - 1];
+      if (idx >= 0) {
+        items[idx] = {
+          ...items[idx],
+          ...nextDisplayItem,
+          createdAt: items[idx].createdAt,
+          updatedAt: Date.now(),
+        };
+      } else {
+        items.push({
+          ...nextDisplayItem,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+
+      await this.saveConfig();
+      return idx >= 0 ? items[idx] : items[items.length - 1];
+    });
   }
 
   async deleteRouteModelDisplayItem(displayItemId: string): Promise<boolean> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const items = this.config.routing!.modelRegistry.displayItems;
-    const before = items.length;
-    this.config.routing!.modelRegistry.displayItems = items.filter(
-      item => item.id !== displayItemId
-    );
-    if (this.config.routing!.modelRegistry.displayItems.length < before) {
-      await this.saveConfig();
-      return true;
-    }
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const items = this.config.routing!.modelRegistry.displayItems;
+      const before = items.length;
+      this.config.routing!.modelRegistry.displayItems = items.filter(
+        item => item.id !== displayItemId
+      );
+      if (this.config.routing!.modelRegistry.displayItems.length < before) {
+        await this.saveConfig();
 
-    return false;
+        return true;
+      }
+
+      return false;
+    });
   }
 
   async updateRouteVendorPriorityConfig(
     vendor: RouteModelVendor,
     priorityConfig: RouteVendorPriorityConfig
   ): Promise<RouteModelRegistryConfig> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.modelRegistry.vendorPriorities[vendor] =
-      normalizeVendorPriorityConfig(priorityConfig);
-    await this.saveConfig();
-    return this.config.routing!.modelRegistry;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      this.config.routing!.modelRegistry.vendorPriorities[vendor] =
+        normalizeVendorPriorityConfig(priorityConfig);
+      await this.saveConfig();
+      return this.config.routing!.modelRegistry;
+    });
   }
 
   async deleteRouteModelMappingOverride(overrideId: string): Promise<boolean> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    const overrides = this.config.routing!.modelRegistry.overrides;
-    const before = overrides.length;
-    this.config.routing!.modelRegistry.overrides = overrides.filter(o => o.id !== overrideId);
-    if (this.config.routing!.modelRegistry.overrides.length < before) {
-      await this.saveConfig();
-      return true;
-    }
-    return false;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      const overrides = this.config.routing!.modelRegistry.overrides;
+      const before = overrides.length;
+      this.config.routing!.modelRegistry.overrides = overrides.filter(o => o.id !== overrideId);
+      if (this.config.routing!.modelRegistry.overrides.length < before) {
+        await this.saveConfig();
+        return true;
+      }
+      return false;
+    });
   }
 
   // ============= 分析统计 =============
@@ -3168,23 +3014,35 @@ export class UnifiedConfigManager {
   async updateRouteAnalyticsConfig(
     updates: Partial<RouteAnalyticsConfig>
   ): Promise<RouteAnalyticsConfig> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.analytics.config = {
-      ...this.config.routing!.analytics.config,
-      ...updates,
-    };
-    await this.saveConfig();
-    return this.config.routing!.analytics.config;
+    return this.mutateConfig(async () => {
+      if (!this.config) throw new Error('Config not loaded');
+      this.normalizeRoutingConfig(this.config);
+      this.config.routing!.analytics.config = {
+        ...this.config.routing!.analytics.config,
+        ...updates,
+      };
+      await this.saveConfig();
+      return this.config.routing!.analytics.config;
+    });
   }
 
   async upsertRouteAnalyticsBuckets(buckets: RouteAnalyticsBucket[]): Promise<void> {
     if (!this.config || buckets.length === 0) return;
     this.normalizeRoutingConfig(this.config);
+    const storage = getApplicationStorage();
+    if (storage) {
+      storage.assertWritable();
+      storage.documents.upsertCollection(
+        'route-analytics-state',
+        'buckets',
+        Object.fromEntries(buckets.map(bucket => [bucket.bucketKey, bucket]))
+      );
+      storage.documents.pruneAnalytics();
+    }
     for (const b of buckets) {
       this.config.routing!.analytics.buckets[b.bucketKey] = b;
     }
-    await this.saveRouteAnalyticsState();
+    if (!storage) await this.saveRouteAnalyticsState();
   }
 
   async resetRouteAnalytics(params?: {

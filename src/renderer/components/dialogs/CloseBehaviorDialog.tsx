@@ -66,7 +66,7 @@ export function CloseBehaviorDialog({ open, onClose }: CloseBehaviorDialogProps)
             variant="secondary"
             onClick={() => handleAction('quit')}
             disabled={isProcessing}
-            className="h-auto w-full items-start justify-start gap-3 px-4 py-3 text-left hover:border-[var(--danger)]/30 hover:bg-[var(--danger-soft)]"
+            className="h-auto w-full items-start justify-start gap-3 px-4 py-3 text-left hover:border-[color-mix(in_srgb,var(--danger)_30%,transparent)] hover:bg-[var(--danger-soft)]"
           >
             <div className="rounded-[var(--radius-md)] bg-[var(--danger-soft)] p-2">
               <LogOut className="w-5 h-5 text-[var(--danger)]" />
@@ -82,7 +82,7 @@ export function CloseBehaviorDialog({ open, onClose }: CloseBehaviorDialogProps)
             variant="secondary"
             onClick={() => handleAction('minimize')}
             disabled={isProcessing}
-            className="h-auto w-full items-start justify-start gap-3 px-4 py-3 text-left hover:border-[var(--accent)]/30 hover:bg-[var(--accent-soft)]"
+            className="h-auto w-full items-start justify-start gap-3 px-4 py-3 text-left hover:border-[color-mix(in_srgb,var(--accent)_30%,transparent)] hover:bg-[var(--accent-soft)]"
           >
             <div className="rounded-[var(--radius-md)] bg-[var(--accent-soft)] p-2">
               <Minimize2 className="w-5 h-5 text-[var(--accent)]" />

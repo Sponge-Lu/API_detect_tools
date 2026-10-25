@@ -27,7 +27,7 @@
 | **schemas/** | Zod 数据验证规则 | index.ts |
 | **constants/** | 常量定义 | index.ts；含站点列表列宽默认值、列宽版本与最大宽度 |
 | **theme/** | 主题预设与模式归一化 | themePresets.ts |
-| **utils/** | 工具函数 | apiConfig.ts, customCliRouteId.ts, groupLabel.ts, date.ts, headers.ts, log-filter.ts, modelPricing.ts, url-matcher.ts |
+| **utils/** | 工具函数 | apiConfig.ts, customCliRouteId.ts, groupLabel.ts, date.ts, headers.ts, log-filter.ts, modelPricing.ts, routeModelGrouping.ts, url-matcher.ts |
 
 ---
 

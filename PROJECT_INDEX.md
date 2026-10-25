@@ -2,6 +2,8 @@
 
 ## 项目概览
 
+存储治理新增：`src/main/storage/database/` 提供 SQLite schema、受控连接、事务和校验快照；`storage/repositories/` 提供站点/账户映射；`app-storage-contract.ts` 定义共享版本契约。`scripts/run-storage-tests.ts` 在 Electron ABI 下执行真实数据库测试，`scripts/package-storage-smoke.ts` 验证隔离 Windows 打包产物，`scripts/prepare-sqlite.ps1` 检查/准备匹配驱动。生产切换状态见 `docs/ARCHITECTURE_REFACTOR_PROGRESS.md`。
+
 **API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.3**。
 
 **技术栈**
@@ -63,6 +65,7 @@
 | `src/main/custom-cli-config-service.ts` | 直连接入点持久化与旧四 CLI 上游协议迁移，并为模型注册表生成虚拟通道标识 |
 | `src/main/config-file-profile-service.ts` | v3 配置方案、可用目标与模型域、单卡片 revision、结构化合并/覆盖、真实文件事务及增量对话记录扫描 |
 | `src/main/dsh-integration-service.ts` | DSH 会话级路由接入：状态检测、从路由运行时派生 baseURL/密钥/模型目录、注释保留式 cordis.patch.yml 合并、备份回滚、存量会话 provider 迁移 |
+| `src/main/dsh-config-file-profile.ts` | DSH 内置卡片定义、旧凭证方案迁移、专用文件校验与模型来源解析 |
 | `src/main/route-session-service.ts` | 管理 RouteInstance 身份、DSH 原生及兼容会话标识、父子谱系、ARMED 绑定与生命周期；钉住卡片禁止归档，身份合并保留保护状态 |
 | `src/main/route-session-activity-service.ts` | 将 RouteInstance 高频 `lastRequestAt` 从稳定配置拆到有界、合并、原子写 sidecar，支持启动 hydrate 与退出 flush |
 | `src/main/custom-cli-model-service.ts` | 直连配置模型获取服务，通过配置 `modelUrl`（为空时回退 `baseUrl`）拼接 `/v1/models` 拉取模型列表并写回 `CustomCliConfig.models` |
@@ -103,7 +106,8 @@
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色，条形图右侧内联汇总 48h 请求数与加权成功率 |
 | `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab1 信息表单、Tab2 资源布局与 Tab3 端点测试共享紧凑视觉规格、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
-| `src/renderer/components/Route/*` | 路由页内部区块（`DshIntegrationBanner` 接入状态条、`ConfigProfilesSection` 配置卡片、`RouteSessionSection` 双模式会话卡片、`ProxyStats/` 服务器与 CLI 模型区块、`Redirection/` 模型映射、`Usability/` History 条形图） |
+| `src/renderer/components/Route/*` | 路由页内部区块（`ConfigProfilesSection` 配置卡片与 `DshConfigControls` DSH 专用设置、`RouteSessionSection` 双模式会话卡片、`ProxyStats/` 服务器与 CLI 模型区块、`Redirection/` 模型映射、`Usability/` History 条形图） |
+| `src/renderer/components/Route/Redirection/ModelDiscoveryDialog.tsx` / `src/shared/utils/routeModelGrouping.ts` | 自动发现重定向候选并由用户选择启用；共享收录/排除规则，保持页面、注册表和实际路由一致；由 `route-model-grouping.test.ts` 及路由、配置回归测试覆盖 |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
 | `src/renderer/store/toastStore.ts` | 管理可见 Toast 队列与当前会话内事件历史 |
@@ -111,6 +115,7 @@
 | `src/renderer/hooks/useAutoRefresh.ts` | 站点级/账号级自动刷新调度 |
 | `src/renderer/hooks/useCheckIn.ts` | 批量签到目标按保存的站点/账户配置生成，检测结果缓存用于签到状态过滤 |
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
+| `src/renderer/utils/siteGridTemplate.ts` | 站点列表栅格模板的唯一来源：前 N-1 列固定像素、History 列 `minmax(默认宽, 1fr)` 吸收剩余空间、末列固定操作区，保证表头与数据行右边界严格对齐 |
 | `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
 | `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
 | `src/renderer/utils/routeSessionOrdinal.ts` | 为父 RouteInstance 分配稳定主编号，并以持久化 childOrdinal 生成异模型子卡 `#N.M` 编号；客户端+编号哈希取色的会话色板（sessionColorForSession） |
@@ -130,6 +135,7 @@
 | `src/shared/types/endpoint-test.ts` | 独立手动上游端点测试目标、协议、选择状态与结果类型 |
 | `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由与分析统计类型；兼容 re-export 端点测试类型 |
 | `src/shared/config/builtin-client-configs.ts` | Claude Code、Codex、OpenCode、Grok Build 完整配置的共享唯一来源 |
+| `src/shared/config/dsh-client-config.ts` | DeepSeek Harness 内置配置卡片标识、全部/单个模型范围及动态模板生成 |
 | `src/shared/types/config-file-profile.ts` | 版本化配置方案、含协议元数据的目标目录、应用模式、文件事务和对话记录诊断类型 |
 | `src/shared/types/dsh-integration.ts` | DSH 接入状态、漂移原因、请求/结果类型与 DSH 侧常量（条目 id `llm-deepseek`、provider id `deepseek-official`、凭据引用名） |
 | `src/shared/types/cli-config.ts` / `custom-cli-config.ts` / `config-detection.ts` | CLI 配置模型与内置模板类型；直连接入点配置与模型；本地 CLI 配置静态检测结果 |
@@ -193,10 +199,10 @@
 
 ### DSH 会话级接入
 
-1. 渲染进程 `RoutePage` 顶部的 `DshIntegrationBanner` 调用 `dsh-integration:status` 获取接入状态、漂移原因、可用模型来源与仍钉在旧 provider 的会话数。
-2. `dsh-integration-service` 从路由运行时派生 `baseURL`、API Key 与模型目录（不硬编码），用 `yaml` 的 `parseDocument()` 对 `~/.dsh/profiles/<profile>/cordis.patch.yml` 做注释保留式合并，并把凭据引用写入 `~/.dsh/.credentials.yaml`。
-3. `dsh-integration:enable` 只写配置（DSH 运行时跳过会话迁移）；`dsh-integration:migrate-sessions` 在 DSH 已退出时改写存量会话的 `modelSelection.lastUsed` 与 `subagentModelSelectionPolicy`。
-4. `dsh-integration:rollback` 按条目 id 撤销写入（保留用户手改内容），必要时回退到同目录最新的 `.apidetect-*.bak`；`writtenHashes` 清单记录在 `.api-detect-dsh-integration.json`。
+1. `ConfigProfilesSection` 通过 DeepSeek Harness 内置卡片展示接入状态；`DshConfigControls` 仅在基本信息下方提供高级操作。旧隐藏凭证方案升级时保留 ID、Key 和路由关联。
+2. `dsh-config-file-profile` 解析模型目录和独立路由凭据，地址始终指向本地路由；支持 `DSH_HOME`。`dsh-integration-service` 使用 YAML 节点 API 合并 patch 与凭据，保留注释和无关字段。
+3. 卡片统一通过 `config-file-profile:preview` / `commit` 预览和写入两个 YAML 文件，检查文件及模型目录冲突，并提供备份、失败恢复和凭据轮换；应用和恢复均不新增或改写子代理配置。
+4. 高级操作通过 `restoreDsh` 生成接入前配置的恢复预览，兼容原 DSH 清单与 `.apidetect-*.bak`，只还原受管条目。`dsh-integration:migrate-sessions` 仍要求退出 DSH 后才迁移旧会话。
 
 ### 数据总览
 
@@ -217,7 +223,7 @@
 
 ### v3.1.3
 
-- **DSH 会话级接入**：新增 `src/main/dsh-integration-service.ts`、`src/main/handlers/dsh-integration-handlers.ts`、`src/shared/types/dsh-integration.ts`、`src/renderer/components/Route/DshIntegrationBanner.tsx` 与 `dsh-integration-service.test.ts` / `dsh-integration-banner.test.tsx`；`RoutePage` 在服务器区块与配置卡片区之间挂载接入状态条
+- **DSH 会话级接入**：内置配置卡片统一管理两个 YAML 文件；`dsh-integration-service.test.ts`、`config-file-profile-service.test.ts` 与 `config-profiles-section.test.tsx` 覆盖接入、迁移、事务恢复及界面操作
 - **路由代理拆分**：`route-proxy-service.ts` 拆出 `route-upstream-forwarder.ts`（单次上游传输）、`route-request-context.ts`（请求生命周期）、`route-usage.ts`（用量解析）、`route-proxy-shared.ts`；新增 `route-upstream-failure.ts` 失败分类与 `route-upstream-forwarder.socket.test.ts` 真实 socket 集成测试
 - **会话与状态 sidecar**：新增 `route-session-binding-service.ts`（会话-通道绑定）与 `route-state-affinity-service.ts`（Stateful Responses 亲和映射）
 - **熔断模型**：`route-stats-service.ts` 改为三态熔断（2/10/30 分钟阶梯打开 → 半开单探测 → 成功闭合）并新增站点级熔断；移除 `route-health-service.ts` 及 `route:get-health` / `route:run-health-check` IPC
@@ -317,6 +323,16 @@
 
 ---
 
-**版本**：3.1.3
-**更新日期**：2026-10-22
+**版本**：3.1.4
+**更新日期**：2026-10-25
 **维护者**：API Hub Team
+
+## 架构与数据管理重构（2026-10-24）
+
+- 审查修复回归：模型拉取版本基线、配置与缓存并发发布、代理提交后启停、备份节流与按域快照；入口见 src/__tests__/storage-ipc-handler.test.ts 及对应服务测试。
+- main/storage：SQLite 连接、逐实体映射/仓储、版本化命令、迁移、在线快照与恢复；见 src/main/storage/FOLDER_INDEX.md。
+- main/config、auth、clients：分别管理配置实体、认证/签到/key/检测、CLI 模板/目标/内容/会话解析；browser-runtime 分离槽位、路径与页面认证。
+- Renderer：共享 ElectronAPI/配置契约移至 shared/types；App 生命周期 Hook、站点/模型控制 Hook、overview 视图/纯计算、卡片预览/编辑分离。
+- scripts/prepare-native.cjs、prepare-sqlite.ps1、build-preload.cjs：Electron ABI 准备和 sandbox preload 构建；run-storage-tests.ts / package-product-storage-smoke.ts 提供真实数据库与实际 ASAR 产品门禁。
+- [字段映射](docs/STORAGE_SCHEMA.md)、[运行/备份/恢复](docs/STORAGE_OPERATIONS.md)、[实施验收](docs/ARCHITECTURE_REFACTOR_PROGRESS.md)。
+- 已移除 DeepSeek 专用交接提示词；本轮架构与存储改动纳入 v3.1.4。

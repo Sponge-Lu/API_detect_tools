@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 import * as path from 'path';
 import { app } from 'electron';
 import type {
@@ -39,6 +40,7 @@ export interface RouteAnalyticsStateFile {
 export interface RouteModelSourcesStateFile {
   version: string;
   sources: RouteModelSourceRef[];
+  entries?: RoutingConfig['modelRegistry']['entries'];
   last_updated: number;
 }
 
@@ -101,6 +103,7 @@ function normalizeRouteModelSourcesState(value: unknown): RouteModelSourcesState
   return {
     version: partial.version || ROUTE_MODEL_SOURCES_STATE_VERSION,
     sources: Array.isArray(partial.sources) ? partial.sources : [],
+    entries: partial.entries ?? {},
     last_updated: partial.last_updated || 0,
   };
 }
@@ -113,6 +116,7 @@ async function readRecoverableState<T>(
   try {
     return await readJsonFile(statePath, { defaultValue, normalize });
   } catch (error: unknown) {
+    if (getApplicationStorage() && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     const message = error instanceof Error ? error.message : String(error);
     Logger.warn(`⚠️ [RouteStateManager] 读取运行态文件失败，改用空状态: ${statePath} - ${message}`);
     return defaultValue;
@@ -209,6 +213,8 @@ export class RouteStateManager {
       routing.modelRegistry.sources.length > 0
         ? routing.modelRegistry.sources
         : [...snapshot.modelSources.sources];
+    if (!Object.keys(routing.modelRegistry.entries).length && snapshot.modelSources.entries)
+      routing.modelRegistry.entries = snapshot.modelSources.entries;
   }
 
   async saveSnapshotFromRouting(routing: RoutingConfig): Promise<void> {
@@ -270,6 +276,7 @@ export class RouteStateManager {
     await this.writeStateFile(this.getRouteModelSourcesPath(), {
       version: ROUTE_MODEL_SOURCES_STATE_VERSION,
       sources: routing.modelRegistry.sources.slice(0, MAX_ROUTE_MODEL_SOURCES),
+      entries: routing.modelRegistry.entries,
       last_updated: now,
     } satisfies RouteModelSourcesStateFile);
   }

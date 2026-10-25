@@ -1069,3 +1069,7 @@
 ---
 
 **声明：** 本文档由 API Hub Management Tools 项目组维护，基于各项目源代码分析整理。如有疏漏，欢迎反馈。
+
+## 应用内持久化 IPC（2026-10-24）
+
+上文为上游接口参考。应用内部新增 config:commands、custom-cli-config:commands 与版本化 route 命令边界；查询返回 storageVersion，旧 save-config/custom-cli-config:save 在数据库模式拒绝。卡片沿用逐卡 revision 与预览事务。错误、备份兼容和恢复模式的完整约定见 [STORAGE_OPERATIONS.md](STORAGE_OPERATIONS.md)。

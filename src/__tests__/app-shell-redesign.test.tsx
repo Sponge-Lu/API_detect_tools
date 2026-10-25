@@ -26,7 +26,7 @@ describe('app shell redesign', () => {
     expect(container.firstElementChild).toHaveClass(
       'h-10',
       'border-[var(--line-soft)]',
-      'bg-[var(--surface-1)]/90'
+      'bg-[var(--surface-1)]'
     );
     expect(screen.getByText('保存中...').parentElement).toHaveClass('opacity-100');
   });
@@ -38,7 +38,7 @@ describe('app shell redesign', () => {
 
     expect(container.firstElementChild).toHaveClass(
       'border-[var(--line-soft)]',
-      'bg-[var(--surface-1)]/90'
+      'bg-[var(--surface-1)]'
     );
     expect(screen.getByRole('heading', { name: '站点管理' })).toHaveClass(
       'text-[var(--text-primary)]'
@@ -72,9 +72,7 @@ describe('app shell redesign', () => {
     expect(screen.getByRole('button', { name: '站点管理' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '自定义CLI' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '站点检测' })).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'LDC 积分' })
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'LDC 积分' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '本地路由' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '路由日志' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '会话事件' })).not.toBeInTheDocument();
@@ -399,13 +397,13 @@ describe('app shell redesign', () => {
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
-      useConfigStore: () => ({
+      useConfigStore: (selector?: (state: any) => unknown) => { const state = {
         config: mockConfig,
         setConfig: mockSetConfig,
         saving: false,
         loading: false,
         setLoading: mockSetLoading,
-      }),
+      }; return selector ? selector(state) : state; },
     }));
 
     vi.doMock('../renderer/store/detectionStore', () => ({
@@ -417,7 +415,7 @@ describe('app shell redesign', () => {
       const actual = await vi.importActual('../renderer/store/uiStore');
       return {
         ...actual,
-        useUIStore: () => uiState,
+        useUIStore: (selector?: (state: typeof uiState) => unknown) => selector ? selector(uiState) : uiState,
       };
     });
 
@@ -664,13 +662,13 @@ describe('app shell redesign', () => {
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
-      useConfigStore: () => ({
+      useConfigStore: (selector?: (state: any) => unknown) => { const state = {
         config: mockConfig,
         setConfig: mockSetConfig,
         saving: false,
         loading: false,
         setLoading: mockSetLoading,
-      }),
+      }; return selector ? selector(state) : state; },
     }));
 
     vi.doMock('../renderer/store/detectionStore', () => ({
@@ -682,7 +680,7 @@ describe('app shell redesign', () => {
       const actual = await vi.importActual('../renderer/store/uiStore');
       return {
         ...actual,
-        useUIStore: () => uiState,
+        useUIStore: (selector?: (state: typeof uiState) => unknown) => selector ? selector(uiState) : uiState,
       };
     });
 
@@ -887,13 +885,13 @@ describe('app shell redesign', () => {
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
-      useConfigStore: () => ({
+      useConfigStore: (selector?: (state: any) => unknown) => { const state = {
         config: mockConfig,
         setConfig: mockSetConfig,
         saving: false,
         loading: false,
         setLoading: mockSetLoading,
-      }),
+      }; return selector ? selector(state) : state; },
     }));
 
     vi.doMock('../renderer/store/detectionStore', () => ({
@@ -905,7 +903,7 @@ describe('app shell redesign', () => {
       const actual = await vi.importActual('../renderer/store/uiStore');
       return {
         ...actual,
-        useUIStore: () => uiState,
+        useUIStore: (selector?: (state: typeof uiState) => unknown) => selector ? selector(uiState) : uiState,
       };
     });
 
@@ -1078,13 +1076,13 @@ describe('app shell redesign', () => {
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
-      useConfigStore: () => ({
+      useConfigStore: (selector?: (state: any) => unknown) => { const state = {
         config: mockConfig,
         setConfig: mockSetConfig,
         saving: false,
         loading: false,
         setLoading: mockSetLoading,
-      }),
+      }; return selector ? selector(state) : state; },
     }));
 
     vi.doMock('../renderer/store/detectionStore', () => ({
@@ -1283,8 +1281,8 @@ describe('app shell redesign', () => {
     // 设置页已取消子 tab，云端备份区块直接纵向渲染在页面中
     const serverInput = await screen.findByLabelText('服务器地址');
     expect(serverInput).toHaveClass(
-      'bg-[var(--surface-2)]',
-      'border-[var(--line-soft)]',
+      'bg-[var(--field-bg)]',
+      'border-[var(--line-strong)]',
       'text-[var(--text-primary)]'
     );
     expect(screen.getByRole('button', { name: '显示密码' })).toBeInTheDocument();

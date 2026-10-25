@@ -47,25 +47,23 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(function App
       .filter(Boolean)
       .join(' ') || undefined;
 
+  /* 三档高度与 AppButton 对齐（32 / 36 / 40），表单内并排时基线一致 */
   const sizeStyles = {
-    sm: 'px-[var(--spacing-md)] py-[var(--spacing-sm)] text-sm rounded-[10px]',
-    md: 'px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px]',
-    lg: 'px-[var(--spacing-lg)] py-[var(--spacing-lg)] text-lg rounded-[14px]',
+    sm: 'h-8 px-[var(--spacing-md)] text-[12px]',
+    md: 'h-9 px-[var(--spacing-md)] text-[13px]',
+    lg: 'h-10 px-[var(--spacing-lg)] text-[13px]',
   };
 
   const baseInputStyles = `
       w-full
-      bg-[var(--surface-2)]
+      rounded-[var(--radius-sm)]
+      bg-[var(--field-bg)]
       text-[var(--text-primary)]
       placeholder-[var(--text-tertiary)]
       border
-      [will-change:box-shadow,border-color]
-      [transform:translateZ(0)]
       transition-[box-shadow,border-color]
-      duration-[var(--duration-fast)]
-      [transition-timing-function:var(--ease-standard)]
+      duration-[var(--duration-hover)]
       outline-none
-      [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)]
     `
     .replace(/\s+/g, ' ')
     .trim();
@@ -74,19 +72,19 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(function App
     ? 'border-[var(--danger)]'
     : isFocused
       ? 'border-[var(--accent)]'
-      : 'border-[var(--line-soft)]';
+      : 'border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]';
 
-  const focusStyles =
-    isFocused && !error
-      ? '[box-shadow:0_0_0_4px_var(--focus-ring),inset_0_1px_2px_rgba(0,0,0,0.05)]'
-      : error && isFocused
-        ? '[box-shadow:0_0_0_4px_var(--danger-soft),inset_0_1px_2px_rgba(0,0,0,0.05)]'
-        : '';
+  const focusStyles = error
+    ? '[box-shadow:0_0_0_3px_var(--danger-soft)]'
+    : isFocused
+      ? '[box-shadow:0_0_0_3px_var(--focus-ring)]'
+      : '';
 
-  const disabledStyles = disabled ? 'opacity-50 cursor-not-allowed bg-[var(--surface-1)]' : '';
-  const leftPaddingStyles = leftIcon ? 'pl-10' : '';
-  const rightPaddingStyles =
-    rightIcon || (type === 'password' && showPasswordToggle) ? 'pr-10' : '';
+  const disabledStyles = disabled
+    ? 'opacity-60 cursor-not-allowed bg-[var(--surface-2)] text-[var(--text-tertiary)]'
+    : '';
+  const leftPaddingStyles = leftIcon ? 'pl-9' : '';
+  const rightPaddingStyles = rightIcon || (type === 'password' && showPasswordToggle) ? 'pr-9' : '';
 
   const combinedInputClassName = `
       ${baseInputStyles}
@@ -106,7 +104,7 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(function App
       {label && (
         <label
           htmlFor={inputId}
-          className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+          className="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
         >
           {label}
           {required && (
@@ -120,7 +118,7 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(function App
       <div className="relative">
         {leftIcon && (
           <div
-            className="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+            className="pointer-events-none absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
             aria-hidden="true"
           >
             {leftIcon}
@@ -155,18 +153,18 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(function App
             aria-label={showPassword ? '隐藏密码' : '显示密码'}
             title={showPassword ? '隐藏密码' : '显示密码'}
             aria-pressed={showPassword}
-            className="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 rounded-[var(--radius-sm)] p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+            className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--hover-overlay)] hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--accent)]"
             tabIndex={0}
           >
             {showPassword ? (
-              <EyeOff className="w-5 h-5" strokeWidth={2} aria-hidden="true" />
+              <EyeOff className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
             ) : (
-              <Eye className="w-5 h-5" strokeWidth={2} aria-hidden="true" />
+              <Eye className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
             )}
           </button>
         ) : rightIcon ? (
           <div
-            className="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+            className="pointer-events-none absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
             aria-hidden="true"
           >
             {rightIcon}
@@ -175,17 +173,13 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(function App
       </div>
 
       {helpText && !error && (
-        <p id={helpId} className="mt-[var(--spacing-sm)] text-sm text-[var(--text-secondary)]">
+        <p id={helpId} className="mt-1.5 text-[12px] leading-4 text-[var(--text-secondary)]">
           {helpText}
         </p>
       )}
 
       {error && errorMessage && (
-        <p
-          id={errorId}
-          className="mt-[var(--spacing-sm)] text-sm text-[var(--danger)]"
-          role="alert"
-        >
+        <p id={errorId} className="mt-1.5 text-[12px] leading-4 text-[var(--danger)]" role="alert">
           {errorMessage}
         </p>
       )}

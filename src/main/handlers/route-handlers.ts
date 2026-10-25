@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 路由代理 IPC handlers
  * 输入: IPC 调用 (route:* 命名空间)
@@ -5,7 +6,6 @@
  * 定位: 通信层 - 路由规则/模型注册表/端点测试/统计分析/服务器控制
  */
 
-import { ipcMain } from 'electron';
 import { randomBytes } from 'crypto';
 import Logger from '../utils/logger';
 import { unifiedConfigManager } from '../unified-config-manager';
@@ -66,7 +66,7 @@ const err = (msg: string) => ({ success: false, error: msg });
 export function registerRouteHandlers() {
   // ============= 配置与服务器 =============
 
-  ipcMain.handle('route:get-config', async () => {
+  handleStorageIpc('route:get-config', async () => {
     try {
       const routing = unifiedConfigManager.getRoutingConfig();
       // 返回轻量配置（不含完整 history/buckets）
@@ -91,23 +91,25 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:save-server-config', async (_, updates) => {
-    try {
-      await unifiedConfigManager.updateRouteServerConfig(updates);
-      if (typeof updates.enabled === 'boolean') {
-        if (updates.enabled) {
-          await startProxyServer();
-        } else {
-          await stopProxyServer();
-        }
+  handleStorageIpc(
+    'route:save-server-config',
+    async (_, updates) => {
+      try {
+        await unifiedConfigManager.updateRouteServerConfig(updates);
+        return ok();
+      } catch (e: any) {
+        return err(e.message);
       }
-      return ok();
-    } catch (e: any) {
-      return err(e.message);
+    },
+    async (_, updates) => {
+      if (typeof updates.enabled === 'boolean') {
+        if (updates.enabled) await startProxyServer();
+        else await stopProxyServer();
+      }
     }
-  });
+  );
 
-  ipcMain.handle('route:get-runtime-status', async () => {
+  handleStorageIpc('route:get-runtime-status', async () => {
     try {
       return ok(getProxyStatus());
     } catch (e: any) {
@@ -115,28 +117,34 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:start-server', async () => {
-    try {
-      await unifiedConfigManager.updateRouteServerConfig({ enabled: true });
-      await startProxyServer();
-      return ok();
-    } catch (e: any) {
-      log.error('start server failed:', e);
-      return err(e.message);
-    }
-  });
+  handleStorageIpc(
+    'route:start-server',
+    async () => {
+      try {
+        await unifiedConfigManager.updateRouteServerConfig({ enabled: true });
+        return ok();
+      } catch (e: any) {
+        log.error('start server failed:', e);
+        return err(e.message);
+      }
+    },
+    () => startProxyServer()
+  );
 
-  ipcMain.handle('route:stop-server', async () => {
-    try {
-      await unifiedConfigManager.updateRouteServerConfig({ enabled: false });
-      await stopProxyServer();
-      return ok();
-    } catch (e: any) {
-      return err(e.message);
-    }
-  });
+  handleStorageIpc(
+    'route:stop-server',
+    async () => {
+      try {
+        await unifiedConfigManager.updateRouteServerConfig({ enabled: false });
+        return ok();
+      } catch (e: any) {
+        return err(e.message);
+      }
+    },
+    () => stopProxyServer()
+  );
 
-  ipcMain.handle('route:regenerate-api-key', async () => {
+  handleStorageIpc('route:regenerate-api-key', async () => {
     try {
       const newKey = `sk-route-${randomBytes(16).toString('hex')}`;
       await unifiedConfigManager.updateRouteServerConfig({ unifiedApiKey: newKey });
@@ -148,7 +156,7 @@ export function registerRouteHandlers() {
 
   // ============= 路由规则 =============
 
-  ipcMain.handle('route:list-rules', async () => {
+  handleStorageIpc('route:list-rules', async () => {
     try {
       return ok(unifiedConfigManager.getRoutingConfig().rules);
     } catch (e: any) {
@@ -156,7 +164,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:upsert-rule', async (_, rule: RouteRule) => {
+  handleStorageIpc('route:upsert-rule', async (_, rule: RouteRule) => {
     try {
       const saved = await unifiedConfigManager.upsertRouteRule(rule);
       return ok(saved);
@@ -165,7 +173,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:delete-rule', async (_, ruleId: string) => {
+  handleStorageIpc('route:delete-rule', async (_, ruleId: string) => {
     try {
       const deleted = await unifiedConfigManager.deleteRouteRule(ruleId);
       return ok({ deleted });
@@ -174,7 +182,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:list-stats', async () => {
+  handleStorageIpc('route:list-stats', async () => {
     try {
       return ok(unifiedConfigManager.getRoutingConfig().stats);
     } catch (e: any) {
@@ -182,7 +190,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:reset-stats', async (_, ruleId?: string) => {
+  handleStorageIpc('route:reset-stats', async (_, ruleId?: string) => {
     try {
       await unifiedConfigManager.resetRouteStats(ruleId);
       return ok();
@@ -191,7 +199,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:reset-path-states', async (_, params?: RoutePathStateResetParams) => {
+  handleStorageIpc('route:reset-path-states', async (_, params?: RoutePathStateResetParams) => {
     try {
       const cleared = await unifiedConfigManager.resetRoutePathStates(params);
       resetRouteSiteBreakers(params?.siteId);
@@ -203,7 +211,7 @@ export function registerRouteHandlers() {
 
   // ============= CLI 模型选择 =============
 
-  ipcMain.handle('route:save-cli-model-selections', async (_, params) => {
+  handleStorageIpc('route:save-cli-model-selections', async (_, params) => {
     try {
       const result = await unifiedConfigManager.updateRouteCliModelSelections(params.selections);
       return ok(result);
@@ -212,7 +220,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:save-cli-thinking-effort-selections', async (_, params) => {
+  handleStorageIpc('route:save-cli-thinking-effort-selections', async (_, params) => {
     try {
       const result = await unifiedConfigManager.updateRouteCliThinkingEffortSelections(
         params.selections
@@ -223,7 +231,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle(
+  handleStorageIpc(
     'route:update-client-routing',
     async (_, profileId: string, updates: Partial<RouteClientRoutingConfig>) => {
       try {
@@ -242,13 +250,12 @@ export function registerRouteHandlers() {
     }
   );
 
-  ipcMain.handle('route:list-sessions', async (_, scope?: RouteSessionListScope) => {
+  handleStorageIpc('route:list-sessions', async (_, scope?: RouteSessionListScope) => {
     try {
       const validScopes: RouteSessionListScope[] = ['active', 'recent', 'history', 'all'];
       const normalizedScope = validScopes.includes(scope as RouteSessionListScope)
         ? (scope as RouteSessionListScope)
         : 'active';
-      await unifiedConfigManager.pruneExpiredRouteSessionOverrides();
       const sessionRouting = unifiedConfigManager.getRoutingConfig().sessionRouting;
       if (sessionRouting) {
         try {
@@ -277,33 +284,37 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:list-route-instances', async () => {
+  handleStorageIpc('route:list-route-instances', async () => {
     try {
-      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-      if (!config) return ok([]);
-      if (normalizeRouteInstanceCollections(config)) await unifiedConfigManager.saveConfig();
-      return ok(listRouteInstances(config));
+      return await unifiedConfigManager.mutateConfig(async () => {
+        const config = structuredClone(unifiedConfigManager.getRoutingConfig().sessionRouting);
+        if (!config) return ok([]);
+        normalizeRouteInstanceCollections(config);
+        return ok(listRouteInstances(config));
+      });
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle(
+  handleStorageIpc(
     'route:create-armed-route-instance',
     async (_, input: { modelId?: string; reasoningEffort?: string }) => {
       try {
-        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-        if (!config) throw new Error('会话路由配置不可用');
-        const instance = createArmedRouteInstance(config, input.modelId, input.reasoningEffort);
-        await unifiedConfigManager.saveConfig();
-        return ok(instance);
+        return await unifiedConfigManager.mutateConfig(async () => {
+          const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+          if (!config) throw new Error('会话路由配置不可用');
+          const instance = createArmedRouteInstance(config, input.modelId, input.reasoningEffort);
+          await unifiedConfigManager.saveConfig();
+          return ok(instance);
+        });
       } catch (e: any) {
         return err(e.message);
       }
     }
   );
 
-  ipcMain.handle(
+  handleStorageIpc(
     'route:update-route-instance',
     async (_, instanceId: string, updates: RouteInstanceUpdate) => {
       try {
@@ -314,56 +325,64 @@ export function registerRouteHandlers() {
     }
   );
 
-  ipcMain.handle('route:close-route-instance', async (_, instanceId: string) => {
+  handleStorageIpc('route:close-route-instance', async (_, instanceId: string) => {
     try {
-      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-      if (!config) throw new Error('会话路由配置不可用');
-      const instance = closeRouteInstance(config, instanceId);
-      await routeSessionBindingService.removeByInstance(instanceId);
-      await unifiedConfigManager.saveConfig();
-      return ok(instance);
+      return await unifiedConfigManager.mutateConfig(async () => {
+        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+        if (!config) throw new Error('会话路由配置不可用');
+        const instance = closeRouteInstance(config, instanceId);
+        await routeSessionBindingService.removeByInstance(instanceId);
+        await unifiedConfigManager.saveConfig();
+        return ok(instance);
+      });
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle('route:cancel-armed-route-instance', async (_, instanceId: string) => {
+  handleStorageIpc('route:cancel-armed-route-instance', async (_, instanceId: string) => {
     try {
-      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-      if (!config) throw new Error('会话路由配置不可用');
-      const instance = cancelArmedRouteInstance(config, instanceId);
-      await unifiedConfigManager.saveConfig();
-      return ok(instance);
+      return await unifiedConfigManager.mutateConfig(async () => {
+        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+        if (!config) throw new Error('会话路由配置不可用');
+        const instance = cancelArmedRouteInstance(config, instanceId);
+        await unifiedConfigManager.saveConfig();
+        return ok(instance);
+      });
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle('route:archive-route-instance', async (_, instanceId: string) => {
+  handleStorageIpc('route:archive-route-instance', async (_, instanceId: string) => {
     try {
-      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-      if (!config) throw new Error('会话路由配置不可用');
-      const archived = archiveRouteInstance(config, instanceId);
-      if (archived) await unifiedConfigManager.saveConfig();
-      return ok({ archived });
+      return await unifiedConfigManager.mutateConfig(async () => {
+        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+        if (!config) throw new Error('会话路由配置不可用');
+        const archived = archiveRouteInstance(config, instanceId);
+        if (archived) await unifiedConfigManager.saveConfig();
+        return ok({ archived });
+      });
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle('route:restore-route-instance', async (_, instanceId: string) => {
+  handleStorageIpc('route:restore-route-instance', async (_, instanceId: string) => {
     try {
-      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
-      if (!config) throw new Error('会话路由配置不可用');
-      const instance = restoreRouteInstance(config, instanceId);
-      await unifiedConfigManager.saveConfig();
-      return ok(instance);
+      return await unifiedConfigManager.mutateConfig(async () => {
+        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+        if (!config) throw new Error('会话路由配置不可用');
+        const instance = restoreRouteInstance(config, instanceId);
+        await unifiedConfigManager.saveConfig();
+        return ok(instance);
+      });
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle('route:upsert-session-override', async (_, override: RouteSessionOverride) => {
+  handleStorageIpc('route:upsert-session-override', async (_, override: RouteSessionOverride) => {
     try {
       return ok(await unifiedConfigManager.upsertRouteSessionOverride(override));
     } catch (e: any) {
@@ -371,7 +390,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:delete-session-override', async (_, key: string) => {
+  handleStorageIpc('route:delete-session-override', async (_, key: string) => {
     try {
       return ok({ deleted: await unifiedConfigManager.deleteRouteSessionOverride(key) });
     } catch (e: any) {
@@ -379,7 +398,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:preview-profile-state-clear', async (_, profileId: string) => {
+  handleStorageIpc('route:preview-profile-state-clear', async (_, profileId: string) => {
     try {
       if (!profileId) throw new Error('配置卡片 ID 不能为空');
       return ok(await routeStateAffinityService.summarizeProfile(profileId));
@@ -388,7 +407,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:clear-profile-state', async (_, profileId: string) => {
+  handleStorageIpc('route:clear-profile-state', async (_, profileId: string) => {
     try {
       if (!profileId) throw new Error('配置卡片 ID 不能为空');
       return ok({ removed: await routeStateAffinityService.removeByProfile(profileId) });
@@ -397,12 +416,12 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:clear-session-activity', async (_, key?: string) => {
+  handleStorageIpc('route:clear-session-activity', async (_, key?: string) => {
     clearRouteSessionActivities(key);
     return ok();
   });
 
-  ipcMain.handle('route:list-session-rules', async () => {
+  handleStorageIpc('route:list-session-rules', async () => {
     try {
       return ok(unifiedConfigManager.getRoutingConfig().sessionRouting?.extractionRules || []);
     } catch (e: any) {
@@ -410,7 +429,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:upsert-session-rule', async (_, rule: RouteSessionExtractionRule) => {
+  handleStorageIpc('route:upsert-session-rule', async (_, rule: RouteSessionExtractionRule) => {
     try {
       return ok(await unifiedConfigManager.upsertRouteSessionRule(rule));
     } catch (e: any) {
@@ -418,7 +437,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:delete-session-rule', async (_, ruleId: string) => {
+  handleStorageIpc('route:delete-session-rule', async (_, ruleId: string) => {
     try {
       return ok({ deleted: await unifiedConfigManager.deleteRouteSessionRule(ruleId) });
     } catch (e: any) {
@@ -426,7 +445,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:rollback-session-rule', async (_, ruleId: string, version: number) => {
+  handleStorageIpc('route:rollback-session-rule', async (_, ruleId: string, version: number) => {
     try {
       const rule = unifiedConfigManager
         .getRoutingConfig()
@@ -440,9 +459,9 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:list-session-candidates', async () => ok(listRouteSessionCandidates()));
+  handleStorageIpc('route:list-session-candidates', async () => ok(listRouteSessionCandidates()));
 
-  ipcMain.handle('route:update-session-settings', async (_, settings) => {
+  handleStorageIpc('route:update-session-settings', async (_, settings) => {
     try {
       await unifiedConfigManager.updateRouteSessionSettings(settings);
       return ok();
@@ -453,7 +472,7 @@ export function registerRouteHandlers() {
 
   // ============= 模型注册表 =============
 
-  ipcMain.handle('route:get-model-registry', async () => {
+  handleStorageIpc('route:get-model-registry', async () => {
     try {
       return ok(modelRegistry.getModelRegistry());
     } catch (e: any) {
@@ -461,7 +480,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:rebuild-model-registry', async (_, params?: { force?: boolean }) => {
+  handleStorageIpc('route:rebuild-model-registry', async (_, params?: { force?: boolean }) => {
     try {
       const result = await modelRegistry.rebuildModelRegistry(params?.force);
       return ok(result);
@@ -470,7 +489,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:refresh-model-metadata', async () => {
+  handleStorageIpc('route:refresh-model-metadata', async () => {
     try {
       const registry = await modelRegistry.refreshModelRegistryMetadata(true);
       broadcastRendererEvent('route:model-metadata-updated', {});
@@ -480,7 +499,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:sync-model-registry-sources', async (_, params?: { force?: boolean }) => {
+  handleStorageIpc('route:sync-model-registry-sources', async (_, params?: { force?: boolean }) => {
     try {
       const result = await modelRegistry.syncModelRegistrySources(params?.force);
       return ok(result);
@@ -489,7 +508,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:upsert-model-mapping-override', async (_, override) => {
+  handleStorageIpc('route:upsert-model-mapping-override', async (_, override) => {
     try {
       const result = await modelRegistry.upsertModelMappingOverride(override);
       return ok(result);
@@ -498,7 +517,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:upsert-model-display-item', async (_, displayItem) => {
+  handleStorageIpc('route:upsert-model-display-item', async (_, displayItem) => {
     try {
       const result = await modelRegistry.upsertModelDisplayItem(displayItem);
       return ok(result);
@@ -507,7 +526,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle(
+  handleStorageIpc(
     'route:delete-model-display-item',
     async (_, params: { displayItemId: string }) => {
       try {
@@ -519,7 +538,7 @@ export function registerRouteHandlers() {
     }
   );
 
-  ipcMain.handle('route:delete-model-mapping-override', async (_, params) => {
+  handleStorageIpc('route:delete-model-mapping-override', async (_, params) => {
     try {
       const deleted = await modelRegistry.deleteModelMappingOverride(params.overrideId);
       return ok({ deleted });
@@ -530,7 +549,7 @@ export function registerRouteHandlers() {
 
   // ============= 端点测试 =============
 
-  ipcMain.handle('endpoint-test:get-state', async (_, target: EndpointTestTarget) => {
+  handleStorageIpc('endpoint-test:get-state', async (_, target: EndpointTestTarget) => {
     try {
       return ok(await getEndpointTestState(target));
     } catch (e: any) {
@@ -538,7 +557,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('endpoint-test:save-selection', async (_, input: EndpointTestSelectionInput) => {
+  handleStorageIpc('endpoint-test:save-selection', async (_, input: EndpointTestSelectionInput) => {
     try {
       return ok(await saveEndpointTestSelection(input));
     } catch (e: any) {
@@ -546,7 +565,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('endpoint-test:run', async (_, input: EndpointTestSelectionInput) => {
+  handleStorageIpc('endpoint-test:run', async (_, input: EndpointTestSelectionInput) => {
     try {
       return ok(await runEndpointTest(input));
     } catch (e: any) {
@@ -556,7 +575,7 @@ export function registerRouteHandlers() {
 
   // ============= 统计分析 =============
 
-  ipcMain.handle('route:get-analytics-summary', async (_, params: RouteAnalyticsWindowQuery) => {
+  handleStorageIpc('route:get-analytics-summary', async (_, params: RouteAnalyticsWindowQuery) => {
     try {
       return ok(analytics.getAnalyticsSummary(params));
     } catch (e: any) {
@@ -564,7 +583,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle(
+  handleStorageIpc(
     'route:get-analytics-distribution',
     async (_, params: RouteAnalyticsWindowQuery) => {
       try {
@@ -575,7 +594,7 @@ export function registerRouteHandlers() {
     }
   );
 
-  ipcMain.handle('route:get-analytics-overview', async (_, params: RouteAnalyticsWindowQuery) => {
+  handleStorageIpc('route:get-analytics-overview', async (_, params: RouteAnalyticsWindowQuery) => {
     try {
       return ok(analytics.getAnalyticsOverview(params));
     } catch (e: any) {
@@ -583,7 +602,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:get-object-stats', async (_, params: RouteAnalyticsObjectStatsQuery) => {
+  handleStorageIpc('route:get-object-stats', async (_, params: RouteAnalyticsObjectStatsQuery) => {
     try {
       return ok(analytics.getRouteObjectStats(params));
     } catch (e: unknown) {
@@ -591,7 +610,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:reset-analytics', async (_, params?) => {
+  handleStorageIpc('route:reset-analytics', async (_, params?) => {
     try {
       await analytics.resetAnalytics(params);
       return ok();
@@ -600,7 +619,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:get-request-logs', async (_, params?: RouteRequestLogQuery) => {
+  handleStorageIpc('route:get-request-logs', async (_, params?: RouteRequestLogQuery) => {
     try {
       return ok(analytics.getRouteRequestLogs(params));
     } catch (e: any) {
@@ -608,7 +627,7 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:clear-request-logs', async () => {
+  handleStorageIpc('route:clear-request-logs', async () => {
     try {
       analytics.clearRouteRequestLogs();
       return ok();
@@ -619,7 +638,7 @@ export function registerRouteHandlers() {
 
   // ============= History 时间桶聚合 =============
 
-  ipcMain.handle('route:getHistoryBuckets', async (_, query: RouteHistoryBucketsQuery) => {
+  handleStorageIpc('route:getHistoryBuckets', async (_, query: RouteHistoryBucketsQuery) => {
     try {
       const buckets = getHistoryBuckets(query);
       return ok(buckets);
@@ -630,7 +649,7 @@ export function registerRouteHandlers() {
 
   // ============= 站点日志查询 =============
 
-  ipcMain.handle(
+  handleStorageIpc(
     'route:fetch-latest-log',
     async (_, params: { siteId: string; model?: string }) => {
       try {

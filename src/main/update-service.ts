@@ -15,6 +15,8 @@
  */
 
 import Logger from './utils/logger';
+import { readStorageText, getApplicationStorage } from './storage/application-storage';
+import { writeTextFileAtomically } from './utils/atomic-json';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
@@ -70,6 +72,10 @@ const DEFAULT_SETTINGS: UpdateSettings = {
 export class UpdateService {
   private settingsPath: string;
   private settings: UpdateSettings | null = null;
+
+  invalidateSettings(): void {
+    this.settings = null;
+  }
   private currentRequest: Electron.ClientRequest | null = null;
   private downloadCancelled = false;
   private releaseDigests = new Map<string, string>();
@@ -304,7 +310,7 @@ export class UpdateService {
         const expected = this.releaseDigests.get(url);
         if (!expected) throw new Error('更新包缺少可信 SHA-256，请重新检查更新或前往发布页下载');
         const downloadedPath = await this.doDownload(url, onProgress);
-        if (await this.hashInstaller(downloadedPath) !== expected) {
+        if ((await this.hashInstaller(downloadedPath)) !== expected) {
           await fs.unlink(downloadedPath);
           throw new Error('更新包 SHA-256 校验失败');
         }
@@ -463,7 +469,7 @@ export class UpdateService {
    */
   async installUpdate(filePath: string): Promise<void> {
     const expected = this.verifiedInstallers.get(path.resolve(filePath));
-    if (!expected || await this.hashInstaller(filePath) !== expected) {
+    if (!expected || (await this.hashInstaller(filePath)) !== expected) {
       throw new Error('更新包未验证或已被修改，请重新下载');
     }
     Logger.info(`[UpdateService] 启动安装: ${filePath}`);
@@ -510,11 +516,12 @@ export class UpdateService {
     }
 
     try {
-      const data = await fs.readFile(this.settingsPath, 'utf-8');
+      const data = await readStorageText(this.settingsPath);
       const loaded = { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
       this.settings = loaded;
       return loaded;
     } catch (error: any) {
+      if (getApplicationStorage() && error.code !== 'ENOENT') throw error;
       if (error.code !== 'ENOENT') {
         Logger.warn('[UpdateService] 读取设置失败，使用默认设置:', error.message);
       }
@@ -534,8 +541,9 @@ export class UpdateService {
    * 保存更新设置
    */
   async saveSettings(settings: UpdateSettings): Promise<void> {
-    this.settings = { ...DEFAULT_SETTINGS, ...settings };
-    await fs.writeFile(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf-8');
+    const next = { ...DEFAULT_SETTINGS, ...settings };
+    await writeTextFileAtomically(this.settingsPath, JSON.stringify(next, null, 2));
+    this.settings = next;
     Logger.info('[UpdateService] 设置已保存');
   }
 }

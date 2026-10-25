@@ -271,6 +271,11 @@ export class ApiService {
     // tokenStorage 参数已废弃，使用 unifiedConfigManager 替代
   }
 
+  invalidate(): void {
+    this.endpointCache.clear();
+    this.siteDetectionTails.clear();
+  }
+
   // ============= 多账户缓存辅助 =============
 
   private resolveCacheOwner(siteUrl: string, explicitAccountId?: string) {

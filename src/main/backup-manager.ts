@@ -1,4 +1,4 @@
-﻿/**
+import { getApplicationStorage } from './storage/application-storage'; /**
  * 输入: UnifiedConfigManager (配置管理), FileSystem (文件系统), Electron app (应用路径)
  * 输出: BackupInfo (备份信息), 备份文件
  * 定位: 基础设施层 - 管理本地备份和恢复操作（自动 config-only / 手动 portable 包）
@@ -8,7 +8,6 @@
  * - src/main/FOLDER_INDEX.md
  * - PROJECT_INDEX.md
  */
-
 import Logger from './utils/logger';
 /**
  * 备份管理器
@@ -130,11 +129,7 @@ export class BackupManager {
     }
   }
 
-  private shouldSkipBackup(
-    sourceBuffer: Buffer,
-    latestBackup: BackupInfo | null,
-    options: BackupFileOptions
-  ): boolean {
+  private isBackupThrottled(latestBackup: BackupInfo | null, options: BackupFileOptions): boolean {
     if (options.force || !latestBackup) {
       return false;
     }
@@ -150,6 +145,16 @@ export class BackupManager {
       return true;
     }
 
+    return false;
+  }
+
+  private shouldSkipBackup(
+    sourceBuffer: Buffer,
+    latestBackup: BackupInfo | null,
+    options: BackupFileOptions
+  ): boolean {
+    if (this.isBackupThrottled(latestBackup, options)) return true;
+    if (options.force || !latestBackup) return false;
     if (options.dedupe !== false && fs.existsSync(latestBackup.path)) {
       const latestBuffer = fs.readFileSync(latestBackup.path);
       if (this.hashBuffer(sourceBuffer) === this.hashBuffer(latestBuffer)) {
@@ -165,6 +170,7 @@ export class BackupManager {
    * 备份单个文件
    */
   async backupFile(sourcePath: string, options: BackupFileOptions = {}): Promise<boolean> {
+    if (getApplicationStorage()?.documentId(sourcePath)) return this.backupManifestBundle(options);
     try {
       if (!fs.existsSync(sourcePath)) {
         Logger.info(`⚠️ [BackupManager] 源文件不存在，跳过备份: ${sourcePath}`);
@@ -204,10 +210,11 @@ export class BackupManager {
    */
   async backupManifestBundle(options: BackupFileOptions = {}): Promise<boolean> {
     try {
+      const latestBackup = this.findLatestBackup('config.json');
+      if (this.isBackupThrottled(latestBackup, options)) return false;
       const content = await createPortableAppStorageBundleContent(undefined, true);
       extractStableConfigFromBackupContent(content);
       const sourceBuffer = Buffer.from(content, 'utf-8');
-      const latestBackup = this.findLatestBackup('config.json');
       if (this.shouldSkipBackup(sourceBuffer, latestBackup, options)) {
         return false;
       }
@@ -235,7 +242,8 @@ export class BackupManager {
   async backupAll(): Promise<void> {
     Logger.info('🔄 [BackupManager] 开始手动可迁移备份...');
 
-    await this.backupManifestBundle({ force: true, reason: 'manual' });
+    if (!(await this.backupManifestBundle({ force: true, reason: 'manual' })))
+      throw new Error('Backup could not be persisted');
 
     Logger.info('✅ [BackupManager] 手动可迁移备份完成');
   }
@@ -294,6 +302,8 @@ export class BackupManager {
    */
   async restoreFromBackup(backupFileName: string, targetPath: string): Promise<boolean> {
     try {
+      if (path.basename(backupFileName) !== backupFileName || path.isAbsolute(backupFileName))
+        throw new Error('Invalid backup filename');
       const backupPath = path.join(this.backupDir, backupFileName);
 
       if (!fs.existsSync(backupPath)) {
@@ -302,7 +312,7 @@ export class BackupManager {
       }
 
       // 先备份当前文件
-      if (fs.existsSync(targetPath)) {
+      if (!getApplicationStorage() && fs.existsSync(targetPath)) {
         const currentBackupName = this.generateBackupFileName(path.basename(targetPath)).replace(
           '.json',
           '_before_restore.json'
@@ -315,7 +325,8 @@ export class BackupManager {
       const restored = await restoreAppStorageBackupContent(content, targetPath);
       // 动态导入避免与 unified-config-manager 形成循环依赖
       const { browserProfileManager } = await import('./browser-profile-manager');
-      await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
+      if (!getApplicationStorage())
+        await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
       Logger.info(
         `✅ [BackupManager] 已从备份恢复: ${backupFileName} (${restored.kind}${
           restored.mode ? `/${restored.mode}` : ''

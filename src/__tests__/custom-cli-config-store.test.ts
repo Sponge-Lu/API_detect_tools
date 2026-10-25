@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import { invalidateDataEpoch } from '../renderer/services/data-generation';
+import type { StateVersion } from '../shared/types/app-storage-contract';
 
 function createConfig(): CustomCliConfig {
   return {
@@ -64,6 +66,8 @@ describe('custom cli config store', () => {
       loading: false,
       saving: false,
       fetchingModels: {},
+      storageVersion: undefined,
+      persistedFingerprint: undefined,
     });
 
     window.electronAPI = {
@@ -74,6 +78,68 @@ describe('custom cli config store', () => {
         fetchModels: vi.fn().mockResolvedValue(['fresh-model', ' new-test ', 'fresh-model']),
       },
     };
+  });
+
+  it('rebases the save version after discovery without losing unsaved edits', async () => {
+    const version: StateVersion = { generation: 'test', scope: 'custom-cli-configs', revision: 1 };
+    const nextVersion = { ...version, revision: 2 };
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce({
+        configs: [createConfig()],
+        activeConfigId: null,
+        storageVersion: version,
+      })
+      .mockResolvedValueOnce({
+        configs: [{ ...createConfig(), models: ['new-model'], lastModelFetch: 2 }],
+        activeConfigId: null,
+        storageVersion: nextVersion,
+      });
+    window.electronAPI.customCliConfig.load = load;
+    await useCustomCliConfigStore.getState().loadConfigs();
+    useCustomCliConfigStore.getState().updateConfig('cfg-1', { notes: 'Unsaved draft' });
+    await useCustomCliConfigStore.getState().fetchModels('cfg-1');
+    await useCustomCliConfigStore.getState().saveConfigs();
+    expect(window.electronAPI.customCliConfig.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storageVersion: nextVersion,
+        configs: [expect.objectContaining({ notes: 'Unsaved draft', models: ['new-model'] })],
+      })
+    );
+  });
+
+  it('retains the old version when discovery observes unrelated persisted edits', async () => {
+    const version: StateVersion = { generation: 'test', scope: 'custom-cli-configs', revision: 1 };
+    window.electronAPI.customCliConfig.load = vi
+      .fn()
+      .mockResolvedValueOnce({ configs: [createConfig()], storageVersion: version })
+      .mockResolvedValueOnce({
+        configs: [{ ...createConfig(), name: 'External edit' }],
+        storageVersion: { ...version, revision: 2 },
+      });
+    await useCustomCliConfigStore.getState().loadConfigs();
+    useCustomCliConfigStore.getState().updateConfig('cfg-1', { notes: 'Unsaved draft' });
+    expect(await useCustomCliConfigStore.getState().fetchModels('cfg-1')).toEqual([]);
+    expect(useCustomCliConfigStore.getState().storageVersion).toEqual(version);
+    expect(useCustomCliConfigStore.getState().configs[0].notes).toBe('Unsaved draft');
+  });
+
+  it('discards a pending discovery response after restoring application data', async () => {
+    let complete!: (models: string[]) => void;
+    window.electronAPI.customCliConfig.fetchModels = vi.fn(
+      () =>
+        new Promise(resolve => {
+          complete = resolve;
+        })
+    );
+    const pending = useCustomCliConfigStore.getState().fetchModels('cfg-1');
+    invalidateDataEpoch();
+    useCustomCliConfigStore.setState({ configs: [], fetchingModels: {} });
+    complete(['late-model']);
+    expect(await pending).toEqual([]);
+    expect(window.electronAPI.customCliConfig.load).not.toHaveBeenCalled();
+    expect(useCustomCliConfigStore.getState().configs).toEqual([]);
+    expect(useCustomCliConfigStore.getState().fetchingModels).toEqual({});
   });
 
   it('clears stale selected models after fetching a new custom CLI model list', async () => {

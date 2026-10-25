@@ -18,9 +18,9 @@ export interface AppSelectProps
 }
 
 const sizeStyles: Record<NonNullable<AppSelectProps['size']>, string> = {
-  sm: 'px-[var(--spacing-md)] py-[var(--spacing-sm)] text-sm rounded-[10px]',
-  md: 'px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px]',
-  lg: 'px-[var(--spacing-lg)] py-[var(--spacing-lg)] text-lg rounded-[14px]',
+  sm: 'h-8 pl-[var(--spacing-md)] text-[12px]',
+  md: 'h-9 pl-[var(--spacing-md)] text-[13px]',
+  lg: 'h-10 pl-[var(--spacing-lg)] text-[13px]',
 };
 
 export const AppSelect = forwardRef<HTMLSelectElement, AppSelectProps>(function AppSelect(
@@ -56,28 +56,28 @@ export const AppSelect = forwardRef<HTMLSelectElement, AppSelectProps>(function 
     ? 'border-[var(--danger)]'
     : isFocused
       ? 'border-[var(--accent)]'
-      : 'border-[var(--line-soft)]';
+      : 'border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]';
 
-  const focusStyles =
-    isFocused && !error
-      ? '[box-shadow:0_0_0_4px_var(--focus-ring),inset_0_1px_2px_rgba(0,0,0,0.05)]'
-      : error && isFocused
-        ? '[box-shadow:0_0_0_4px_var(--danger-soft),inset_0_1px_2px_rgba(0,0,0,0.05)]'
-        : '';
+  const focusStyles = error
+    ? '[box-shadow:0_0_0_3px_var(--danger-soft)]'
+    : isFocused
+      ? '[box-shadow:0_0_0_3px_var(--focus-ring)]'
+      : '';
 
   const combinedClassName = `
       w-full appearance-none
-      bg-[var(--surface-2)]
+      rounded-[var(--radius-sm)]
+      bg-[var(--field-bg)]
       text-[var(--text-primary)]
       border
       outline-none
       transition-[box-shadow,border-color]
-      duration-[var(--duration-fast)]
-      pr-10
+      duration-[var(--duration-hover)]
+      pr-9
       ${sizeStyles[size]}
       ${borderStyles}
       ${focusStyles}
-      ${disabled ? 'opacity-50 cursor-not-allowed bg-[var(--surface-1)]' : ''}
+      ${disabled ? 'opacity-60 cursor-not-allowed bg-[var(--surface-2)] text-[var(--text-tertiary)]' : ''}
       ${className}
     `
     .replace(/\s+/g, ' ')
@@ -88,7 +88,7 @@ export const AppSelect = forwardRef<HTMLSelectElement, AppSelectProps>(function 
       {label && (
         <label
           htmlFor={selectId}
-          className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+          className="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
         >
           {label}
           {required && (
@@ -123,21 +123,18 @@ export const AppSelect = forwardRef<HTMLSelectElement, AppSelectProps>(function 
         </select>
         <ChevronDown
           aria-hidden="true"
+          strokeWidth={1.75}
           className="pointer-events-none absolute right-[var(--spacing-md)] top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]"
         />
       </div>
 
       {error && errorMessage && (
-        <p
-          id={errorId}
-          role="alert"
-          className="mt-[var(--spacing-xs)] text-sm text-[var(--danger)]"
-        >
+        <p id={errorId} role="alert" className="mt-1.5 text-[12px] leading-4 text-[var(--danger)]">
           {errorMessage}
         </p>
       )}
       {!error && helpText && (
-        <p id={helpId} className="mt-[var(--spacing-xs)] text-sm text-[var(--text-tertiary)]">
+        <p id={helpId} className="mt-1.5 text-[12px] leading-4 text-[var(--text-secondary)]">
           {helpText}
         </p>
       )}

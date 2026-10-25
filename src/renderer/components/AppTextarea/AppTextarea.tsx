@@ -11,9 +11,9 @@ export interface AppTextareaProps
 }
 
 const sizeStyles: Record<NonNullable<AppTextareaProps['size']>, string> = {
-  sm: 'px-[var(--spacing-md)] py-[var(--spacing-sm)] text-sm rounded-[10px]',
-  md: 'px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px]',
-  lg: 'px-[var(--spacing-lg)] py-[var(--spacing-lg)] text-lg rounded-[14px]',
+  sm: 'px-[var(--spacing-md)] py-[var(--spacing-sm)] text-[12px]',
+  md: 'px-[var(--spacing-md)] py-[var(--spacing-sm)] text-[13px]',
+  lg: 'px-[var(--spacing-lg)] py-[var(--spacing-md)] text-[13px]',
 };
 
 export const AppTextarea = forwardRef<HTMLTextAreaElement, AppTextareaProps>(function AppTextarea(
@@ -47,17 +47,14 @@ export const AppTextarea = forwardRef<HTMLTextAreaElement, AppTextareaProps>(fun
   const baseStyles = `
       w-full
       resize-y
-      bg-[var(--surface-2)]
+      rounded-[var(--radius-sm)]
+      bg-[var(--field-bg)]
       text-[var(--text-primary)]
       placeholder-[var(--text-tertiary)]
       border
-      [will-change:box-shadow,border-color]
-      [transform:translateZ(0)]
       transition-[box-shadow,border-color]
-      duration-[var(--duration-fast)]
-      [transition-timing-function:var(--ease-standard)]
+      duration-[var(--duration-hover)]
       outline-none
-      [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)]
     `
     .replace(/\s+/g, ' ')
     .trim();
@@ -66,16 +63,17 @@ export const AppTextarea = forwardRef<HTMLTextAreaElement, AppTextareaProps>(fun
     ? 'border-[var(--danger)]'
     : isFocused
       ? 'border-[var(--accent)]'
-      : 'border-[var(--line-soft)]';
+      : 'border-[var(--line-strong)] hover:border-[color-mix(in_srgb,var(--text-tertiary)_55%,transparent)]';
 
-  const focusStyles =
-    isFocused && !error
-      ? '[box-shadow:0_0_0_4px_var(--focus-ring),inset_0_1px_2px_rgba(0,0,0,0.05)]'
-      : error && isFocused
-        ? '[box-shadow:0_0_0_4px_var(--danger-soft),inset_0_1px_2px_rgba(0,0,0,0.05)]'
-        : '';
+  const focusStyles = error
+    ? '[box-shadow:0_0_0_3px_var(--danger-soft)]'
+    : isFocused
+      ? '[box-shadow:0_0_0_3px_var(--focus-ring)]'
+      : '';
 
-  const disabledStyles = disabled ? 'opacity-50 cursor-not-allowed bg-[var(--surface-1)]' : '';
+  const disabledStyles = disabled
+    ? 'opacity-60 cursor-not-allowed bg-[var(--surface-2)] text-[var(--text-tertiary)]'
+    : '';
 
   const combinedClassName = `
       ${baseStyles}
@@ -93,7 +91,7 @@ export const AppTextarea = forwardRef<HTMLTextAreaElement, AppTextareaProps>(fun
       {label && (
         <label
           htmlFor={textareaId}
-          className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
+          className="mb-1.5 block text-[12px] font-medium text-[var(--text-secondary)]"
         >
           {label}
           {required && (
@@ -125,17 +123,13 @@ export const AppTextarea = forwardRef<HTMLTextAreaElement, AppTextareaProps>(fun
       />
 
       {helpText && !error && (
-        <p id={helpId} className="mt-[var(--spacing-sm)] text-sm text-[var(--text-secondary)]">
+        <p id={helpId} className="mt-1.5 text-[12px] leading-4 text-[var(--text-secondary)]">
           {helpText}
         </p>
       )}
 
       {error && errorMessage && (
-        <p
-          id={errorId}
-          className="mt-[var(--spacing-sm)] text-sm text-[var(--danger)]"
-          role="alert"
-        >
+        <p id={errorId} className="mt-1.5 text-[12px] leading-4 text-[var(--danger)]" role="alert">
           {errorMessage}
         </p>
       )}

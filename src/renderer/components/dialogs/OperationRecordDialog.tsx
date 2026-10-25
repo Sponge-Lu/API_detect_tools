@@ -17,22 +17,26 @@ const LEVEL_STYLES: Record<
   }
 > = {
   success: {
-    badge: 'border-[var(--success)]/20 bg-[var(--success-soft)] text-[var(--success)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--success)_20%,transparent)] bg-[var(--success-soft)] text-[var(--success)]',
     dot: 'bg-[var(--success)]',
     label: '成功',
   },
   error: {
-    badge: 'border-[var(--danger)]/20 bg-[var(--danger-soft)] text-[var(--danger)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--danger)_20%,transparent)] bg-[var(--danger-soft)] text-[var(--danger)]',
     dot: 'bg-[var(--danger)]',
     label: '错误',
   },
   warning: {
-    badge: 'border-[var(--warning)]/20 bg-[var(--warning-soft)] text-[var(--warning)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--warning)_20%,transparent)] bg-[var(--warning-soft)] text-[var(--warning)]',
     dot: 'bg-[var(--warning)]',
     label: '警告',
   },
   info: {
-    badge: 'border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent)]',
+    badge:
+      'border-[color-mix(in_srgb,var(--accent)_20%,transparent)] bg-[var(--accent-soft)] text-[var(--accent)]',
     dot: 'bg-[var(--accent)]',
     label: '信息',
   },

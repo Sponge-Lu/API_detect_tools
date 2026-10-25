@@ -87,6 +87,8 @@ export interface DshRoutingStatus {
   expectedBaseUrl: string;
   /** patch 里声明的模型数量 */
   configuredModelCount: number;
+  currentDefaultModel?: string | null;
+  currentAllowedModels?: string[] | null;
   /** 本应用模型目录里有、但 patch 里没有的模型 */
   missingModels: string[];
   /** patch 里有、但本应用模型目录里没有的模型 */

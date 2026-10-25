@@ -777,10 +777,10 @@ describe('DataOverviewPage', () => {
 
     // 横纵轴刻度使用更醒目的字号与颜色
     expect(trendCard.querySelector('[data-trend-y-axis="requests"]')).toHaveClass(
-      'text-[10px]',
+      'text-[11px]',
       'text-[var(--text-secondary)]'
     );
-    expect(plotRow?.nextElementSibling).toHaveClass('text-[10px]', 'text-[var(--text-secondary)]');
+    expect(plotRow?.nextElementSibling).toHaveClass('text-[11px]', 'text-[var(--text-secondary)]');
 
     // 柱体几何被钳制在绘图区 viewBox（宽 160）内，不向纵轴方向溢出
     const barRects = Array.from(trendCard.querySelectorAll('rect[data-trend-bar-point-index]'));

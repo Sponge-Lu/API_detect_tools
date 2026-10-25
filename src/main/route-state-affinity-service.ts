@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 import * as path from 'path';
 import { app } from 'electron';
 import type { CliTargetProtocol } from '../shared/types/cli-config';
@@ -78,6 +79,10 @@ function compactResources(
 }
 
 export class RouteStateAffinityService {
+  invalidate(): void {
+    this.state = null;
+    this.loadPromise = null;
+  }
   private state: RouteStateAffinityFile | null = null;
   private loadPromise: Promise<RouteStateAffinityFile> | null = null;
   private mutationQueue: Promise<void> = Promise.resolve();
@@ -94,6 +99,7 @@ export class RouteStateAffinityService {
         normalize: normalizeState,
       })
         .catch(error => {
+          if (getApplicationStorage() && error?.code !== 'ENOENT') throw error;
           Logger.warn('[RouteStateAffinity] Ignoring unreadable affinity state:', error);
           return emptyState();
         })

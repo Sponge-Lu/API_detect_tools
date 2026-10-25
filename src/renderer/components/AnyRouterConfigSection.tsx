@@ -152,7 +152,7 @@ export function AnyRouterConfigSection({
           </div>
         </div>
         {extracting && (
-          <div className="mt-2 rounded-[var(--radius-sm)] border border-[var(--warning)]/30 bg-[var(--warning-soft)] p-2 text-xs text-[var(--warning)]">
+          <div className="mt-2 rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] p-2 text-xs text-[var(--warning)]">
             <div className="font-semibold">正在自动提取 Hash...</div>
             <div className="mt-1">
               提取过程中会临时修改 Claude Code 配置，请勿使用 Claude Code，完成后会自动恢复。
@@ -181,7 +181,7 @@ export function AnyRouterConfigSection({
                 <h5 className="font-semibold mb-1 text-[var(--text-primary)]">
                   步骤 2: 设置代理并启动 Claude Code
                 </h5>
-                <pre className="rounded-[var(--radius-sm)] bg-[var(--surface-1)] p-2 overflow-x-auto font-mono text-[10px] text-[var(--text-primary)]">
+                <pre className="rounded-[var(--radius-sm)] bg-[var(--surface-1)] p-2 overflow-x-auto font-mono text-[11px] text-[var(--text-primary)]">
                   {`$env:HTTP_PROXY="http://127.0.0.1:8888"
 $env:HTTPS_PROXY="http://127.0.0.1:8888"
 $env:NODE_TLS_REJECT_UNAUTHORIZED="0"
@@ -222,10 +222,10 @@ claude`}
                 <p>将复制的哈希值粘贴到上方的 "User Hash" 输入框中</p>
               </div>
 
-              <div className="rounded-[var(--radius-sm)] border border-[var(--warning)]/30 bg-[var(--warning-soft)] p-2">
+              <div className="rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--warning)_30%,transparent)] bg-[var(--warning-soft)] p-2">
                 <p className="font-semibold text-[var(--warning)]">安全提示</p>
                 <p className="mt-1 text-[var(--warning)]">抓包完成后，记得执行：</p>
-                <pre className="rounded-[var(--radius-sm)] bg-[var(--surface-1)] p-1 mt-1 font-mono text-[10px] text-[var(--text-primary)]">
+                <pre className="rounded-[var(--radius-sm)] bg-[var(--surface-1)] p-1 mt-1 font-mono text-[11px] text-[var(--text-primary)]">
                   Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED
                 </pre>
               </div>
@@ -238,7 +238,7 @@ claude`}
       {extractError && (
         <div
           role="alert"
-          className="rounded-[var(--radius-md)] border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2 text-xs font-medium text-[var(--danger)]"
+          className="rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--danger)_30%,transparent)] bg-[var(--danger-soft)] px-3 py-2 text-xs font-medium text-[var(--danger)]"
         >
           {extractError}
         </div>

@@ -440,3 +440,9 @@ export const useNewStore = create<NewState>((set) => ({
 
 **版本**: 2.1.22
 **更新日期**: 2026-02-24
+
+## 架构与数据管理重构（2026-10-24）
+
+- [configStore.ts](configStore.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [customCliConfigStore.ts](customCliConfigStore.ts): 配置命令与模型边界；模型拉取后校验持久化基线、保留草稿并更新版本，丢弃恢复前响应
+- [routeStore.ts](routeStore.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为

@@ -82,70 +82,70 @@ export function SiteCardActions({
   onOpenExtraLink,
 }: SiteCardActionsProps) {
   return (
-    <div className="ml-1 flex shrink-0 items-center gap-0.5">
+    <div className="ml-1 flex shrink-0 items-center gap-1">
       {site.extra_links && (
         <button
           onClick={e => {
             e.stopPropagation();
             onOpenExtraLink(site.extra_links!);
           }}
-          className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)]"
+          className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-[var(--warning)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--warning-soft)]"
           title={`打开加油站: ${site.extra_links}`}
           aria-label={`打开加油站: ${site.extra_links}`}
         >
-          <Fuel className="w-3.5 h-3.5" strokeWidth={2} />
+          <Fuel className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
       )}
 
       {accessPointType === 'managed' &&
         isSiteCheckinEnabled(site) &&
         (site.force_enable_checkin || siteResult?.has_checkin) && (
-        <>
-          {(() => {
-            const isToday = isSameLocalDay(siteResult?.lastRefresh);
-            const effectiveCanCheckIn = isToday
-              ? siteResult?.can_check_in
-              : siteResult?.can_check_in === false
-                ? undefined
-                : siteResult?.can_check_in;
+          <>
+            {(() => {
+              const isToday = isSameLocalDay(siteResult?.lastRefresh);
+              const effectiveCanCheckIn = isToday
+                ? siteResult?.can_check_in
+                : siteResult?.can_check_in === false
+                  ? undefined
+                  : siteResult?.can_check_in;
 
-            return (
-              <>
-                {(effectiveCanCheckIn === true ||
-                  effectiveCanCheckIn === undefined ||
-                  (site.force_enable_checkin && effectiveCanCheckIn !== false)) && (
-                  <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      onCheckIn(site, accountId);
-                    }}
-                    disabled={checkingIn === cardKey}
-                    className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)] disabled:opacity-50"
-                    title={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
-                    aria-label={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
-                  >
-                    {checkingIn === cardKey ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
-                    ) : (
-                      <Calendar className="w-3.5 h-3.5" strokeWidth={2} />
-                    )}
-                  </button>
-                )}
+              return (
+                <>
+                  {(effectiveCanCheckIn === true ||
+                    effectiveCanCheckIn === undefined ||
+                    (site.force_enable_checkin && effectiveCanCheckIn !== false)) && (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        onCheckIn(site, accountId);
+                      }}
+                      disabled={checkingIn === cardKey}
+                      className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-[var(--warning)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--warning-soft)] disabled:opacity-50"
+                      title={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
+                      aria-label={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
+                    >
+                      {checkingIn === cardKey ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.75} />
+                      ) : (
+                        <Calendar className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      )}
+                    </button>
+                  )}
 
-                {effectiveCanCheckIn === false && (
-                  <div
-                    className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-tertiary)]"
-                    title={getCheckinTooltip(false, checkinStats)}
-                    aria-label={getCheckinTooltip(false, checkinStats)}
-                  >
-                    <CheckCircle className="w-3.5 h-3.5" strokeWidth={2} />
-                  </div>
-                )}
-              </>
-            );
-          })()}
-        </>
-      )}
+                  {effectiveCanCheckIn === false && (
+                    <div
+                      className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)]"
+                      title={getCheckinTooltip(false, checkinStats)}
+                      aria-label={getCheckinTooltip(false, checkinStats)}
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </>
+        )}
 
       <button
         onClick={e => {
@@ -153,11 +153,14 @@ export function SiteCardActions({
           onDetect(site);
         }}
         disabled={isDetecting}
-        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:opacity-50"
+        className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors duration-[var(--duration-hover)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:opacity-50"
         title={accessPointType === 'custom-cli' ? '刷新模型' : '刷新检测'}
         aria-label={accessPointType === 'custom-cli' ? '刷新模型' : '刷新检测'}
       >
-        <RefreshCw className={`w-3.5 h-3.5 ${isDetecting ? 'animate-spin' : ''}`} strokeWidth={2} />
+        <RefreshCw
+          className={`w-3.5 h-3.5 ${isDetecting ? 'animate-spin' : ''}`}
+          strokeWidth={1.75}
+        />
       </button>
     </div>
   );

@@ -1,3 +1,5 @@
+import { getApplicationStorage } from '../storage/application-storage';
+import { handleStorageIpc } from '../storage/ipc-handler';
 import Logger from '../utils/logger';
 /**
  * 备份相关 IPC 处理器
@@ -5,7 +7,7 @@ import Logger from '../utils/logger';
  * - 手动备份 / 导出 / WebDAV 统一使用 portable 2 文件包
  */
 
-import { ipcMain, shell } from 'electron';
+import { shell } from 'electron';
 import * as fs from 'fs';
 import type { BackupManager } from '../backup-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
@@ -31,30 +33,33 @@ function generateExportFilename(date: Date = new Date()): string {
  */
 export function registerBackupHandlers(backupManager: BackupManager) {
   // 列出备份
-  ipcMain.handle('backup:list', async () => {
+  handleStorageIpc('backup:list', async () => {
     return backupManager.listBackups();
   });
 
   // 获取备份目录
-  ipcMain.handle('backup:get-dir', async () => {
+  handleStorageIpc('backup:get-dir', async () => {
     return backupManager.getBackupDir();
   });
 
   // 获取最新备份时间
-  ipcMain.handle('backup:get-latest-time', async () => {
+  handleStorageIpc('backup:get-latest-time', async () => {
     return backupManager.getLatestBackupTime();
   });
 
   // 手动可迁移备份
-  ipcMain.handle('backup:manual', async () => {
+  handleStorageIpc('backup:manual', async () => {
     await backupManager.backupAll();
     return { success: true };
   });
 
   // 导出 portable 配置包（config.json + custom-cli-configs.json）
-  ipcMain.handle('backup:export-config-package', async (_, includeSecrets = false) => {
+  handleStorageIpc('backup:export-config-package', async (_, includeSecrets = false) => {
     try {
-      const content = await createPortableAppStorageBundleContent(undefined, includeSecrets === true);
+      const content = await createPortableAppStorageBundleContent(
+        undefined,
+        includeSecrets === true
+      );
       // 与 WebDAV/手动备份一致：缺少 stable-config 时拒绝导出
       extractStableConfigFromBackupContent(content);
       return {
@@ -73,7 +78,7 @@ export function registerBackupHandlers(backupManager: BackupManager) {
   });
 
   // 导入 portable/full-manifest/legacy 配置包，并重绑隔离 Profile
-  ipcMain.handle('backup:import-config-package', async (_, content: string) => {
+  handleStorageIpc('backup:import-config-package', async (_, content: string) => {
     try {
       if (typeof content !== 'string' || content.trim().length === 0) {
         return { success: false, error: '配置包内容为空' };
@@ -88,8 +93,10 @@ export function registerBackupHandlers(backupManager: BackupManager) {
       }
 
       const restored = await restoreAppStorageBackupContent(content, targetPath);
-      await unifiedConfigManager.loadConfig();
-      const reconcile = await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
+      if (!getApplicationStorage()) await unifiedConfigManager.loadConfig();
+      const reconcile = getApplicationStorage()
+        ? undefined
+        : await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
 
       return {
         success: true,
@@ -107,10 +114,10 @@ export function registerBackupHandlers(backupManager: BackupManager) {
   });
 
   // 从备份恢复配置
-  ipcMain.handle('backup:restore-config', async (_, backupFileName: string) => {
+  handleStorageIpc('backup:restore-config', async (_, backupFileName: string) => {
     const targetPath = unifiedConfigManager.getConfigPath();
     const success = await backupManager.restoreFromBackup(backupFileName, targetPath);
-    if (success) {
+    if (success && !getApplicationStorage()) {
       // 重新加载配置（restoreFromBackup 内已 reconcile 隔离 profile）
       await unifiedConfigManager.loadConfig();
     }
@@ -118,7 +125,7 @@ export function registerBackupHandlers(backupManager: BackupManager) {
   });
 
   // 打开备份目录
-  ipcMain.handle('backup:open-dir', async () => {
+  handleStorageIpc('backup:open-dir', async () => {
     const backupDir = backupManager.getBackupDir();
     await shell.openPath(backupDir);
     return { success: true };

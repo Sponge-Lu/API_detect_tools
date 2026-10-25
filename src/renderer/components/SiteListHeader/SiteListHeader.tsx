@@ -15,6 +15,7 @@ import {
 } from '../Route/Usability/HistoryBucketBars';
 import { useUIStore } from '../../store/uiStore';
 import type { SortField, SortOrder } from '../../store/uiStore';
+import { buildSiteGridTemplate } from '../../utils/siteGridTemplate';
 
 interface SiteListColumn {
   label: string;
@@ -167,7 +168,7 @@ function HistoryHeaderControls() {
                   event.stopPropagation();
                   setSelectedEndpoint(endpoint);
                 }}
-                className={`max-w-[10rem] shrink-0 truncate rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[10px] transition-colors ${
+                className={`max-w-[10rem] shrink-0 truncate rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[11px] transition-colors ${
                   isSelected
                     ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--text-primary)]'
                     : 'border-transparent text-[var(--text-tertiary)] hover:border-[var(--line-soft)] hover:text-[var(--text-primary)]'
@@ -178,7 +179,7 @@ function HistoryHeaderControls() {
             );
           })
         ) : (
-          <span className="truncate text-[10px] text-[var(--text-tertiary)]">目标端点</span>
+          <span className="truncate text-[11px] text-[var(--text-tertiary)]">目标端点</span>
         )}
       </div>
       <span className="sr-only">请求端点</span>
@@ -253,9 +254,9 @@ export function SiteListHeader({
 
   return (
     <div
-      className={`sticky top-0 z-[var(--z-sticky)] grid items-center gap-x-1 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/95 px-3 py-2 text-xs font-medium uppercase tracking-wide text-[var(--text-secondary)] backdrop-blur ${className}`.trim()}
+      className={`sticky top-0 z-[var(--z-sticky)] grid items-center gap-x-1 border-b border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--surface-1)_95%,transparent)] px-3 py-2 text-xs font-medium uppercase tracking-wide text-[var(--text-secondary)] backdrop-blur ${className}`.trim()}
       style={{
-        gridTemplateColumns: `${columnWidths.map(width => `${width}px`).join(' ')}${actions ? ' 1fr' : ''}`,
+        gridTemplateColumns: buildSiteGridTemplate(columnWidths),
       }}
     >
       {columns.map((column, index) => {

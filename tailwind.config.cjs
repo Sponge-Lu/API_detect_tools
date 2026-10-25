@@ -1,11 +1,13 @@
 module.exports = {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   darkMode: 'class',
   theme: {
     extend: {
+      fontFamily: {
+        // 让 font-sans / font-mono 工具类与 index.css 的字体栈保持同一来源
+        sans: ['var(--font-sans)'],
+        mono: ['var(--font-mono)'],
+      },
       colors: {
         'app-bg': 'var(--app-bg)',
         'app-bg-muted': 'var(--app-bg-muted)',
@@ -17,33 +19,33 @@ module.exports = {
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
         'text-tertiary': 'var(--text-tertiary)',
-        'accent': 'var(--accent)',
+        accent: 'var(--accent)',
         'accent-soft': 'var(--accent-soft)',
         'accent-soft-strong': 'var(--accent-soft-strong)',
         'accent-strong': 'var(--accent-strong)',
-        'success': 'var(--success)',
+        success: 'var(--success)',
         'success-soft': 'var(--success-soft)',
-        'warning': 'var(--warning)',
+        warning: 'var(--warning)',
         'warning-soft': 'var(--warning-soft)',
-        'danger': 'var(--danger)',
+        danger: 'var(--danger)',
         'danger-soft': 'var(--danger-soft)',
       },
       spacing: {
-        'xs': 'var(--spacing-xs)',
-        'sm': 'var(--spacing-sm)',
-        'md': 'var(--spacing-md)',
-        'lg': 'var(--spacing-lg)',
-        'xl': 'var(--spacing-xl)',
+        xs: 'var(--spacing-xs)',
+        sm: 'var(--spacing-sm)',
+        md: 'var(--spacing-md)',
+        lg: 'var(--spacing-lg)',
+        xl: 'var(--spacing-xl)',
         '2xl': 'var(--spacing-2xl)',
         '3xl': 'var(--spacing-3xl)',
         '4xl': 'var(--spacing-4xl)',
       },
       borderRadius: {
-        'sm': 'var(--radius-sm)',
-        'md': 'var(--radius-md)',
-        'lg': 'var(--radius-lg)',
-        'xl': 'var(--radius-xl)',
-        'full': 'var(--radius-full)',
+        sm: 'var(--radius-sm)',
+        md: 'var(--radius-md)',
+        lg: 'var(--radius-lg)',
+        xl: 'var(--radius-xl)',
+        full: 'var(--radius-full)',
       },
       backdropBlur: {
         xs: '2px',
@@ -51,4 +53,4 @@ module.exports = {
     },
   },
   plugins: [],
-}
+};

@@ -1,4 +1,5 @@
-import { ipcMain } from 'electron';
+import { handleStorageIpc } from '../storage/ipc-handler';
+
 import type {
   ConfigFileBackupInput,
   PreviewConfigFileBackupRestoreInput,
@@ -42,62 +43,62 @@ async function mutateConfigFileProfiles<T>(operation: () => Promise<T>): Promise
 }
 
 export function registerConfigFileProfileHandlers(): void {
-  ipcMain.handle('config-file-profile:load', () => loadConfigFileProfiles());
-  ipcMain.handle('config-file-profile:upsert', (_, input: UpsertConfigFileProfileInput) =>
+  handleStorageIpc('config-file-profile:load', () => loadConfigFileProfiles());
+  handleStorageIpc('config-file-profile:upsert', (_, input: UpsertConfigFileProfileInput) =>
     mutateConfigFileProfiles(() => upsertConfigFileProfile(input))
   );
-  ipcMain.handle('config-file-profile:delete', (_, input: DeleteConfigFileProfileInput) =>
+  handleStorageIpc('config-file-profile:delete', (_, input: DeleteConfigFileProfileInput) =>
     mutateConfigFileProfiles(() => deleteConfigFileProfile(input))
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:generate-route-key',
     (_, input: GenerateConfigFileProfileRouteKeyInput) =>
       mutateConfigFileProfiles(() => generateConfigFileProfileRouteKey(input))
   );
-  ipcMain.handle('config-file-profile:target-catalog', () => getConfigFileTargetCatalog());
-  ipcMain.handle(
+  handleStorageIpc('config-file-profile:target-catalog', () => getConfigFileTargetCatalog());
+  handleStorageIpc(
     'config-file-profile:resolve-values',
     (_, input: ResolveConfigFileProfileValuesInput) => resolveConfigFileProfileValues(input)
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:restore-builtin',
     (_, input: RestoreBuiltinConfigFileProfileInput) =>
       mutateConfigFileProfiles(() => restoreBuiltinConfigFileProfile(input))
   );
-  ipcMain.handle('config-file-profile:restore-missing-builtins', () =>
+  handleStorageIpc('config-file-profile:restore-missing-builtins', () =>
     mutateConfigFileProfiles(() => restoreMissingBuiltinConfigFileProfiles())
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:switch-auth-mode',
     (_, input: SwitchBuiltinConfigFileProfileAuthModeInput) =>
       mutateConfigFileProfiles(() => switchBuiltinConfigFileProfileAuthMode(input))
   );
-  ipcMain.handle('config-file-profile:read-files', (_, profileId: string) =>
+  handleStorageIpc('config-file-profile:read-files', (_, profileId: string) =>
     readSavedConfigFiles(profileId)
   );
-  ipcMain.handle('config-file-profile:list-backups', (_, input: ConfigFileBackupInput) =>
+  handleStorageIpc('config-file-profile:list-backups', (_, input: ConfigFileBackupInput) =>
     listSavedConfigFileBackups(input)
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:preview-backup-restore',
     (_, input: PreviewConfigFileBackupRestoreInput) => previewConfigFileBackupRestore(input)
   );
-  ipcMain.handle('config-file-profile:preview', (_, input: PreviewConfigFileProfileInput) =>
+  handleStorageIpc('config-file-profile:preview', (_, input: PreviewConfigFileProfileInput) =>
     previewConfigFileProfile(input)
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:preview-route-key-rotation',
     (_, input: PreviewConfigFileProfileRouteKeyRotationInput) =>
       previewConfigFileProfileRouteKeyRotation(input)
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:preview-direct-edit',
     (_, input: PreviewConfigFileDirectEditInput) => previewConfigFileDirectEdit(input)
   );
-  ipcMain.handle('config-file-profile:commit', (_, input: CommitConfigFileProfileInput) =>
+  handleStorageIpc('config-file-profile:commit', (_, input: CommitConfigFileProfileInput) =>
     mutateConfigFileProfiles(() => commitConfigFileProfile(input))
   );
-  ipcMain.handle(
+  handleStorageIpc(
     'config-file-profile:validate-session-record',
     (_, input: ValidateSessionRecordConnectorInput) => validateSessionRecordConnector(input)
   );

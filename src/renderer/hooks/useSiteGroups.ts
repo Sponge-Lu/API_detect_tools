@@ -10,7 +10,7 @@
  */
 
 import { useState } from 'react';
-import type { Config, SiteGroup } from '../App';
+import type { Config, SiteGroup } from '../../shared/types/renderer-config';
 import type { DialogState } from '../components/ConfirmDialog';
 
 interface UseSiteGroupsOptions {

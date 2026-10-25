@@ -970,24 +970,24 @@ describe('route workbench redesign', () => {
       within(serverPrimaryRow).getByText('Base URL'),
     ];
     serverFieldLabels.forEach(label => {
-      expect(label).toHaveClass('text-sm', 'font-medium', 'text-[var(--text-primary)]');
+      expect(label).toHaveClass('text-[12px]', 'font-medium', 'text-[var(--text-secondary)]');
     });
     const portInput = screen.getByDisplayValue('3000');
     expect(portInput).toHaveAttribute('type', 'text');
     expect(portInput).toHaveAttribute('inputmode', 'numeric');
     expect(portInput).toHaveClass(
       'w-full',
-      'bg-[var(--surface-2)]',
+      'bg-[var(--field-bg)]',
       'text-[var(--text-primary)]',
-      'rounded-[10px]'
+      'rounded-[var(--radius-sm)]'
     );
     const upstreamProxyInput = within(serverPrimaryRow).getByLabelText('代理');
     expect(upstreamProxyInput).toBeInTheDocument();
     expect(upstreamProxyInput).toHaveClass(
       'w-full',
-      'bg-[var(--surface-2)]',
+      'bg-[var(--field-bg)]',
       'text-[var(--text-primary)]',
-      'rounded-[10px]'
+      'rounded-[var(--radius-sm)]'
     );
     expect(within(serverPrimaryRow).getByText('Base URL')).toBeInTheDocument();
     expect(screen.queryByText('迁移兼容 Key')).not.toBeInTheDocument();
@@ -1528,7 +1528,7 @@ describe('route workbench redesign', () => {
     expect(redirectRows[0]).toHaveAttribute('data-selected', 'true');
     expect(redirectRows[0]).toHaveClass('border-b', 'border-l-2', 'px-3', 'py-2');
     expect(redirectRows[0]).toHaveClass('border-[var(--line-muted)]');
-    expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-lg)]');
+    expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-md)]');
     expect(redirectRows[0]).not.toHaveClass('bg-[var(--surface-2)]/70');
     expect(within(redirectRows[0]).queryByText(/\d+ 站点/)).not.toBeInTheDocument();
     expect(within(redirectRows[0]).queryByText(/来源/)).not.toBeInTheDocument();
@@ -2232,7 +2232,7 @@ describe('route workbench redesign', () => {
       expect(within(detailPane).getAllByText('站点')).toHaveLength(2);
       const apiKeyBadges = within(detailPane).getAllByText('API Key');
       expect(apiKeyBadges).toHaveLength(4);
-      expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[9px]', 'font-bold');
+      expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[11px]', 'font-semibold');
       expect(within(detailPane).getAllByText('折叠')).toHaveLength(1);
       expect(within(detailPane).getByRole('button', { name: '展开折叠站点' })).toBeInTheDocument();
       const missingKeyToggles = within(detailPane).getAllByTestId(
@@ -2290,7 +2290,7 @@ describe('route workbench redesign', () => {
         within(firstApiKeyCells[1]!).queryByRole('button', { name: 'backup-key 下移' })
       ).not.toBeInTheDocument();
       expect(firstApiKeyCells[2]).toHaveAttribute('aria-label', 'backup-key 禁用');
-      expect(firstApiKeyCells[2]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
+      expect(firstApiKeyCells[2]).toHaveClass('h-5', 'min-w-8', 'text-[11px]');
       expect(firstApiKeyCells[2]).toHaveTextContent('禁用');
       expect(
         within(apiKeyRows[0]!).queryByTestId('priority-detail-api-key-priority')
@@ -3003,7 +3003,7 @@ describe('route workbench redesign', () => {
     expect(within(disabledMainKeyRow).getByRole('button', { name: 'main-key 启用' })).toHaveClass(
       'h-5',
       'min-w-8',
-      'text-[10px]'
+      'text-[11px]'
     );
 
     await waitFor(() => {
@@ -3311,7 +3311,7 @@ describe('route workbench redesign', () => {
     const detailPane = await findPriorityDetailPane();
     const saveButton = within(detailPane).getByTestId('priority-save-button');
     expect(saveButton).toHaveAttribute('data-priority-dirty', 'false');
-    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).not.toContain('bg-[var(--danger)]');
 
     const siteSections = getPrioritySiteSections(detailPane);
     fireEvent.click(within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' }));
@@ -3320,7 +3320,7 @@ describe('route workbench redesign', () => {
     await waitFor(() => {
       expect(saveButton).toHaveAttribute('data-priority-dirty', 'true');
     });
-    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).toContain('bg-[var(--danger)]');
     expect(mockUpsertDisplayItem).not.toHaveBeenCalled();
   });
 
@@ -3549,7 +3549,7 @@ describe('route workbench redesign', () => {
     const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 路由规则' });
     const saveButton = within(dialog).getByTestId('route-rule-save-button');
     expect(saveButton).toHaveAttribute('data-dirty', 'false');
-    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).not.toContain('bg-[var(--danger)]');
 
     fireEvent.change(within(dialog).getByLabelText('每条路由路径尝试次数'), {
       target: { value: '2' },
@@ -3567,7 +3567,7 @@ describe('route workbench redesign', () => {
     await waitFor(() => {
       expect(saveButton).toHaveAttribute('data-dirty', 'true');
     });
-    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).toContain('bg-[var(--danger)]');
 
     fireEvent.click(saveButton);
 

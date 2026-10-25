@@ -999,7 +999,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
-                          <p className="text-[10px] text-[var(--text-tertiary)]">
+                          <p className="text-[11px] text-[var(--text-tertiary)]">
                             {credential ? '已生成独立 Key' : '尚未生成 Key'}
                           </p>
                           {profile.credentialOnly ? (

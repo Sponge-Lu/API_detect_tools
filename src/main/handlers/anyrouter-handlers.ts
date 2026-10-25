@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * AnyRouter 相关 IPC handlers
  * 输入: IPC 调用参数（站点ID、账户ID）
@@ -5,7 +6,6 @@
  * 定位: IPC 层 - 处理前端的 AnyRouter hash 提取请求
  */
 
-import { ipcMain } from 'electron';
 import { extractUserHash } from '../anyrouter-hash-extractor';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
@@ -16,7 +16,7 @@ export function registerAnyRouterHandlers() {
   /**
    * 自动提取单个账户的 user hash
    */
-  ipcMain.handle(
+  handleStorageIpc(
     'anyrouter:extractUserHash',
     async (
       event,
@@ -105,7 +105,7 @@ export function registerAnyRouterHandlers() {
   /**
    * 批量提取站点所有账户的 user hash
    */
-  ipcMain.handle(
+  handleStorageIpc(
     'anyrouter:extractAllUserHashes',
     async (
       event,

@@ -170,7 +170,7 @@ describe('DirectCliConfigEditorContent', () => {
 
     expect(screen.getByTestId('direct-tab2-content')).toHaveClass(
       'border-t',
-      'bg-[var(--surface-2)]/92',
+      'bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)]',
       'px-[var(--spacing-md)]',
       'py-[var(--spacing-sm)]'
     );

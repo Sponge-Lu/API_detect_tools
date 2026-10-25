@@ -103,7 +103,7 @@ describe('DataTable Compatibility - Property Tests', () => {
           if (row) {
             const classList = row.className;
             // Should have min-height of 44px
-            expect(classList).toContain('min-h-[44px]');
+            expect(classList).toContain('min-h-[40px]');
           }
         }),
         { numRuns: 100 }
@@ -129,8 +129,8 @@ describe('DataTable Compatibility - Property Tests', () => {
           if (row) {
             const classList = row.className;
             // Should have padding using spacing-lg (16px) horizontally and spacing-md (12px) vertically
-            expect(classList).toContain('px-[var(--spacing-lg)]');
-            expect(classList).toContain('py-[var(--spacing-md)]');
+            expect(classList).toContain('px-[var(--spacing-md)]');
+            expect(classList).toContain('py-2');
           }
         }),
         { numRuns: 100 }
@@ -158,14 +158,11 @@ describe('DataTable Compatibility - Property Tests', () => {
 
           if (header) {
             const classList = header.className;
-            // Should have font-size of 13px
-            expect(classList).toContain('text-[13px]');
-            // Should have font-weight of 600 (semibold)
-            expect(classList).toContain('font-semibold');
-            // Should have uppercase text
-            expect(classList).toContain('uppercase');
-            // Should have letter-spacing of 0.5px
-            expect(classList).toContain('tracking-[0.08em]');
+            // 表头降为 11px / medium，并取消 uppercase 与宽字距（对中文无效且显松散）
+            expect(classList).toContain('text-[11px]');
+            expect(classList).toContain('font-medium');
+            expect(classList).not.toContain('uppercase');
+            expect(classList).toContain('tracking-[0.01em]');
           }
         }),
         { numRuns: 100 }
@@ -191,10 +188,9 @@ describe('DataTable Compatibility - Property Tests', () => {
           if (cell) {
             const classList = cell.className;
             // Header cells should have specific styling
-            expect(classList).toContain('text-[13px]');
-            expect(classList).toContain('font-semibold');
-            expect(classList).toContain('uppercase');
-            expect(classList).toContain('tracking-[0.08em]');
+            expect(classList).toContain('text-[11px]');
+            expect(classList).toContain('font-medium');
+            expect(classList).toContain('tracking-[0.01em]');
             expect(classList).toContain('text-[var(--text-secondary)]');
           }
         }),
@@ -223,7 +219,6 @@ describe('DataTable Compatibility - Property Tests', () => {
               expect(classList).toContain('sticky');
               expect(classList).toContain('top-0');
               expect(classList).toContain('z-[var(--z-sticky)]');
-              expect(classList).toContain('backdrop-blur-[12px]');
             } else {
               expect(classList).not.toContain('sticky');
             }
@@ -376,7 +371,7 @@ describe('DataTable Compatibility - Property Tests', () => {
             const classList = table.className;
 
             // All variants should have border radius
-            expect(classList).toContain('rounded-[var(--radius-lg)]');
+            expect(classList).toContain('rounded-[var(--radius-md)]');
 
             if (variant === 'standard') {
               expect(classList).toContain('bg-[var(--surface-1)]');

@@ -22,6 +22,7 @@
 | **headers.ts** | 生成兼容不同中转站大小写习惯的用户 ID 请求头 | `getAllUserIdHeaders()` |
 | **log-filter.ts** | 判断模型调用日志并聚合 usage / quota 指标 | `isModelLog()`, `aggregateUsageData()`, `filterAndAggregateUsageData()` |
 | **modelPricing.ts** | 模型计费模式（按 token / 按次）与价格换算、费用估算与展示格式 | `isPerCallPricing()`, `resolveModelPricing()`, `estimateModelCostUsd()`, `formatModelPrice()` |
+| **routeModelGrouping.ts** | 重定向候选归组、自动收录及手动排除；供页面、注册表与通道解析共用 | `buildRouteModelCandidates()`, `expandRouteModelSourceKeys()`, `collectRouteOriginalModels()` |
 | **url-matcher.ts** | 判断两个 URL 是否指向同一 API 端点（忽略尾斜杠与 `/v1` 差异） | `isSameApiEndpoint()` |
 
 ---

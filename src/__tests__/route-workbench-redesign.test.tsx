@@ -995,24 +995,24 @@ describe('route workbench redesign', () => {
       within(serverPrimaryRow).getByText('Base URL'),
     ];
     serverFieldLabels.forEach(label => {
-      expect(label).toHaveClass('text-sm', 'font-medium', 'text-[var(--text-primary)]');
+      expect(label).toHaveClass('text-[12px]', 'font-medium', 'text-[var(--text-secondary)]');
     });
     const portInput = screen.getByDisplayValue('3000');
     expect(portInput).toHaveAttribute('type', 'text');
     expect(portInput).toHaveAttribute('inputmode', 'numeric');
     expect(portInput).toHaveClass(
       'w-full',
-      'bg-[var(--surface-2)]',
+      'bg-[var(--field-bg)]',
       'text-[var(--text-primary)]',
-      'rounded-[10px]'
+      'rounded-[var(--radius-sm)]'
     );
     const upstreamProxyInput = within(serverPrimaryRow).getByLabelText('代理');
     expect(upstreamProxyInput).toBeInTheDocument();
     expect(upstreamProxyInput).toHaveClass(
       'w-full',
-      'bg-[var(--surface-2)]',
+      'bg-[var(--field-bg)]',
       'text-[var(--text-primary)]',
-      'rounded-[10px]'
+      'rounded-[var(--radius-sm)]'
     );
     expect(within(serverPrimaryRow).getByText('Base URL')).toBeInTheDocument();
     expect(screen.queryByText('迁移兼容 Key')).not.toBeInTheDocument();
@@ -1650,7 +1650,7 @@ describe('route workbench redesign', () => {
     expect(redirectRows[0]).toHaveAttribute('data-selected', 'true');
     expect(redirectRows[0]).toHaveClass('border-b', 'border-l-2', 'px-3', 'py-2');
     expect(redirectRows[0]).toHaveClass('border-[var(--line-muted)]');
-    expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-lg)]');
+    expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-md)]');
     expect(redirectRows[0]).not.toHaveClass('bg-[var(--surface-2)]/70');
     expect(within(redirectRows[0]).queryByText(/\d+ 站点/)).not.toBeInTheDocument();
     expect(within(redirectRows[0]).queryByText(/来源/)).not.toBeInTheDocument();
@@ -1985,6 +1985,111 @@ describe('route workbench redesign', () => {
       return row!;
     });
     expect(deepseekKeyRow).toHaveAttribute('data-priority-hit', 'true');
+  });
+
+  it('enables only chosen discovered groups with automatic collection', async () => {
+    mockConfig.modelRegistry = {
+      ...createModelRegistryConfig(),
+      displayItems: [],
+      overrides: [],
+      entries: {},
+      sources: ['gpt-5.4', 'openai/gpt-5.4', 'gpt-5.4-mini'].map(model =>
+        createSource({
+          sourceKey: `site-1:acc-1:${model}`,
+          originalModel: model,
+          vendor: 'gpt',
+        })
+      ),
+    };
+    render(<ModelRedirectionTab />);
+    expect(screen.queryAllByTestId('redirect-list-row')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '选择重定向' }));
+    const dialog = await screen.findByRole('dialog', { name: '选择重定向模型' });
+    expect(mockUpsertDisplayItem).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '启用 gpt-5.4' }));
+    fireEvent.change(within(dialog).getByRole('searchbox'), { target: { value: 'mini' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '启用所选（1）' }));
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(1));
+    expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canonicalName: 'gpt-5.4',
+        originalModelOrder: ['gpt-5.4', 'openai/gpt-5.4'],
+        autoCollect: { modelKeys: ['gpt-5-4'], excludedModels: [] },
+      })
+    );
+    expect(mockUpsertMappingOverride).not.toHaveBeenCalled();
+  });
+
+  it('keeps failed discovery selections retryable without saving successful groups twice', async () => {
+    mockConfig.modelRegistry = {
+      ...createModelRegistryConfig(),
+      displayItems: [],
+      overrides: [],
+      entries: {},
+      sources: ['gpt-5.4', 'gpt-5.4-mini'].map(model =>
+        createSource({
+          sourceKey: `site-1:acc-1:${model}`,
+          originalModel: model,
+          vendor: 'gpt',
+        })
+      ),
+    };
+    mockUpsertDisplayItem
+      .mockResolvedValueOnce(mockConfig.modelRegistry)
+      .mockResolvedValueOnce(null);
+    render(<ModelRedirectionTab />);
+    fireEvent.click(screen.getByRole('button', { name: '选择重定向' }));
+    const dialog = await screen.findByRole('dialog', { name: '选择重定向模型' });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '启用 gpt-5.4' }));
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '启用 gpt-5.4-mini' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '启用所选（2）' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(within(dialog).getByRole('checkbox', { name: '启用 gpt-5.4' })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '启用所选（1）' }));
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(3));
+    expect(mockUpsertDisplayItem.mock.calls.map(([item]) => item.canonicalName)).toEqual([
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.4-mini',
+    ]);
+  });
+
+  it('auto selects same-model aliases and remembers manual exclusions when saving', async () => {
+    mockConfig.modelRegistry.sources.push(
+      createSource({
+        sourceKey: 'site-5:acc-5:gpt-5.4',
+        originalModel: 'gpt-5.4',
+        vendor: 'gpt',
+      }),
+      createSource({
+        sourceKey: 'site-5:acc-5:openai/gpt-5.4',
+        originalModel: 'openai/gpt-5.4',
+        vendor: 'gpt',
+      })
+    );
+    render(<ModelRedirectionTab />);
+    fireEvent.click(screen.getByRole('button', { name: '新增重定向' }));
+    const dialog = await screen.findByRole('dialog', { name: '新增模型重定向' });
+    fireEvent.change(within(dialog).getByLabelText('重定向名称'), {
+      target: { value: 'my-auto-model' },
+    });
+    const candidates = within(dialog).getByTestId('original-model-candidate-list');
+    fireEvent.click(within(candidates).getByText('gpt-5.4').closest('label')!);
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '自动收录同类原始模型' }));
+    const selected = within(dialog).getByTestId('selected-original-models-list');
+    await waitFor(() => expect(within(selected).getByText('openai/gpt-5.4')).toBeInTheDocument());
+    fireEvent.click(within(selected).getByRole('button', { name: '取消选择 openai/gpt-5.4' }));
+    expect(within(selected).queryByText('openai/gpt-5.4')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: '新增重定向' }));
+    await waitFor(() =>
+      expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          canonicalName: 'my-auto-model',
+          originalModelOrder: ['gpt-5.4'],
+          autoCollect: { modelKeys: ['gpt-5-4'], excludedModels: ['openai/gpt-5.4'] },
+        })
+      )
+    );
   });
 
   it('supports searching and multi-selecting original models when creating a redirect', async () => {
@@ -2354,7 +2459,7 @@ describe('route workbench redesign', () => {
       expect(within(detailPane).getAllByText('站点')).toHaveLength(2);
       const apiKeyBadges = within(detailPane).getAllByText('API Key');
       expect(apiKeyBadges).toHaveLength(4);
-      expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[9px]', 'font-bold');
+      expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[11px]', 'font-semibold');
       expect(within(detailPane).getAllByText('折叠')).toHaveLength(1);
       expect(within(detailPane).getByRole('button', { name: '展开折叠站点' })).toBeInTheDocument();
       const missingKeyToggles = within(detailPane).getAllByTestId(
@@ -2412,7 +2517,7 @@ describe('route workbench redesign', () => {
         within(firstApiKeyCells[1]!).queryByRole('button', { name: 'backup-key 下移' })
       ).not.toBeInTheDocument();
       expect(firstApiKeyCells[2]).toHaveAttribute('aria-label', 'backup-key 禁用');
-      expect(firstApiKeyCells[2]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
+      expect(firstApiKeyCells[2]).toHaveClass('h-5', 'min-w-8', 'text-[11px]');
       expect(firstApiKeyCells[2]).toHaveTextContent('禁用');
       expect(
         within(apiKeyRows[0]!).queryByTestId('priority-detail-api-key-priority')
@@ -3125,7 +3230,7 @@ describe('route workbench redesign', () => {
     expect(within(disabledMainKeyRow).getByRole('button', { name: 'main-key 启用' })).toHaveClass(
       'h-5',
       'min-w-8',
-      'text-[10px]'
+      'text-[11px]'
     );
 
     await waitFor(() => {
@@ -3433,7 +3538,7 @@ describe('route workbench redesign', () => {
     const detailPane = await findPriorityDetailPane();
     const saveButton = within(detailPane).getByTestId('priority-save-button');
     expect(saveButton).toHaveAttribute('data-priority-dirty', 'false');
-    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).not.toContain('bg-[var(--danger)]');
 
     const siteSections = getPrioritySiteSections(detailPane);
     fireEvent.click(within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' }));
@@ -3442,7 +3547,7 @@ describe('route workbench redesign', () => {
     await waitFor(() => {
       expect(saveButton).toHaveAttribute('data-priority-dirty', 'true');
     });
-    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).toContain('bg-[var(--danger)]');
     expect(mockUpsertDisplayItem).not.toHaveBeenCalled();
   });
 
@@ -3671,7 +3776,7 @@ describe('route workbench redesign', () => {
     const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 路由规则' });
     const saveButton = within(dialog).getByTestId('route-rule-save-button');
     expect(saveButton).toHaveAttribute('data-dirty', 'false');
-    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).not.toContain('bg-[var(--danger)]');
 
     fireEvent.change(within(dialog).getByLabelText('每条路由路径尝试次数'), {
       target: { value: '2' },
@@ -3689,7 +3794,7 @@ describe('route workbench redesign', () => {
     await waitFor(() => {
       expect(saveButton).toHaveAttribute('data-dirty', 'true');
     });
-    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+    expect(saveButton.className).toContain('bg-[var(--danger)]');
 
     fireEvent.click(saveButton);
 

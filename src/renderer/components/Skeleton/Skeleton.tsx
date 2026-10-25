@@ -14,7 +14,11 @@ interface SkeletonProps {
 }
 
 export function Skeleton({ className = '' }: SkeletonProps) {
-  return <div className={`animate-pulse rounded bg-[var(--surface-3)]/80 ${className}`} />;
+  return (
+    <div
+      className={`animate-pulse rounded-[var(--radius-sm)] bg-[var(--surface-2)] ${className}`}
+    />
+  );
 }
 
 /**
@@ -22,27 +26,27 @@ export function Skeleton({ className = '' }: SkeletonProps) {
  */
 export function SiteCardSkeleton() {
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)]/80 p-4">
+    <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-3">
       <div className="flex items-center gap-4">
         {/* 站点名称 */}
-        <Skeleton className="h-5 w-32" />
+        <Skeleton className="h-4 w-32" />
         {/* 状态 */}
-        <Skeleton className="h-5 w-16" />
+        <Skeleton className="h-4 w-16" />
         {/* 余额 */}
-        <Skeleton className="h-5 w-20" />
+        <Skeleton className="h-4 w-20" />
         {/* 今日消费 */}
-        <Skeleton className="h-5 w-16" />
+        <Skeleton className="h-4 w-16" />
         {/* Token 统计 */}
-        <Skeleton className="h-5 w-24" />
+        <Skeleton className="h-4 w-24" />
         {/* 模型数 */}
-        <Skeleton className="h-5 w-12" />
+        <Skeleton className="h-4 w-12" />
         {/* 更新时间 */}
-        <Skeleton className="h-5 w-28" />
+        <Skeleton className="h-4 w-28" />
         {/* 操作按钮 */}
-        <div className="ml-auto flex gap-2">
-          <Skeleton className="h-8 w-8 rounded-[var(--radius-md)]" />
-          <Skeleton className="h-8 w-8 rounded-[var(--radius-md)]" />
-          <Skeleton className="h-8 w-8 rounded-[var(--radius-md)]" />
+        <div className="ml-auto flex gap-1">
+          <Skeleton className="h-7 w-7 rounded-[var(--radius-sm)]" />
+          <Skeleton className="h-7 w-7 rounded-[var(--radius-sm)]" />
+          <Skeleton className="h-7 w-7 rounded-[var(--radius-sm)]" />
         </div>
       </div>
     </div>

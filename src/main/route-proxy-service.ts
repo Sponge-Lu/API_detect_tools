@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 /**
  * 路由代理服务器
  * 输入: CLI 请求 (HTTP), RoutingConfig, ModelRegistry
@@ -2236,17 +2237,21 @@ export async function handleRequest(
   const routeInstanceResolution: RouteInstanceResolution =
     routingMode === 'client'
       ? { instance: null, changed: false, resolutionPath: 'client' }
-      : resolveRouteInstanceForRequest({
-          config: sessionRouting,
-          profileId:
-            routeProfile?.id ||
-            `__target_lock__:${targetLock?.siteId}:${targetLock?.accountId}:${targetLock?.apiKeyId}`,
-          observedKey: observedRouteInstanceKey,
-          requestedModel: requestedCanonicalModel,
-          requestedReasoningEffort: requestedReasoningEffort || null,
-          defaultModel: '',
-          defaultReasoningEffort: 'medium',
-          requestAt: ctx.startedAt,
+      : await unifiedConfigManager.mutateConfig(async () => {
+          const result = resolveRouteInstanceForRequest({
+            config: unifiedConfigManager.getRoutingConfig().sessionRouting ?? sessionRouting,
+            profileId:
+              routeProfile?.id ||
+              `__target_lock__:${targetLock?.siteId}:${targetLock?.accountId}:${targetLock?.apiKeyId}`,
+            observedKey: observedRouteInstanceKey,
+            requestedModel: requestedCanonicalModel,
+            requestedReasoningEffort: requestedReasoningEffort || null,
+            defaultModel: '',
+            defaultReasoningEffort: 'medium',
+            requestAt: ctx.startedAt,
+          });
+          if (result.changed) await unifiedConfigManager.saveConfig();
+          return result;
         });
   const identitySource = observedRouteInstanceKey?.lineage?.source
     ? observedRouteInstanceKey.lineage.source
@@ -2332,7 +2337,6 @@ export async function handleRequest(
     return;
   }
   if (routeInstanceResolution.changed) {
-    await unifiedConfigManager.saveConfig();
     if (ctx.stopIfClientCancelled()) {
       return;
     }
@@ -3697,10 +3701,17 @@ async function startProxyListener(): Promise<void> {
       );
       return;
     }
-    handleRequest(req, res).catch(err => {
+    const storage = getApplicationStorage();
+    const request = () => handleRequest(req, res);
+    (storage ? storage.withActivity(request) : request()).catch(err => {
       log.error('Unhandled proxy error:', err);
       if (!res.headersSent) {
-        writeRouteProxyJsonError(res, 500, 'internal_error', err.message);
+        writeRouteProxyJsonError(
+          res,
+          err.code === 'RESTORE_IN_PROGRESS' ? 503 : 500,
+          err.code === 'RESTORE_IN_PROGRESS' ? 'storage_maintenance' : 'internal_error',
+          err.message
+        );
       }
     });
   });

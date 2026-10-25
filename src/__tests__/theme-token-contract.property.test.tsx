@@ -254,8 +254,8 @@ describe('AppButton theme integration contract', () => {
           const classList = button.className;
 
           if (variant === 'primary') {
-            expect(classList).toContain('bg-[var(--accent-soft)]');
-            expect(classList).toContain('text-[var(--accent-strong)]');
+            expect(classList).toContain('bg-[var(--accent-solid)]');
+            expect(classList).toContain('text-[var(--text-on-accent)]');
           } else if (variant === 'secondary') {
             expect(classList).toContain('border-[var(--line-soft)]');
             expect(classList).toContain('bg-[var(--surface-3)]');
@@ -263,8 +263,8 @@ describe('AppButton theme integration contract', () => {
             expect(classList).toContain('bg-transparent');
             expect(classList).toContain('text-[var(--text-secondary)]');
           } else {
-            expect(classList).toContain('bg-[var(--danger-soft)]');
-            expect(classList).toContain('text-[var(--danger)]');
+            expect(classList).toContain('bg-[var(--danger)]');
+            expect(classList).toContain('text-[var(--text-on-accent)]');
           }
         }
 

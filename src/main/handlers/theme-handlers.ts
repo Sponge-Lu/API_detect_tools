@@ -1,10 +1,12 @@
-﻿import Logger from '../utils/logger';
+import { handleStorageIpc } from '../storage/ipc-handler';
+import Logger from '../utils/logger';
 /**
  * 主题相关 IPC 处理器
  */
 
-import { ipcMain, app } from 'electron';
-import * as fs from 'fs/promises';
+import { app } from 'electron';
+import { readStorageText } from '../storage/application-storage';
+import { writeTextFileAtomically } from '../utils/atomic-json';
 import * as path from 'path';
 import { normalizeThemeMode, type ThemeMode } from '../../shared/theme/themePresets';
 
@@ -15,14 +17,13 @@ function getThemeSettingsPath() {
 
 export function registerThemeHandlers() {
   // 保存主题设置
-  ipcMain.handle('theme:save', async (_, themeMode: ThemeMode) => {
+  handleStorageIpc('theme:save', async (_, themeMode: ThemeMode) => {
     try {
       const themePath = getThemeSettingsPath();
       const normalizedThemeMode = normalizeThemeMode(themeMode);
-      await fs.writeFile(
+      await writeTextFileAtomically(
         themePath,
-        JSON.stringify({ themeMode: normalizedThemeMode }, null, 2),
-        'utf-8'
+        JSON.stringify({ themeMode: normalizedThemeMode }, null, 2)
       );
       return { success: true };
     } catch (error: unknown) {
@@ -33,10 +34,10 @@ export function registerThemeHandlers() {
   });
 
   // 加载主题设置
-  ipcMain.handle('theme:load', async () => {
+  handleStorageIpc('theme:load', async () => {
     try {
       const themePath = getThemeSettingsPath();
-      const data = await fs.readFile(themePath, 'utf-8');
+      const data = await readStorageText(themePath);
       const settings = JSON.parse(data);
       return { success: true, data: normalizeThemeMode(settings.themeMode) };
     } catch {

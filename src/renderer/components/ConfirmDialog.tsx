@@ -64,27 +64,7 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
-
-  // 自动聚焦确认按钮
-  useEffect(() => {
-    if (isOpen && confirmBtnRef.current) {
-      setTimeout(() => {
-        confirmBtnRef.current?.focus();
-      }, 100);
-    }
-  }, [isOpen]);
-
-  // Enter 键确认
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-      if (e.key === 'Enter') {
-        onConfirm();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onConfirm]);
+  const cancelBtnRef = useRef<HTMLButtonElement>(null);
 
   const displayTitle = title || titleMap[type];
   const isAlertOnly = type === 'alert' || type === 'success' || type === 'error';
@@ -92,6 +72,22 @@ export function ConfirmDialog({
 
   // 根据类型确定确认按钮变体
   const confirmBtnVariant = type === 'error' || type === 'warning' ? 'danger' : 'primary';
+
+  /**
+   * 破坏性操作（warning / error）默认聚焦「取消」，避免用户顺手回车就执行；
+   * 普通确认才聚焦主按钮。不再监听全局 Enter —— 否则在弹窗内输入框里回车会误触发确认。
+   */
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const isDestructive = confirmBtnVariant === 'danger' && !isAlertOnly;
+    const target = isDestructive ? cancelBtnRef.current : confirmBtnRef.current;
+    const timer = setTimeout(() => target?.focus(), 80);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, confirmBtnVariant, isAlertOnly]);
 
   return (
     <AppModal
@@ -107,7 +103,7 @@ export function ConfirmDialog({
       footer={
         <>
           {!isAlertOnly && onCancel && (
-            <AppButton variant="tertiary" onClick={onCancel}>
+            <AppButton ref={cancelBtnRef} variant="secondary" onClick={onCancel}>
               {cancelText}
             </AppButton>
           )}
@@ -117,7 +113,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
+      <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--text-secondary)]">
         {message}
       </p>
       {content}

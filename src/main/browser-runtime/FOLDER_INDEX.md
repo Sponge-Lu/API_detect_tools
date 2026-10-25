@@ -23,3 +23,9 @@
 
 - `scripts/fetch-chromium.mjs`（`npm run fetch:chromium`）：从 Chrome for Testing 官方索引下载当前平台/架构的 Stable chrome 到 `resources/chromium/<os>-<arch>/`，拍平解包产物并写入 `VERSION` 标记。
 - 背景与设计决策见 `docs/BROWSER_RUNTIME_REFACTOR_PLAN.md`（P1 内置 Chromium 运行时）。
+
+## 架构与数据管理重构（2026-10-24）
+
+- [browser-slot.ts](browser-slot.ts): 自动化浏览器槽位类型和初始状态
+- [browser-path.ts](browser-path.ts): 配置/环境/内置/系统浏览器可执行路径选择
+- [page-auth.ts](page-auth.ts): 页面 localStorage 与用户信息认证数据解析

@@ -1,10 +1,11 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 输入: BrowserProfileManager, ChromeManager, UnifiedConfigManager
  * 输出: IPC 事件处理 (browser-profile:*)
  * 定位: IPC 层 - 浏览器 Profile 管理和多账户登录接口
  */
 
-import { ipcMain, shell } from 'electron';
+import { shell } from 'electron';
 import { browserProfileManager } from '../browser-profile-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
 import type { ChromeManager } from '../chrome-manager';
@@ -135,7 +136,7 @@ export function registerBrowserProfileHandlers(
   };
 
   // 检测主 Chrome Profile 路径
-  ipcMain.handle('browser-profile:detect', async () => {
+  handleStorageIpc('browser-profile:detect', async () => {
     try {
       const profilePath = await browserProfileManager.detectMainChromeProfile();
       return { success: true, data: profilePath };
@@ -145,7 +146,7 @@ export function registerBrowserProfileHandlers(
   });
 
   // 检查 Chrome 是否正在运行（按当前解析到的浏览器进程名查询，兼容 Edge/便携版等）
-  ipcMain.handle('browser-profile:is-chrome-running', async () => {
+  handleStorageIpc('browser-profile:is-chrome-running', async () => {
     try {
       const running = await browserProfileManager.isChromeRunning(
         chromeManager.getResolvedBrowserPath() || undefined
@@ -156,7 +157,7 @@ export function registerBrowserProfileHandlers(
     }
   });
 
-  ipcMain.handle(
+  handleStorageIpc(
     'browser-profile:list-account-options',
     async (_, siteId: string, accountId: string) => {
       try {
@@ -168,7 +169,7 @@ export function registerBrowserProfileHandlers(
     }
   );
 
-  ipcMain.handle(
+  handleStorageIpc(
     'browser-profile:bind-account',
     async (_, siteId: string, accountId: string, optionId: BrowserProfileOptionId) => {
       try {
@@ -181,7 +182,7 @@ export function registerBrowserProfileHandlers(
   );
 
   // 使用主浏览器 Profile 登录（第一个账号）
-  ipcMain.handle('browser-profile:login-main', async (_, siteUrl: string) => {
+  handleStorageIpc('browser-profile:login-main', async (_, siteUrl: string) => {
     try {
       const result = await browserProfileManager.getMainProfileLaunchOptions();
       if (!result.success) {
@@ -248,7 +249,7 @@ export function registerBrowserProfileHandlers(
 
   // 使用隔离浏览器 Profile 登录（追加账号）
   // 完整流程：清理站点残留 → 等待用户登录 → 获取 userId → 创建 accessToken
-  ipcMain.handle(
+  handleStorageIpc(
     'browser-profile:login-isolated',
     async (_, siteId: string, siteUrl: string, accountId: string) => {
       try {
@@ -325,17 +326,20 @@ export function registerBrowserProfileHandlers(
   );
 
   // 删除隔离 Profile
-  ipcMain.handle('browser-profile:delete-profile', async (_, siteId: string, accountId: string) => {
-    try {
-      await browserProfileManager.deleteIsolatedProfile(siteId, accountId);
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+  handleStorageIpc(
+    'browser-profile:delete-profile',
+    async (_, siteId: string, accountId: string) => {
+      try {
+        await browserProfileManager.deleteIsolatedProfile(siteId, accountId);
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
     }
-  });
+  );
 
   // 使用账户对应浏览器打开站点
-  ipcMain.handle(
+  handleStorageIpc(
     'browser-profile:open-site',
     async (_, siteId: string | undefined, siteUrl: string, accountId?: string) => {
       try {
@@ -369,7 +373,7 @@ export function registerBrowserProfileHandlers(
     }
   );
 
-  ipcMain.handle(
+  handleStorageIpc(
     'browser-profile:open-site-for-checkin',
     async (_, siteId: string | undefined, siteUrl: string, accountId?: string) => {
       try {
@@ -433,7 +437,7 @@ export function registerBrowserProfileHandlers(
     }
   );
 
-  ipcMain.handle(
+  handleStorageIpc(
     'browser-profile:persist-checkin-completion',
     async (
       _,

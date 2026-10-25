@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, PowerManager, IPC handlers
  * 输出: BrowserWindow 实例, IPC 事件监听器, 应用生命周期管理
  * 定位: 应用入口 - 初始化 Electron 应用；显式开发 URL 加载热更新页面，其余模式加载构建产物；管理主窗口与服务
@@ -10,14 +10,19 @@
  */
 
 import Logger from './utils/logger';
-import { app, BrowserWindow } from 'electron';
+import {
+  initializeApplicationStorage,
+  getApplicationStorage,
+  readStorageText,
+} from './storage/application-storage';
+import { app, BrowserWindow, dialog } from 'electron';
 
 // 解决 Electron 打包后 BoringSSL 与某些服务器 TLS 握手失败的问题
 // 允许使用更多的加密套件和 TLS 版本
 app.commandLine.appendSwitch('ignore-certificate-errors', 'false');
 app.commandLine.appendSwitch('disable-http2'); // 某些服务器 HTTP/2 实现有问题
 import * as path from 'path';
-import * as fs from 'fs/promises';
+
 import * as os from 'os';
 import { ChromeManager } from './chrome-manager';
 import { ApiService } from './api-service';
@@ -27,13 +32,32 @@ import { registerAllHandlers } from './handlers';
 import { unifiedConfigManager } from './unified-config-manager';
 import { routeStateManager } from './route-state-manager';
 import { cleanupStaleTempFiles } from './utils/atomic-json';
-import { flushToStorage as flushRouteStats } from './route-stats-service';
-import { flushRouteAnalytics } from './route-analytics-service';
+import { flushToStorage as flushRouteStats, invalidateRouteStats } from './route-stats-service';
+import { flushRouteAnalytics, invalidateRouteAnalytics } from './route-analytics-service';
+import { routeStateAffinityService } from './route-state-affinity-service';
+import { endpointTestStateService } from './endpoint-test-state-service';
+import {
+  invalidateConfigFileProfiles,
+  loadConfigFileProfiles,
+} from './config-file-profile-service';
+import { updateService } from './update-service';
+import { browserProfileManager } from './browser-profile-manager';
+import { recoverCliOperations } from './storage/cli-operation-journal';
 import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavior-manager';
 import { powerManager } from './power-manager';
-import { initializeRouteProxy } from './route-proxy-service';
+import {
+  initializeRouteProxy,
+  stopProxyServer,
+  clearRequestFatalNegativeCache,
+} from './route-proxy-service';
+import { requestManager } from './utils/request-manager';
+import { configDetectionService } from './config-detection-service';
 import { loadModelMetadata } from './model-metadata-service';
-import { getModelRegistry, refreshModelRegistryMetadata } from './route-model-registry-service';
+import {
+  getModelRegistry,
+  refreshModelRegistryMetadata,
+  syncModelRegistrySources,
+} from './route-model-registry-service';
 import { broadcastRendererEvent } from './app-data-events';
 import { configureRouteApiKeyResolver } from './route-channel-resolver';
 import {
@@ -62,6 +86,7 @@ const chromeManager = new ChromeManager();
 let tokenService: TokenService;
 let apiService: ApiService;
 let closeBehaviorManager: CloseBehaviorManager | null = null;
+let automaticBackup: ReturnType<typeof setTimeout> | undefined;
 
 // 主题设置文件路径（与渲染进程保持一致）
 function getThemeSettingsPath() {
@@ -73,7 +98,7 @@ function getThemeSettingsPath() {
 async function getSavedTheme(): Promise<ThemeMode> {
   try {
     const themePath = getThemeSettingsPath();
-    const data = await fs.readFile(themePath, 'utf-8');
+    const data = await readStorageText(themePath);
     const settings = JSON.parse(data);
     return normalizeThemeMode(settings.themeMode);
   } catch {
@@ -137,62 +162,140 @@ async function createWindow() {
   await rendererHealth.load();
 }
 
-app.whenReady().then(async () => {
-  // 启动电源保护，阻止系统休眠（特别是远程桌面环境）
-  powerManager.start();
-  Logger.info('✅ [Main] 电源保护已启动');
+app
+  .whenReady()
+  .then(async () => {
+    if (!app.requestSingleInstanceLock()) {
+      app.quit();
+      return;
+    }
+    app.on('second-instance', () => {
+      if (mainWindow?.isMinimized()) mainWindow.restore();
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
+    // 启动电源保护，阻止系统休眠（特别是远程桌面环境）
+    powerManager.start();
+    Logger.info('✅ [Main] 电源保护已启动');
 
-  // 初始化统一配置管理器（自动迁移旧格式）
-  await unifiedConfigManager.loadConfig();
-  Logger.info('✅ [Main] 统一配置管理器已初始化');
-
-  // 上次进程崩溃/断电可能在 state 目录留下孤儿临时文件（正常写入只存活数毫秒）
-  cleanupStaleTempFiles(routeStateManager.getStateDir())
-    .then(removed => {
-      if (removed > 0) Logger.info(`🧹 [Main] 清理了 ${removed} 个残留路由状态临时文件`);
-    })
-    .catch(() => undefined);
-
-  // 初始化其他服务
-  tokenService = new TokenService(chromeManager);
-  apiService = new ApiService(tokenService);
-  configureRouteApiKeyResolver(tokenService);
-
-  // 创建窗口
-  await createWindow();
-
-  // 初始化窗口关闭行为管理器（需要在窗口创建后）
-  if (mainWindow) {
-    closeBehaviorManager = createCloseBehaviorManager(mainWindow);
-    await closeBehaviorManager.initialize();
-    Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
-  }
-
-  // 注册所有 IPC 处理器
-  registerAllHandlers({
-    chromeManager,
-    apiService,
-    tokenService,
-    backupManager,
-    getMainWindow: () => mainWindow,
-    closeBehaviorManager: closeBehaviorManager || undefined,
-  });
-
-  // 初始化路由代理服务（如已启用则启动本地代理）
-  await loadModelMetadata();
-  getModelRegistry();
-  await initializeRouteProxy();
-  void refreshModelRegistryMetadata()
-    .then(() => broadcastRendererEvent('route:model-metadata-updated', {}))
-    .catch(error =>
-      Logger.warn('Model metadata refresh failed; keeping cached metadata', String(error))
+    // 初始化统一配置管理器（自动迁移旧格式）
+    const storage = await initializeApplicationStorage(app.getPath('userData'), documents =>
+      unifiedConfigManager.prepareLegacyDocuments(documents)
     );
-  Logger.info('✅ [Main] 路由代理服务已初始化');
+    const pendingClientOperations = await recoverCliOperations(storage);
+    if (pendingClientOperations.length)
+      Logger.warn('Client file recovery requires review:', pendingClientOperations);
+    await unifiedConfigManager.loadConfig();
+    storage.setHooks({
+      committed: () => {
+        if (automaticBackup) clearTimeout(automaticBackup);
+        automaticBackup = setTimeout(() => {
+          automaticBackup = undefined;
+          void backupManager.backupManifestBundle({ reason: 'stable-data-changed' });
+        }, 500);
+        automaticBackup.unref();
+      },
+      flush: async () => {
+        await Promise.all([
+          routeSessionActivityService.flush(),
+          routeSessionBindingService.flush(),
+          flushRouteAnalytics(),
+          flushRouteStats().then(() => unifiedConfigManager.flushRouteRuntimeState()),
+        ]);
+      },
+      reload: async () => {
+        await stopProxyServer();
+        requestManager.clear();
+        configDetectionService.clearCache();
+        apiService?.invalidate();
+        clearRequestFatalNegativeCache();
+        routeSessionActivityService.invalidate();
+        routeSessionBindingService.invalidate();
+        routeStateAffinityService.invalidate();
+        endpointTestStateService.invalidate();
+        invalidateRouteStats();
+        invalidateRouteAnalytics();
+        invalidateConfigFileProfiles();
+        updateService.invalidateSettings();
+        await unifiedConfigManager.loadConfig();
+        await syncModelRegistrySources(true);
+        await Promise.all([
+          routeSessionBindingService.load(),
+          routeStateAffinityService.load(),
+          loadConfigFileProfiles(),
+          closeBehaviorManager?.loadSettings(),
+        ]);
+        await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
+        await initializeRouteProxy();
+      },
+      changed: () =>
+        broadcastRendererEvent('app-data:changed', {
+          domains: ['site-config', 'site-overview', 'route-overview', 'config-file-profiles'],
+          emittedAt: Date.now(),
+          restored: true,
+          generation: storage.coordinator.version('app-config').generation,
+          versions: ['app-config', 'custom-cli-configs', 'config-file-profiles'].map(scope =>
+            storage.coordinator.version(
+              scope as 'app-config' | 'custom-cli-configs' | 'config-file-profiles'
+            )
+          ),
+        }),
+    });
+    Logger.info('✅ [Main] 统一配置管理器已初始化');
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // 上次进程崩溃/断电可能在 state 目录留下孤儿临时文件（正常写入只存活数毫秒）
+    cleanupStaleTempFiles(routeStateManager.getStateDir())
+      .then(removed => {
+        if (removed > 0) Logger.info(`🧹 [Main] 清理了 ${removed} 个残留路由状态临时文件`);
+      })
+      .catch(() => undefined);
+
+    // 初始化其他服务
+    tokenService = new TokenService(chromeManager);
+    apiService = new ApiService(tokenService);
+    configureRouteApiKeyResolver(tokenService);
+
+    // 创建窗口
+    await createWindow();
+
+    // 初始化窗口关闭行为管理器（需要在窗口创建后）
+    if (mainWindow) {
+      closeBehaviorManager = createCloseBehaviorManager(mainWindow);
+      await closeBehaviorManager.initialize();
+      Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
+    }
+
+    // 注册所有 IPC 处理器
+    registerAllHandlers({
+      chromeManager,
+      apiService,
+      tokenService,
+      backupManager,
+      getMainWindow: () => mainWindow,
+      closeBehaviorManager: closeBehaviorManager || undefined,
+    });
+
+    // 初始化路由代理服务（如已启用则启动本地代理）
+    await loadModelMetadata();
+    getModelRegistry();
+    await initializeRouteProxy();
+    void storage
+      .withActivity(() => refreshModelRegistryMetadata())
+      .then(() => broadcastRendererEvent('route:model-metadata-updated', {}))
+      .catch(error =>
+        Logger.warn('Model metadata refresh failed; keeping cached metadata', String(error))
+      );
+    Logger.info('✅ [Main] 路由代理服务已初始化');
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  })
+  .catch(error => {
+    Logger.error('Application initialization failed', error);
+    dialog.showErrorBox('应用数据加载失败', error instanceof Error ? error.message : String(error));
+    app.exit(1);
   });
-});
 
 app.on('window-all-closed', () => {
   // 停止电源保护
@@ -208,18 +311,17 @@ app.on('window-all-closed', () => {
 let routeActivityFlushedForQuit = false;
 let routeActivityFlushInProgress = false;
 app.on('before-quit', event => {
-  if (routeActivityFlushedForQuit || routeActivityFlushInProgress) return;
+  if (automaticBackup) clearTimeout(automaticBackup);
+  if (routeActivityFlushedForQuit) return;
   event.preventDefault();
+  if (routeActivityFlushInProgress) return;
   routeActivityFlushInProgress = true;
   void (async () => {
     try {
-      await Promise.all([
-        routeSessionActivityService.flush(),
-        routeSessionBindingService.flush(),
-        flushRouteAnalytics(),
-        // stats 批量写入先入队，再等待 runtime 状态写链清空
-        flushRouteStats().then(() => unifiedConfigManager.flushRouteRuntimeState()),
-      ]);
+      await stopProxyServer();
+      await getApplicationStorage()?.close();
+    } catch (error) {
+      Logger.error('Application storage shutdown failed', error);
     } finally {
       routeActivityFlushedForQuit = true;
       routeActivityFlushInProgress = false;

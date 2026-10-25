@@ -8,6 +8,11 @@ import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 import { getBuiltinClientConfigTemplates } from '../shared/config/builtin-client-configs';
 import * as atomicJson from '../main/utils/atomic-json';
 import { backupConfigFile } from '../main/config-file-backups';
+import { parse } from 'yaml';
+import { createDshConfigFileProfile } from '../main/dsh-config-file-profile';
+import { isDshConfigProfile } from '../shared/config/dsh-client-config';
+import { DSH_ROUTE_CREDENTIAL_REF } from '../shared/types/dsh-integration';
+import { detectDshRouting } from '../main/dsh-integration-service';
 
 import {
   applyConfigFileProfile,
@@ -113,6 +118,7 @@ function profile(
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   mocks.sites = [];
   mocks.accounts = [];
   mocks.routing = {
@@ -122,6 +128,352 @@ afterEach(async () => {
   await Promise.all(
     tempDirectories.splice(0).map(item => fs.rm(item, { recursive: true, force: true }))
   );
+});
+
+it('preserves the secret-free import marker and rejects apply until reconfigured', async () => {
+  const directory = await createTempDirectory();
+  mocks.userData = directory;
+  const card = {
+    ...profile([path.join(directory, 'client.json')], ''),
+    requiresConfiguration: true,
+  };
+  await saveConfigFileProfiles([card]);
+  expect((await loadConfigFileProfiles())[0].requiresConfiguration).toBe(true);
+  await expect(previewConfigFileProfile({ profileId: card.id })).rejects.toThrow('无密钥备份');
+  await expect(fs.access(card.files[0].path)).rejects.toThrow();
+});
+
+describe('DSH configuration card', () => {
+  async function fixture(initialize = true) {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    vi.stubEnv('DSH_HOME', path.join(directory, 'dsh'));
+    mocks.routing.modelRegistry.displayItems = [
+      { canonicalName: 'model-a' },
+      { canonicalName: 'model-b' },
+    ];
+    const card = createDshConfigFileProfile(1);
+    card.localRouteCredential = { id: 'dsh-key', apiKey: 'sk-dsh-card', createdAt: 1 };
+    if (initialize) {
+      await fs.mkdir(path.dirname(card.files[0].path), { recursive: true });
+      await fs.writeFile(path.join(path.dirname(card.files[0].path), 'package.json'), '{}', 'utf8');
+    }
+    await saveConfigFileProfiles([card]);
+    return card;
+  }
+
+  it('upgrades the legacy hidden credential once and preserves its identity and key', async () => {
+    const card = await fixture();
+    const legacy = {
+      ...card,
+      id: 'legacy-dsh-id',
+      credentialOnly: true,
+      builtin: undefined,
+      dsh: undefined,
+      isExample: false,
+      files: [],
+    };
+    const storagePath = path.join(mocks.userData, 'config-file-profiles.json');
+    await fs.writeFile(storagePath, JSON.stringify({ version: 3, profiles: [legacy] }), 'utf8');
+    const upgraded = await loadConfigFileProfiles();
+    const dsh = upgraded.find(isDshConfigProfile)!;
+    expect(upgraded).toHaveLength(1);
+    expect(dsh.id).toBe(legacy.id);
+    expect(dsh.localRouteCredential).toEqual(card.localRouteCredential);
+    expect(dsh.credentialOnly).toBe(false);
+    expect(dsh.files).toHaveLength(2);
+    expect((await loadConfigFileProfiles()).map(item => item.id)).toEqual([legacy.id]);
+    expect(await restoreMissingBuiltinConfigFileProfiles()).toHaveLength(5);
+    await expect(fs.access(card.files[0].path)).rejects.toThrow();
+  });
+
+  it('preserves custom DSH file cards when upgrading storage', async () => {
+    const card = await fixture();
+    const custom = {
+      ...profile([path.join(mocks.userData, 'custom.yaml')], 'user template'),
+      name: 'DSH',
+    };
+    await fs.writeFile(
+      path.join(mocks.userData, 'config-file-profiles.json'),
+      JSON.stringify({ version: 3, profiles: [custom] }),
+      'utf8'
+    );
+    const loaded = await loadConfigFileProfiles();
+    expect(loaded.find(item => item.id === custom.id)?.files).toEqual(custom.files);
+    expect(loaded.filter(isDshConfigProfile)).toHaveLength(1);
+    expect(loaded.find(isDshConfigProfile)?.localRouteCredential).toBeUndefined();
+    expect(card.id).not.toBe(custom.id);
+  });
+
+  it('previews both YAML files without writing and commits while preserving unrelated content', async () => {
+    const card = await fixture();
+    const patch =
+      '# keep comment\n- id: other\n  config:\n    expression: !!js ctx.custom\n- id: llm-deepseek\n  config:\n    thinking: enabled\n';
+    const credentials = 'version: 1\nrefs:\n  OTHER: keep\n';
+    await fs.writeFile(card.files[0].path, patch, 'utf8');
+    await fs.writeFile(card.files[1].path, credentials, 'utf8');
+    card.target.model = 'model-b';
+    card.dsh = { modelSourceId: 'local-route', allowedModels: ['model-b'] };
+    const saved = await upsertConfigFileProfile({ profile: card });
+    const preview = await previewConfigFileProfile({ profileId: saved.id });
+    expect(preview.files).toHaveLength(2);
+    expect(await fs.readFile(card.files[0].path, 'utf8')).toBe(patch);
+    expect(await fs.readFile(card.files[1].path, 'utf8')).toBe(credentials);
+    expect(preview.files[0].nextContent).toContain('# keep comment');
+    expect(preview.files[0].nextContent).toContain('!!js ctx.custom');
+    const entries = parse(preview.files[0].nextContent) as Array<{
+      id: string;
+      config: { thinking?: string; provider?: string; model?: string; allowedModels?: unknown[] };
+    }>;
+    expect(entries.find(item => item.id === 'llm-deepseek')?.config.thinking).toBe('enabled');
+    expect(entries.find(item => item.id === 'agent-default-model')?.config).toEqual({
+      provider: 'deepseek-official',
+      model: 'model-b',
+    });
+    expect(
+      entries.find(item => item.id === 'subagent-model-selection-settings')?.config.allowedModels
+    ).toBeUndefined();
+    await commitConfigFileProfile({ transactionId: preview.transactionId });
+    expect(parse(await fs.readFile(card.files[1].path, 'utf8')).refs).toEqual({
+      OTHER: 'keep',
+      [DSH_ROUTE_CREDENTIAL_REF]: 'sk-dsh-card',
+    });
+    expect((await loadConfigFileProfiles())[0].lastApplied?.model).toBe('model-b');
+  });
+
+  it('requires initialization and preserves unavailable source selections', async () => {
+    const card = await fixture(false);
+    await expect(previewConfigFileProfile({ profileId: card.id })).rejects.toThrow('初始化');
+    await fs.mkdir(path.dirname(card.files[0].path), { recursive: true });
+    await fs.writeFile(path.join(path.dirname(card.files[0].path), 'package.json'), '{}', 'utf8');
+    card.dsh = { modelSourceId: 'managed:removed:account' };
+    await upsertConfigFileProfile({ profile: card });
+    await expect(previewConfigFileProfile({ profileId: card.id })).rejects.toThrow(
+      '模型来源已不可用'
+    );
+    await expect(fs.access(card.files[1].path)).rejects.toThrow();
+  });
+
+  it('writes all models or one model while preserving the existing subagent policy', async () => {
+    const card = await fixture();
+    const childPolicy = {
+      enabled: true,
+      allowedModels: [
+        { provider: 'deepseek-account', model: 'official-a' },
+        { provider: 'deepseek-account', model: 'official-b' },
+      ],
+    };
+    await fs.writeFile(
+      card.files[0].path,
+      '- id: agent-default-model\n  config:\n    provider: deepseek-account\n    model: official-parent\n- id: subagent-model-selection-settings\n  config:\n    enabled: true\n    allowedModels:\n      - provider: deepseek-account\n        model: official-a\n      - provider: deepseek-account\n        model: official-b\n',
+      'utf8'
+    );
+    const all = await previewConfigFileProfile({ profileId: card.id });
+    const allEntries = parse(all.files[0].nextContent) as Array<{
+      id: string;
+      config: { models?: Array<{ id: string }>; enabled?: boolean; allowedModels?: unknown[] };
+    }>;
+    expect(
+      allEntries.find(item => item.id === 'llm-deepseek')?.config.models?.map(model => model.id)
+    ).toEqual(['model-a', 'model-b']);
+    expect(
+      allEntries.find(item => item.id === 'subagent-model-selection-settings')?.config
+    ).toEqual(childPolicy);
+    card.target.model = 'model-b';
+    await upsertConfigFileProfile({ profile: card });
+    const single = await previewConfigFileProfile({ profileId: card.id });
+    const singleEntries = parse(single.files[0].nextContent) as typeof allEntries;
+    expect(
+      singleEntries.find(item => item.id === 'llm-deepseek')?.config.models?.map(model => model.id)
+    ).toEqual(['model-b']);
+    expect(
+      singleEntries.find(item => item.id === 'subagent-model-selection-settings')?.config
+    ).toEqual(childPolicy);
+    expect(singleEntries.find(item => item.id === 'agent-default-model')?.config).toEqual({
+      provider: 'deepseek-official',
+      model: 'model-b',
+    });
+    await commitConfigFileProfile({ transactionId: single.transactionId });
+    const status = await detectDshRouting({ isRunning: async () => false });
+    expect(status.configured).toBe(true);
+    expect(status.missingModels).toEqual([]);
+    expect(status.matchedModelSourceId).toBe('local-route');
+  });
+
+  it('preserves native subagent settings during apply and restore and ignores stale card subagent options', async () => {
+    const card = await fixture();
+    const policy = {
+      enabled: false,
+      allowedModels: [{ provider: 'deepseek-official', model: 'model-a' }],
+    };
+    await fs.writeFile(
+      card.files[0].path,
+      '- id: subagent-model-selection-settings\n  config:\n    enabled: false\n    allowedModels:\n      - provider: deepseek-official\n        model: model-a\n',
+      'utf8'
+    );
+    card.target.model = 'model-b';
+    card.dsh = { modelSourceId: 'local-route', allowedModels: ['removed-model'] };
+    await upsertConfigFileProfile({ profile: card });
+    const preview = await previewConfigFileProfile({ profileId: card.id });
+    const rows = parse(preview.files[0].nextContent) as Array<{ id: string; config: unknown }>;
+    expect(rows.find(row => row.id === 'subagent-model-selection-settings')?.config).toEqual(
+      policy
+    );
+    await commitConfigFileProfile({ transactionId: preview.transactionId });
+    expect((await loadConfigFileProfiles())[0].dsh?.allowedModels).toEqual(['removed-model']);
+    const current = await fs.readFile(card.files[0].path, 'utf8');
+    await fs.writeFile(
+      card.files[0].path,
+      current.replace('model: model-a', 'model: changed-after-apply'),
+      'utf8'
+    );
+    const restore = await previewConfigFileProfile({ profileId: card.id, restoreDsh: true });
+    const restoredRows = parse(restore.files[0].nextContent) as typeof rows;
+    expect(
+      restoredRows.find(row => row.id === 'subagent-model-selection-settings')?.config
+    ).toEqual({
+      ...policy,
+      allowedModels: [{ provider: 'deepseek-official', model: 'changed-after-apply' }],
+    });
+  });
+
+  it('rejects changing DSH templates or switching to official login', async () => {
+    const card = await fixture();
+    card.files[0].template = 'user change';
+    await expect(upsertConfigFileProfile({ profile: card })).rejects.toThrow('专用');
+    await expect(
+      switchBuiltinConfigFileProfileAuthMode({ profileId: card.id, authMode: 'official' })
+    ).rejects.toThrow('不支持切换');
+  });
+
+  it('rejects changed files and changed model catalogs after preview', async () => {
+    const card = await fixture();
+    const preview = await previewConfigFileProfile({ profileId: card.id });
+    await fs.writeFile(card.files[0].path, '# external\n[]\n', 'utf8');
+    await expect(commitConfigFileProfile({ transactionId: preview.transactionId })).rejects.toThrow(
+      '外部修改'
+    );
+    const second = await previewConfigFileProfile({ profileId: card.id });
+    mocks.routing.modelRegistry.displayItems.push({ canonicalName: 'model-c' });
+    await expect(commitConfigFileProfile({ transactionId: second.transactionId })).rejects.toThrow(
+      '已变化'
+    );
+    await expect(fs.access(card.files[1].path)).rejects.toThrow();
+  });
+
+  it('rotates only the managed credential reference and retains profile identity', async () => {
+    const card = await fixture();
+    const applied = await previewConfigFileProfile({ profileId: card.id });
+    await commitConfigFileProfile({ transactionId: applied.transactionId });
+    await fs.appendFile(card.files[1].path, '  OTHER: sk-dsh-card\n', 'utf8');
+    const rotation = await previewConfigFileProfileRouteKeyRotation({ profileId: card.id });
+    expect(rotation.files[0].changed).toBe(false);
+    await commitConfigFileProfile({ transactionId: rotation.transactionId });
+    const persisted = (await loadConfigFileProfiles())[0];
+    expect(persisted.id).toBe(card.id);
+    expect(persisted.localRouteCredential?.apiKey).not.toBe('sk-dsh-card');
+    const refs = parse(await fs.readFile(card.files[1].path, 'utf8')).refs;
+    expect(refs.OTHER).toBe('sk-dsh-card');
+    expect(refs[DSH_ROUTE_CREDENTIAL_REF]).toBe(persisted.localRouteCredential?.apiKey);
+  });
+
+  it('restores the original managed entries through preview and preserves later unrelated edits', async () => {
+    const card = await fixture();
+    const patch = '- id: llm-deepseek\n  config:\n    baseURL: https://original.example\n';
+    await fs.writeFile(card.files[0].path, patch, 'utf8');
+    await fs.writeFile(card.files[1].path, 'version: 1\nrefs:\n  OTHER: keep\n', 'utf8');
+    const applied = await previewConfigFileProfile({ profileId: card.id });
+    await commitConfigFileProfile({ transactionId: applied.transactionId });
+    await fs.appendFile(
+      card.files[0].path,
+      '- id: added-later\n  config: { enabled: true }\n',
+      'utf8'
+    );
+    const restore = await previewConfigFileProfile({ profileId: card.id, restoreDsh: true });
+    expect(restore.operation).toBe('dsh-rollback');
+    expect(restore.files[0].nextContent).toContain('https://original.example');
+    expect(restore.files[0].nextContent).toContain('added-later');
+    await commitConfigFileProfile({ transactionId: restore.transactionId });
+    expect(parse(await fs.readFile(card.files[1].path, 'utf8')).refs).toEqual({ OTHER: 'keep' });
+    expect((await loadConfigFileProfiles())[0].lastApplied).toBeUndefined();
+  });
+
+  it('restores using legacy DSH integration backups', async () => {
+    const card = await fixture();
+    const legacyBackup = `${card.files[0].path}.apidetect-20261021010000.bak`;
+    await fs.writeFile(
+      legacyBackup,
+      '- id: llm-deepseek\n  config:\n    baseURL: https://legacy.example\n',
+      'utf8'
+    );
+    await fs.writeFile(
+      card.files[0].path,
+      '- id: llm-deepseek\n  config:\n    baseURL: http://127.0.0.1:3210\n',
+      'utf8'
+    );
+    const restore = await previewConfigFileProfile({ profileId: card.id, restoreDsh: true });
+    expect(restore.files[0].nextContent).toContain('https://legacy.example');
+  });
+
+  it('rolls back the first YAML file if writing the second fails', async () => {
+    const card = await fixture();
+    await fs.writeFile(card.files[0].path, '[]\n', 'utf8');
+    const preview = await previewConfigFileProfile({ profileId: card.id });
+    const write = atomicJson.writeTextFileAtomically;
+    vi.spyOn(atomicJson, 'writeTextFileAtomically').mockImplementation(
+      async (pathname, content, options) => {
+        if (pathname === card.files[1].path) throw new Error('credential write failed');
+        return write(pathname, content, options);
+      }
+    );
+    await expect(commitConfigFileProfile({ transactionId: preview.transactionId })).rejects.toThrow(
+      'credential write failed'
+    );
+    expect(await fs.readFile(card.files[0].path, 'utf8')).toBe('[]\n');
+    expect((await loadConfigFileProfiles())[0].lastApplied).toBeUndefined();
+  });
+
+  it('does not change vendor configuration when restoring a card that was never applied', async () => {
+    const card = await fixture();
+    const patch = '- id: llm-deepseek\n  config:\n    apiKeyEnv: DEEPSEEK_API_KEY\n';
+    await fs.writeFile(card.files[0].path, patch, 'utf8');
+    const preview = await previewConfigFileProfile({ profileId: card.id, restoreDsh: true });
+    expect(preview.files.every(file => !file.changed)).toBe(true);
+    await commitConfigFileProfile({ transactionId: preview.transactionId });
+    expect(await fs.readFile(card.files[0].path, 'utf8')).toBe(patch);
+    await expect(fs.access(card.files[1].path)).rejects.toThrow();
+  });
+
+  it('keeps a chosen model source when its catalog gains models and normalizes wildcard hosts', async () => {
+    const card = await fixture();
+    mocks.routing.server.host = '0.0.0.0';
+    mocks.sites = [
+      { id: 'site', name: 'Provider', url: 'https://upstream.example', enabled: true },
+    ];
+    mocks.accounts = [
+      {
+        id: 'account',
+        site_id: 'site',
+        account_name: 'Account',
+        api_key: 'provider-key',
+        cached_data: { models: ['provider-model'] },
+      },
+    ];
+    card.dsh = { modelSourceId: 'managed:site:account' };
+    await upsertConfigFileProfile({ profile: card });
+    const values = await resolveConfigFileProfileValues({ profile: card });
+    expect(values.baseUrl).toBe('http://127.0.0.1:3210');
+    expect(values.apiKey).toBe('sk-dsh-card');
+    const first = await previewConfigFileProfile({ profileId: card.id });
+    await commitConfigFileProfile({ transactionId: first.transactionId });
+    mocks.accounts[0].cached_data.models.push('provider-new');
+    const status = await detectDshRouting({ isRunning: async () => false });
+    expect(status.missingModels).toEqual(['provider-new']);
+    expect(status.staleModels).toEqual([]);
+    const second = await previewConfigFileProfile({ profileId: card.id });
+    expect(second.files[0].nextContent).toContain('provider-new');
+    expect(second.files[0].nextContent).not.toContain('id: model-a');
+  });
 });
 
 describe('config file profile service', () => {
@@ -345,9 +697,16 @@ describe('config file profile service', () => {
     await saveConfigFile(pathname, 'after');
     expect(await fs.readFile(pathname, 'utf-8')).toBe('after');
     const [backupId] = await fs.readdir(path.join(directory, 'backups', 'cli-config'));
+    const backupModule = await import('../main/config-file-backups');
+    const original = (await backupModule.listConfigFileBackups(pathname)).find(
+      item => item.id === 'original'
+    )!;
+    expect(await backupModule.readConfigFileBackup(pathname, 'original', original.sha256)).toBe(
+      'before'
+    );
     expect(
       await fs.readFile(path.join(directory, 'backups', 'cli-config', backupId, 'original'), 'utf8')
-    ).toBe('before');
+    ).toMatch(/^api-hub-cli-backup:v1/);
   });
 
   it('applies one rendered template to all files after validating the full batch', async () => {
@@ -393,7 +752,7 @@ describe('config file profile service', () => {
     expect(await fs.readFile(pathname, 'utf-8')).toBe('no placeholders');
   });
 
-  it('creates four default examples using the same profile and file schema', () => {
+  it('creates five default examples using the same profile and file schema', () => {
     const defaults = createDefaultConfigFileProfiles(1);
     expect(defaults).toEqual(
       expect.arrayContaining([
@@ -401,9 +760,10 @@ describe('config file profile service', () => {
         expect.objectContaining({ name: 'Codex', isExample: true }),
         expect.objectContaining({ name: 'OpenCode', isExample: true }),
         expect.objectContaining({ name: 'Grok Build', isExample: true }),
+        expect.objectContaining({ name: 'DeepSeek Harness', isExample: true }),
       ])
     );
-    expect(defaults.map(item => item.files.length)).toEqual([2, 2, 2, 1]);
+    expect(defaults.map(item => item.files.length)).toEqual([2, 2, 2, 1, 2]);
     const codexTemplate = defaults.find(item => item.name === 'Codex')?.files[0].template;
     expect(codexTemplate).toContain('wire_api = "responses"');
     expect(codexTemplate).toContain('web_search = "disabled"');
@@ -1202,9 +1562,16 @@ extra_headers = { "x-api-key" = "{{API_KEY}}" }`
       false
     );
     const [backupId] = await fs.readdir(path.join(directory, 'backups', 'cli-config'));
+    const backupModule = await import('../main/config-file-backups');
+    const original = (await backupModule.listConfigFileBackups(pathname)).find(
+      item => item.id === 'original'
+    )!;
+    expect(await backupModule.readConfigFileBackup(pathname, 'original', original.sha256)).toBe(
+      'before'
+    );
     expect(
       await fs.readFile(path.join(directory, 'backups', 'cli-config', backupId, 'original'), 'utf8')
-    ).toBe('before');
+    ).toMatch(/^api-hub-cli-backup:v1/);
   });
 
   it('does not write any target file when creating a backup fails', async () => {

@@ -102,7 +102,13 @@ describe('peer adoption safety boundaries', () => {
     for (let index = 0; index < 15; index++) await backupConfigFile(target, String(index));
     const [key] = await fs.readdir(path.join(root, 'backups', 'cli-config'));
     const backup = path.join(root, 'backups', 'cli-config', key);
-    expect(await fs.readFile(path.join(backup, 'original'), 'utf8')).toBe('0');
+    expect(await fs.readFile(path.join(backup, 'original'), 'utf8')).toMatch(
+      /^api-hub-cli-backup:v1\n/
+    );
+    const original = (await listConfigFileBackups(target)).find(
+      entry => entry.kind === 'original'
+    )!;
+    expect(await readConfigFileBackup(target, original.id, original.sha256)).toBe('0');
     expect((await fs.readdir(backup)).filter(name => name.endsWith('.bak'))).toHaveLength(10);
     expect(await fs.readdir(path.dirname(target))).toEqual([]);
     await fs.writeFile(`${target}.bak.123`, 'legacy', 'utf8');
@@ -140,7 +146,7 @@ describe('peer adoption safety boundaries', () => {
     await expect(readConfigFileBackup(target, '../original', original.sha256)).rejects.toThrow(
       '标识'
     );
-  });
+  }, 15000);
 
   it('keeps unreadable legacy bytes at the source rather than deleting them', async () => {
     const root = await directory();

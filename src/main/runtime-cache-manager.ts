@@ -1,6 +1,7 @@
 import Logger from './utils/logger';
+import { getApplicationStorage, readStorageText } from './storage/application-storage';
 import { writeJsonFileAtomically } from './utils/atomic-json';
-import * as fs from 'fs/promises';
+
 import * as path from 'path';
 import { app } from 'electron';
 import type {
@@ -45,10 +46,11 @@ export class RuntimeCacheManager {
     }
 
     try {
-      const raw = await fs.readFile(this.cachePath, 'utf-8');
+      const raw = await readStorageText(this.cachePath);
       this.cache = this.normalizeCache(JSON.parse(raw));
       return this.cache;
     } catch (error: any) {
+      if (getApplicationStorage() && error?.code !== 'ENOENT') throw error;
       if (error?.code !== 'ENOENT') {
         Logger.warn(`⚠️ [RuntimeCacheManager] 读取运行期缓存失败，改用空缓存: ${error.message}`);
       }
@@ -61,12 +63,17 @@ export class RuntimeCacheManager {
     return this.cache;
   }
 
+  invalidate(): void {
+    this.cache = null;
+  }
+
   setCache(cache?: RuntimeCacheFile): RuntimeCacheFile {
     this.cache = this.normalizeCache(cache);
     return this.cache;
   }
 
   async saveCache(cache?: RuntimeCacheFile): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     if (cache) {
       this.cache = this.normalizeCache(cache);
     }
@@ -98,7 +105,9 @@ export class RuntimeCacheManager {
     siteId: string,
     updater: (current?: SiteSharedDetectionData) => SiteSharedDetectionData | undefined
   ): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     const cache = await this.loadCache();
+    getApplicationStorage()?.assertWritable();
     const next = updater(cache.site_shared_by_site_id[siteId]);
     if (next) {
       cache.site_shared_by_site_id[siteId] = next;
@@ -112,7 +121,9 @@ export class RuntimeCacheManager {
     siteId: string,
     updater: (current?: SiteRuntimeDetectionData) => SiteRuntimeDetectionData | undefined
   ): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     const cache = await this.loadCache();
+    getApplicationStorage()?.assertWritable();
     const next = updater(cache.site_runtime_by_site_id[siteId]);
     if (next) {
       cache.site_runtime_by_site_id[siteId] = next;
@@ -126,7 +137,9 @@ export class RuntimeCacheManager {
     accountId: string,
     updater: (current?: AccountRuntimeDetectionData) => AccountRuntimeDetectionData | undefined
   ): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     const cache = await this.loadCache();
+    getApplicationStorage()?.assertWritable();
     const next = updater(cache.account_runtime_by_account_id[accountId]);
     if (next) {
       cache.account_runtime_by_account_id[accountId] = next;
@@ -140,7 +153,9 @@ export class RuntimeCacheManager {
     siteId: string,
     updater: (current?: SiteDailySnapshot[]) => SiteDailySnapshot[] | undefined
   ): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     const cache = await this.loadCache();
+    getApplicationStorage()?.assertWritable();
     const next = updater(cache.site_daily_snapshots_by_site_id[siteId]);
     if (next && next.length > 0) {
       cache.site_daily_snapshots_by_site_id[siteId] = next;
@@ -151,7 +166,9 @@ export class RuntimeCacheManager {
   }
 
   async deleteSite(siteId: string): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     const cache = await this.loadCache();
+    getApplicationStorage()?.assertWritable();
     delete cache.site_shared_by_site_id[siteId];
     delete cache.site_runtime_by_site_id[siteId];
     delete cache.site_daily_snapshots_by_site_id[siteId];
@@ -159,7 +176,9 @@ export class RuntimeCacheManager {
   }
 
   async deleteAccount(accountId: string): Promise<void> {
+    getApplicationStorage()?.assertWritable();
     const cache = await this.loadCache();
+    getApplicationStorage()?.assertWritable();
     delete cache.account_runtime_by_account_id[accountId];
     await this.saveCache(cache);
   }

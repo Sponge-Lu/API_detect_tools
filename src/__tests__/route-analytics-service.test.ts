@@ -99,7 +99,9 @@ import {
   getRouteRequestLogs,
   recordRouteRequest,
   resetAnalytics,
+  flushRouteAnalytics,
 } from '../main/route-analytics-service';
+import { unifiedConfigManager } from '../main/unified-config-manager';
 import { buildBucketKey } from '../shared/types/route-proxy';
 
 function resetRoutingBuckets(buckets: Record<string, RouteAnalyticsBucket> = {}) {
@@ -117,6 +119,44 @@ describe('route-analytics-service token statistics', () => {
     clearRouteRequestLogs();
     resetRoutingBuckets();
     mocks.routingConfig.modelRegistry.sources = [];
+  });
+
+  it('retries failed batches together with new events without losing or duplicating counts', async () => {
+    const record = (requestId: string) =>
+      recordRouteRequest({
+        requestId,
+        attempt: 1,
+        at: Date.now(),
+        canonicalModel: null,
+        cliType: 'codex',
+        method: 'POST',
+        path: '/v1/responses',
+        routeRuleId: 'rule-1',
+        siteId: 'site-1',
+        accountId: 'account-1',
+        apiKeyId: 'key-1',
+        outcome: 'success',
+        statusCode: 200,
+      });
+    const persist = vi.mocked(unifiedConfigManager.upsertRouteAnalyticsBuckets);
+    let reject!: (error: Error) => void;
+    persist.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        })
+    );
+    record('before-failure');
+    const failed = flushRouteAnalytics();
+    record('during-failure');
+    reject(new Error('Injected persistence failure'));
+    await expect(failed).rejects.toThrow('Injected persistence failure');
+    await flushRouteAnalytics();
+    expect(persist.mock.calls[1][0].reduce((total, bucket) => total + bucket.requestCount, 0)).toBe(
+      2
+    );
+    await flushRouteAnalytics();
+    expect(persist).toHaveBeenCalledTimes(2);
   });
 
   it('stores token usage on route request logs', () => {

@@ -52,6 +52,7 @@ export interface AppStorageBackupPolicy {
 }
 
 export interface AppStorageEntry {
+  databaseTables?: readonly string[];
   id: string;
   kind: AppStorageKind;
   owner: string;
@@ -80,13 +81,85 @@ export const APP_STORAGE_MANIFEST_VERSION = 1;
 
 export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   {
+    id: 'application-database',
+    kind: 'stable-config',
+    owner: 'ApplicationStorage',
+    source: 'Authoritative application data; WAL and SHM are managed by SQLite',
+    basePath: 'userData',
+    pathSegments: ['storage', 'app.db'],
+    description: 'Live database. Export logical documents or use the online snapshot API.',
+    mutationPolicy: 'app-managed',
+    retention: { mode: 'replace-by-key', rebuildable: false, pruneTrigger: 'never' },
+    backup: { defaultIncluded: false, modes: [], reason: 'Never copy an active database file.' },
+    containsSecrets: true,
+  },
+  {
+    id: 'client-file-backups',
+    kind: 'backup',
+    owner: 'ConfigFileBackups',
+    source: 'Protected CLI file originals, rotating snapshots, and imported history',
+    basePath: 'userData',
+    pathSegments: ['backups', 'cli-config'],
+    description: 'Encrypted new snapshots; original and imported history are retained.',
+    mutationPolicy: 'app-managed',
+    retention: {
+      mode: 'max-items',
+      rebuildable: false,
+      maxItems: 10,
+      dedupeKey: 'targetPath/snapshotId',
+      pruneTrigger: 'on-write',
+    },
+    backup: {
+      defaultIncluded: false,
+      modes: [],
+      reason: 'Separate file rollback history; exclude recursive backups.',
+    },
+    containsSecrets: true,
+  },
+  {
+    id: 'public-model-metadata',
+    kind: 'runtime-cache',
+    owner: 'ModelMetadataService',
+    source: 'Public models.dev metadata',
+    basePath: 'userData',
+    pathSegments: ['model-metadata.json'],
+    description: 'Rebuildable public metadata; independent of application restore.',
+    mutationPolicy: 'app-managed',
+    retention: {
+      mode: 'ttl',
+      rebuildable: true,
+      ttlDays: 1,
+      dedupeKey: 'modelId',
+      pruneTrigger: 'on-write',
+    },
+    backup: { defaultIncluded: false, modes: [], reason: 'Rebuilt from public metadata.' },
+    containsSecrets: false,
+  },
+  {
     id: 'stable-config',
+    databaseTables: [
+      'site_groups',
+      'sites',
+      'accounts',
+      'account_keys',
+      'route_rules',
+      'rule_sites',
+      'rule_accounts',
+      'model_redirects',
+      'model_exclusions',
+      'client_routing',
+      'session_choices',
+      'document_records',
+      'app_preferences',
+      'document_metadata',
+    ],
     kind: 'stable-config',
     owner: 'UnifiedConfigManager',
     source: 'User-maintained sites, accounts, settings, and stable routing intent',
     basePath: 'userData',
     pathSegments: ['config.json'],
-    description: 'Stable configuration file. Runtime/cache payloads must not grow here.',
+    description:
+      'Logical stable configuration backed by storage/app.db. JSON path is an exchange identifier.',
     mutationPolicy: 'app-managed',
     retention: {
       mode: 'replace-by-key',
@@ -103,12 +176,18 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'runtime-detection-cache',
+    databaseTables: [
+      'detection_cache',
+      'site_daily_snapshots',
+      'document_metadata',
+      'app_preferences',
+    ],
     kind: 'runtime-cache',
     owner: 'RuntimeCacheManager',
     source: 'Site/account detection results and overview snapshots',
     basePath: 'userData',
     pathSegments: ['runtime-cache.json'],
-    description: 'Current runtime cache location kept for compatibility during the storage split.',
+    description: 'Logical detection cache backed by storage/app.db.',
     mutationPolicy: 'app-managed',
     retention: {
       mode: 'ttl-and-max-items',
@@ -127,12 +206,13 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'route-runtime-state',
+    databaseTables: ['route_runtime', 'document_metadata', 'app_preferences'],
     kind: 'runtime-state',
     owner: 'UnifiedConfigManager route runtime split',
     source: 'Route stats, route path suspension, and channel health',
     basePath: 'userData',
     pathSegments: ['state', 'route-runtime.json'],
-    description: 'Target file for route runtime state after it is removed from config.json.',
+    description: 'Logical route runtime state backed by storage/app.db.',
     mutationPolicy: 'app-managed',
     retention: {
       mode: 'ttl-and-max-items',
@@ -151,6 +231,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'route-endpoint-test-state',
+    databaseTables: ['document_records', 'document_metadata', 'app_preferences'],
     kind: 'runtime-state',
     owner: 'EndpointTestService',
     source: 'Per-target endpoint selections and latest manual test results',
@@ -174,12 +255,13 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'route-analytics-state',
+    databaseTables: ['route_analytics_buckets', 'document_metadata', 'app_preferences'],
     kind: 'statistics',
     owner: 'RouteAnalyticsService',
     source: 'Route analytics buckets; request logs stay memory-only',
     basePath: 'userData',
     pathSegments: ['state', 'route-analytics.json'],
-    description: 'Target file for durable analytics buckets after route runtime split.',
+    description: 'Logical analytics document backed by indexed SQLite buckets.',
     mutationPolicy: 'app-managed',
     retention: {
       mode: 'ttl-and-max-items',
@@ -198,12 +280,18 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'model-registry-source-state',
+    databaseTables: [
+      'route_model_sources',
+      'document_records',
+      'document_metadata',
+      'app_preferences',
+    ],
     kind: 'runtime-state',
     owner: 'RouteModelRegistryService',
     source: 'Model registry source snapshots rebuilt from site/account/custom CLI sources',
     basePath: 'userData',
     pathSegments: ['state', 'route-model-sources.json'],
-    description: 'Target file for high-volume model source snapshots if split from routing config.',
+    description: 'Rebuildable model source rows in storage/app.db.',
     mutationPolicy: 'app-managed',
     retention: {
       mode: 'max-items',
@@ -221,6 +309,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'theme-settings',
+    databaseTables: ['app_preferences', 'document_metadata'],
     kind: 'settings',
     owner: 'theme handlers',
     source: 'Renderer theme selection',
@@ -243,6 +332,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'close-behavior-settings',
+    databaseTables: ['app_preferences', 'document_metadata'],
     kind: 'settings',
     owner: 'CloseBehaviorManager',
     source: 'Window close behavior preference',
@@ -265,6 +355,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'update-settings',
+    databaseTables: ['app_preferences', 'document_metadata'],
     kind: 'settings',
     owner: 'UpdateService',
     source: 'Update preference and update state',
@@ -287,6 +378,12 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'custom-cli-configs',
+    databaseTables: [
+      'custom_cli_configs',
+      'custom_cli_keys',
+      'app_preferences',
+      'document_metadata',
+    ],
     kind: 'sensitive-settings',
     owner: 'CustomCliConfigService',
     source: 'User-defined OpenAI-compatible CLI endpoints and API keys',
@@ -311,6 +408,12 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'config-file-profiles',
+    databaseTables: [
+      'config_file_profiles',
+      'profile_files',
+      'document_metadata',
+      'app_preferences',
+    ],
     kind: 'settings',
     owner: 'ConfigFileProfileService',
     source: 'User-defined client configuration file profiles and templates',
@@ -333,6 +436,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'route-state-affinity',
+    databaseTables: ['response_affinity', 'document_metadata', 'app_preferences'],
     kind: 'settings',
     owner: 'RouteStateAffinityService',
     source: 'Provider-owned Responses and Conversations resource affinity',
@@ -357,6 +461,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
   },
   {
     id: 'route-session-activity',
+    databaseTables: ['session_activity', 'document_metadata', 'app_preferences'],
     kind: 'runtime-state',
     owner: 'RouteSessionActivityService',
     source: 'High-frequency RouteInstance last-request timestamps',
@@ -376,6 +481,31 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
       defaultIncluded: true,
       modes: ['full-manifest'],
       reason: 'Preserves recent-session ordering without entering stable configuration backups.',
+    },
+    containsSecrets: false,
+  },
+  {
+    id: 'route-session-bindings',
+    kind: 'runtime-state',
+    owner: 'RouteSessionBindingService',
+    source: 'Recent session to exact channel bindings',
+    basePath: 'userData',
+    pathSegments: ['state', 'route-session-bindings.json'],
+    databaseTables: ['session_bindings'],
+    description: 'Logical exchange document; persisted in storage/app.db.',
+    mutationPolicy: 'app-managed',
+    retention: {
+      mode: 'ttl-and-max-items',
+      rebuildable: true,
+      dedupeKey: 'instanceId',
+      ttlDays: 0.5,
+      maxItems: 5000,
+      pruneTrigger: 'on-write',
+    },
+    backup: {
+      defaultIncluded: true,
+      modes: ['full-manifest'],
+      reason: 'Recent session continuity; reset when missing from a full restore.',
     },
     containsSecrets: false,
   },

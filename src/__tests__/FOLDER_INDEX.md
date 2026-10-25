@@ -2,6 +2,8 @@
 
 ## 架构说明
 
+`storage/` 增加独立 Electron ABI 集成测试和打包冒烟入口，执行 `npm run test:storage`；不在宿主 Node 的 Vitest 中加载原生数据库驱动。
+
 **职责**: 提供项目的单元测试、集成测试和属性测试
 
 **特点**:
@@ -51,6 +53,7 @@
 | **upstream-credential-resolver.test.ts** | 中性上游凭证解析回归 | 直连 Key 身份、托管账户归属、脱敏 Key 补全与持久化，不触碰路由运行态 |
 | **endpoint-test-panel.test.tsx** | 端点测试 UI 回归 | 三卡常驻展开、Key 分组/全部模型切换、独立选择、最新时间恢复与成功/失败显示 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
+| **route-model-grouping.test.ts** | 重定向自动归组与收录测试 | 型号/版本边界、同名跨站点扩展及手动排除 |
 | **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消、上游失败分类记账与流式校验、request_fatal 负缓存指纹、全局尝试预算 |
 | **route-proxy-lifecycle.test.ts** | 代理监听生命周期测试 | 并发启动、启动中停止、交错重启、端口冲突恢复与残留连接关闭 |
 | **route-store.test.ts** | 路由服务器状态测试 | 启停同步缓存配置、过期运行状态响应隔离与失败后的状态回读 |
@@ -78,8 +81,8 @@
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
 | **custom-cli-config-service.test.ts** | 直连接入点协议迁移测试 | 唯一旧协议迁移及冲突待确认 |
 | **custom-cli-model-service.test.ts** | 直连配置模型 URL 选择测试 | 模型 URL 为空时回退 Base URL，非空时使用独立模型端点 |
-| **config-file-profile-service.test.ts** | 配置方案、目标目录协议、独立凭证、文件事务与对话路径测试 | 完整内置模板、模型域、Key 轮换、profile affinity 清理、revision/路径冲突、回滚和增量扫描 |
-| **config-profiles-section.test.tsx** | 配置文件卡片区 UI 刷新回归测试 | 整卡点击编辑、卡片按钮隔离、内置/需修复徽章、删除配置/文件确认、segmented 模型范围、本地配置直接保存、行级 diff 预览、会话关联卡片已移除、内置模板删除后可恢复 |
+| **config-file-profile-service.test.ts** | 配置方案、目标目录协议、独立凭证、文件事务与对话路径测试 | 内置模板、DSH 旧凭证迁移/YAML 事务/备份兼容、模型域、Key 轮换、profile affinity 清理、revision/路径冲突、回滚和增量扫描 |
+| **config-profiles-section.test.tsx** | 配置文件卡片区 UI 刷新回归测试 | DSH 专用设置/恢复预览/旧会话迁移、整卡点击编辑、卡片按钮隔离、徽章、删除确认、模型范围、本地保存、行级 diff 与内置模板恢复 |
 | **route-session-service.test.ts** | RouteInstance 身份与生命周期测试 | 三元键、DSH 原生/兼容标识及异常拒绝、原生元数据、歧义拒绝、ARMED 认领、父子关联、生命周期及钉住归档保护 |
 | **dsh-integration-service.test.ts** | DSH 接入服务测试 | 注释/!!js 保留式 YAML 合并、按 id 幂等、模型目录同步与回退、凭据 refs 合并、两处会话引用迁移、回滚与外部改动保护 |
 | **route-session-activity-service.test.ts** | 会话活动 sidecar 测试 | 合并写入、重启 hydrate、TTL 与容量限制 |
@@ -108,7 +111,6 @@
 | **group-label.test.ts** | 分组标签规范化 | 数字前缀到圆圈数字 |
 | **dev-script-orchestrator.test.ts** | 开发脚本编排 | `scripts/dev*.cjs` 进程编排与清理 |
 | **dsh-integration-service.test.ts** | DSH 接入服务 | patch 合并、凭据写入、回滚按 id 撤销、会话迁移、模型来源匹配 |
-| **dsh-integration-banner.test.tsx** | DSH 状态条 | 未安装静默、未接入/待迁移/就绪三态、失败文案与回滚入口 |
 | **route-stats-service.test.ts** | 路由路径状态机 | 三态熔断、站点级熔断与通道统计 |
 | **route-latency.test.ts** | 延迟分位数 | `computeLatencyPercentiles` 桶估算 |
 | **routeTtfb.test.ts** | 首字时间分位数 | `computeFirstBytePercentiles` |
@@ -392,3 +394,17 @@ it('should call IPC', async () => {
 
 **版本**: 3.1.3
 **更新日期**: 2026-10-22 - 补齐 DSH / 路由拆分 / 页面工具测试索引
+
+## 架构与数据管理重构（2026-10-24）
+
+- [storage-ipc-handler.test.ts](storage-ipc-handler.test.ts): 代理启停提交顺序、持久化失败与版本冲突回归
+- [architecture-boundaries.test.ts](architecture-boundaries.test.ts): 进程依赖、类型和旧持久化入口架构门禁
+- [peer-adoption.test.ts](peer-adoption.test.ts): 相关行为回归测试
+- [sites-page-redesign.test.tsx](sites-page-redesign.test.tsx): 相关行为回归测试
+- [config-file-profile-service.test.ts](config-file-profile-service.test.ts): 相关行为回归测试
+- [route-analytics-service.test.ts](route-analytics-service.test.ts): 相关行为回归测试
+- [route-stats-service.test.ts](route-stats-service.test.ts): 相关行为回归测试
+
+## 职责子模块（2026-10-24）
+
+- [storage/](storage/FOLDER_INDEX.md)

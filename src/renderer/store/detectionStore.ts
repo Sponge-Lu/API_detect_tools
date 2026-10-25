@@ -17,7 +17,7 @@
  */
 
 import { create } from 'zustand';
-import type { DetectionResult } from '../App';
+import type { DetectionResult } from '../../shared/types/renderer-config';
 import type { AllCliDetectionResult, SiteInfo } from '../../shared/types/config-detection';
 import type { CliConfig } from '../../shared/types/cli-config';
 export type { CliConfig } from '../../shared/types/cli-config';

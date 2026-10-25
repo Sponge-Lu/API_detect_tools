@@ -259,3 +259,9 @@ npm install
 
 - 环境变量：`CHROME_PATH` 或 `BROWSER_PATH`
 - 应用配置：`settings.browser_path`
+
+## SQLite 开发与回归（2026-10-24）
+
+首次 Windows 安装后运行 npm run prepare:sqlite；build/dev 自动验证当前 Electron ABI，并构建 sandbox 可加载的单文件 preload。不要用宿主 Node 直接 require Electron ABI 的 better-sqlite3。
+
+验证：npm test；npm run test:storage；npm run lint；npm run build；npm run verify:storage:product。最后一项实际打包并启动隔离 ASAR 产品，使用项目 .cache 内假 home/userData/CLI 文件和本地假上游；不改真实用户数据。schema SQL 只能追加新编号，不修改已应用迁移。详见 STORAGE_SCHEMA.md 和 STORAGE_OPERATIONS.md。

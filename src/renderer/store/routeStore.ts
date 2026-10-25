@@ -4,6 +4,7 @@
  */
 
 import { create } from 'zustand';
+import { currentDataEpoch } from '../services/data-generation';
 import type {
   RoutingConfig,
   RouteClientRoutingConfig,
@@ -78,6 +79,7 @@ function mergeModelRegistryIntoRouteConfig(
 }
 
 let serverStatusRevision = 0;
+let routeQueryRevision = 0;
 
 export const useRouteStore = create<RouteState>((set, get) => ({
   config: null,
@@ -85,9 +87,12 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   serverRunning: false,
   activeSubTab: (localStorage.getItem('route-sub-tab') as RouteSubTab) || 'redirection',
   fetchConfig: async () => {
+    const epoch = currentDataEpoch();
+    const query = ++routeQueryRevision;
     set({ loading: true });
     try {
       const res = await window.electronAPI.route?.getConfig();
+      if (epoch !== currentDataEpoch() || query !== routeQueryRevision) return;
       if (res?.success && res.data) {
         set({ config: res.data });
       }
@@ -113,8 +118,10 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   refreshRuntimeState: async () => {
+    const epoch = currentDataEpoch();
     try {
       const res = await window.electronAPI.route?.getConfig();
+      if (epoch !== currentDataEpoch()) return;
       if (!res?.success || !res.data) {
         return;
       }

@@ -1,3 +1,4 @@
+import { handleStorageIpc } from '../storage/ipc-handler';
 /**
  * 输入: ApiService, ChromeManager, ConfigDetectionService, TokenService, UnifiedConfigManager
  * 输出: 注册到 ipcMain 的站点检测和 CLI 配置检测 IPC 事件监听器
@@ -15,7 +16,7 @@
  */
 
 import Logger from '../utils/logger';
-import { ipcMain, shell } from 'electron';
+import { shell } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -73,12 +74,12 @@ export function registerDetectionHandlers(
   tokenService?: TokenService
 ) {
   // 启动浏览器供登录
-  ipcMain.handle('launch-chrome-for-login', async (_, url: string) => {
+  handleStorageIpc('launch-chrome-for-login', async (_, url: string) => {
     return await chromeManager.launchForLogin(url);
   });
 
   // 带 Cookies 的 fetch 请求
-  ipcMain.handle('fetch-with-cookies', async (_, url: string, options: any) => {
+  handleStorageIpc('fetch-with-cookies', async (_, url: string, options: any) => {
     try {
       const axios = require('axios');
       const response = await axios({
@@ -107,7 +108,7 @@ export function registerDetectionHandlers(
   });
 
   // 检测单个站点（支持指定账户凭证）
-  ipcMain.handle(
+  handleStorageIpc(
     'detect-site',
     async (
       _,
@@ -225,7 +226,7 @@ export function registerDetectionHandlers(
   );
 
   // 轻量级余额刷新（签到后使用，支持账户级缓存）
-  ipcMain.handle(
+  handleStorageIpc(
     'refresh-balance-only',
     async (_, site, timeout, checkinStats = undefined, accountId?: string) => {
       return await apiService.refreshBalanceOnly(site, timeout, checkinStats, undefined, accountId);
@@ -233,7 +234,7 @@ export function registerDetectionHandlers(
   );
 
   // 签到并刷新余额（原子操作，复用浏览器页面）
-  ipcMain.handle('checkin-and-refresh', async (_, site, timeout, accountId?: string) => {
+  handleStorageIpc('checkin-and-refresh', async (_, site, timeout, accountId?: string) => {
     if (!tokenService) {
       return { success: false, error: 'TokenService 未初始化' };
     }
@@ -328,12 +329,12 @@ export function registerDetectionHandlers(
   });
 
   // 打开外部 URL
-  ipcMain.handle('open-url', async (_, url: string) => {
+  handleStorageIpc('open-url', async (_, url: string) => {
     await shell.openExternal(url);
   });
 
   // 关闭浏览器（安全关闭，检查引用计数）
-  ipcMain.handle('close-browser', async () => {
+  handleStorageIpc('close-browser', async () => {
     try {
       // 使用 cleanup 检查引用计数，只有在没有其他检测进行时才关闭
       // 这样不会误关正在进行其他站点检测的浏览器
@@ -343,7 +344,7 @@ export function registerDetectionHandlers(
     }
   });
 
-  ipcMain.handle('close-login-browser', async () => {
+  handleStorageIpc('close-login-browser', async () => {
     try {
       chromeManager.cleanupLoginBrowser();
     } catch (error: any) {
@@ -352,30 +353,33 @@ export function registerDetectionHandlers(
   });
 
   // CLI 配置检测：检测单个 CLI 配置
-  ipcMain.handle('detection:detect-cli-config', async (_, cliType: CliType, sites: SiteInfo[]) => {
-    try {
-      Logger.info(`[IPC] 检测 ${cliType} 配置`);
-      switch (cliType) {
-        case 'claudeCode':
-          return await configDetectionService.detectClaudeCode(sites);
-        case 'codex':
-          return await configDetectionService.detectCodex(sites);
-        default:
-          throw new Error(`Unknown CLI type: ${cliType}`);
+  handleStorageIpc(
+    'detection:detect-cli-config',
+    async (_, cliType: CliType, sites: SiteInfo[]) => {
+      try {
+        Logger.info(`[IPC] 检测 ${cliType} 配置`);
+        switch (cliType) {
+          case 'claudeCode':
+            return await configDetectionService.detectClaudeCode(sites);
+          case 'codex':
+            return await configDetectionService.detectCodex(sites);
+          default:
+            throw new Error(`Unknown CLI type: ${cliType}`);
+        }
+      } catch (error: any) {
+        Logger.error(`❌ [IPC] 检测 ${cliType} 配置失败:`, error?.message || error);
+        return {
+          sourceType: 'unknown',
+          hasApiKey: false,
+          error: error?.message || 'Unknown error',
+          detectedAt: Date.now(),
+        };
       }
-    } catch (error: any) {
-      Logger.error(`❌ [IPC] 检测 ${cliType} 配置失败:`, error?.message || error);
-      return {
-        sourceType: 'unknown',
-        hasApiKey: false,
-        error: error?.message || 'Unknown error',
-        detectedAt: Date.now(),
-      };
     }
-  });
+  );
 
   // CLI 配置检测：检测所有 CLI 配置
-  ipcMain.handle('detection:detect-all-cli-config', async (_, sites: SiteInfo[]) => {
+  handleStorageIpc('detection:detect-all-cli-config', async (_, sites: SiteInfo[]) => {
     try {
       Logger.info('[IPC] 检测所有 CLI 配置');
       return await configDetectionService.detectAll(sites);
@@ -399,7 +403,7 @@ export function registerDetectionHandlers(
   });
 
   // CLI 配置检测：清除缓存
-  ipcMain.handle('detection:clear-cli-config-cache', async (_, cliType?: CliType) => {
+  handleStorageIpc('detection:clear-cli-config-cache', async (_, cliType?: CliType) => {
     try {
       if (cliType) {
         Logger.info(`[IPC] 清除 ${cliType} 配置缓存`);
@@ -416,7 +420,7 @@ export function registerDetectionHandlers(
   });
 
   // CLI 配置编辑：读取指定 CLI 的所有配置文件内容
-  ipcMain.handle('detection:read-cli-config-files', async (_, cliType: CliType) => {
+  handleStorageIpc('detection:read-cli-config-files', async (_, cliType: CliType) => {
     try {
       const home = os.homedir();
       const pathEntries = CLI_CONFIG_PATHS[cliType];
@@ -448,7 +452,7 @@ export function registerDetectionHandlers(
   });
 
   // CLI 配置编辑：保存单个配置文件
-  ipcMain.handle(
+  handleStorageIpc(
     'detection:save-cli-config-file',
     async (_, absolutePath: string, content: string) => {
       try {
@@ -465,7 +469,7 @@ export function registerDetectionHandlers(
   );
 
   // CLI 配置重置：删除指定 CLI 的本地配置文件
-  ipcMain.handle('detection:reset-cli-config', async (_, cliType: CliType) => {
+  handleStorageIpc('detection:reset-cli-config', async (_, cliType: CliType) => {
     try {
       Logger.info(`[IPC] 重置 ${cliType} 配置 - 删除本地配置文件`);
 
@@ -499,7 +503,7 @@ export function registerDetectionHandlers(
   });
 
   // 批量刷新所有托管站点账号 + 直连配置模型
-  ipcMain.handle('site:refreshAll', async () => {
+  handleStorageIpc('site:refreshAll', async () => {
     if (!tokenService) {
       return {
         success: false,
@@ -597,7 +601,7 @@ export function registerDetectionHandlers(
   });
 
   // 批量签到所有托管站点账号
-  ipcMain.handle('site:checkinAll', async () => {
+  handleStorageIpc('site:checkinAll', async () => {
     if (!tokenService) {
       return { success: false, error: 'TokenService 未初始化', results: [] };
     }

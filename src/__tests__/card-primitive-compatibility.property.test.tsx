@@ -118,7 +118,7 @@ describe('Card Primitive Compatibility - Property Tests', () => {
 
               if (blur) {
                 // When blur is enabled, should have backdrop-blur class
-                expect(classList).toContain('backdrop-blur-[12px]');
+                expect(classList).toContain('backdrop-blur-[8px]');
 
                 // Verify the blur value stays within the supported primitive range (8px to 40px)
                 const blurMatch = classList.match(/backdrop-blur-\[(\d+)px\]/);
@@ -138,7 +138,7 @@ describe('Card Primitive Compatibility - Property Tests', () => {
       );
     });
 
-    it('should have backdrop blur enabled by default', () => {
+    it('should not force backdrop blur by default (opaque surfaces skip the cost)', () => {
       fc.assert(
         fc.property(fc.constantFrom('standard', 'elevated', 'grouped'), variant => {
           const { container } = render(
@@ -152,8 +152,8 @@ describe('Card Primitive Compatibility - Property Tests', () => {
 
           if (card) {
             const classList = card.className;
-            // Default blur should be enabled
-            expect(classList).toContain('backdrop-blur-[12px]');
+            // 卡片底色不透明，默认不再叠加 backdrop-filter（纯性能损耗且边缘发虚）
+            expect(classList).not.toContain('backdrop-blur-');
           }
         }),
         { numRuns: 100 }
@@ -390,7 +390,7 @@ describe('Card Primitive Compatibility - Property Tests', () => {
           if (card) {
             const classList = card.className;
             // Should have the shared primitive border radius
-            expect(classList).toContain('rounded-[var(--radius-lg)]');
+            expect(classList).toContain('rounded-[var(--radius-md)]');
           }
         }),
         { numRuns: 100 }
@@ -456,9 +456,8 @@ describe('Card Primitive Compatibility - Property Tests', () => {
               const classList = card.className;
 
               if (isDragOver) {
-                expect(classList).toContain('border-[var(--accent)]');
-                expect(classList).toContain('border-2');
-                expect(classList).toContain('scale-[1.02]');
+                expect(classList).toContain('!border-[var(--accent)]');
+                expect(classList).toContain('bg-[var(--accent-soft)]');
                 expect(classList).toContain('shadow-[var(--shadow-xl)]');
               }
             }

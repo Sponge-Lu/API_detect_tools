@@ -16,8 +16,9 @@
 |------|------|
 | `RouteSessionSection.tsx` | 按 profileId 分组的双模式路由卡片；分组头提供模式切换、计数和独立折叠，折叠状态本地保存；两类卡片均支持模型、思考强度和钉住，保留会话父子层级、预创建及生命周期操作；mini 供左侧窄列使用，标准密度在组内三列展示 |
 | `ConfigProfilesSection.tsx` | 配置方案摘要卡片（可整卡点击编辑）、编辑弹窗、模板应用与本地文件保存预览（渲染于本地路由页） |
-| `DshIntegrationBanner.tsx` | DeepSeek Harness 接入状态条：未接入/待迁移两种态，展示目标地址与模型数，提供一键接入、迁移存量会话、重新检测；DSH 未安装或已就绪时静默不渲染 |
+| `DshConfigControls.tsx` | DSH 状态与模型目录读取；编辑器仅在基本信息下方展示高级操作：检测、旧会话迁移及恢复预览 |
 | `Redirection/ModelRedirectionTab.tsx` | 模型映射工作区：重定向模型列表（行内 `编辑` 文本按钮 + 删除图标按钮，独立渲染时同步/新增动作回退到工具栏）、来源优先级详情与编辑模态框 |
+| `Redirection/ModelDiscoveryDialog.tsx` | 自动归组候选的搜索与勾选启用；只创建用户所选重定向，并持续收录同类原始模型 |
 | `Usability/HistoryBucketBars.tsx` | 站点管理 History 列复用的单轨 48 小时 / 2 小时成功率条形图；按表头选择实际请求端点，通过 `route:getHistoryBuckets` IPC 获取数据并按成功率渐变着色，条形图右侧内联汇总 48h 请求数与加权成功率 |
 | `ProxyStats/ProxyStatsTab.tsx` | 路由页代理服务器配置与启停结果提示、local-route profile 独立凭证生成/轮换、亲和映射影响预览/确认清理与 CLI 路由模型选择面板 |
 
@@ -36,3 +37,10 @@
 - 2026-04-01: 移除三张 live route 页面的顶部说明头带,操作条回收到内容区
 - 2026-04-01: 进一步收紧 route 头带为单行不换行结构,匹配顶层 tab header 节奏
 - 2026-04-01: 移除旧标签行,route 页头带改为更紧凑的单行信息带
+
+## 架构与数据管理重构（2026-10-24）
+
+- [ConfigProfilesSection.tsx](ConfigProfilesSection.tsx): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [config-profile-view.ts](config-profile-view.ts): 配置卡片 UI 草稿与模板辅助
+- [ConfigProfilePreview.tsx](ConfigProfilePreview.tsx): CLI 文件预览和差异确认展示
+- [ConfigProfileRuleEditor.tsx](ConfigProfileRuleEditor.tsx): 模板替换规则编辑控件

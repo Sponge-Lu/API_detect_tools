@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.main.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./.cache/storage-tests"
+  },
+  "include": [
+    "scripts/run-storage-tests.ts",
+    "scripts/package-storage-smoke.ts",
+    "scripts/package-product-storage-smoke.ts",
+    "src/main/storage/**/*.ts",
+    "src/__tests__/storage/**/*.integration.ts",
+    "src/__tests__/storage/packaged-smoke.ts",
+    "src/__tests__/storage/product-smoke.ts"
+  ]
+}

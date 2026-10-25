@@ -1,3 +1,4 @@
+import { getApplicationStorage } from './storage/application-storage';
 /**
  * 会话-通道绑定持久化
  * 输入: RouteInstance 绑定记录、profile/instance 清理请求
@@ -77,6 +78,13 @@ function compactBindings(
 }
 
 export class RouteSessionBindingService {
+  invalidate(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.pending.clear();
+    this.state = null;
+    this.loadPromise = null;
+  }
   private state: RouteSessionBindingFile | null = null;
   private loadPromise: Promise<RouteSessionBindingFile> | null = null;
   private mutationQueue: Promise<void> = Promise.resolve();
@@ -106,6 +114,7 @@ export class RouteSessionBindingService {
         normalize: normalizeState,
       })
         .catch(error => {
+          if (getApplicationStorage() && error?.code !== 'ENOENT') throw error;
           Logger.warn('[RouteSessionBinding] Ignoring unreadable binding state:', error);
           return emptyState();
         })

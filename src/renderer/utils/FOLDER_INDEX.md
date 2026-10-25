@@ -36,6 +36,7 @@
 | **routeScopeFilter.ts** | 路由数据子页 scope (全部 / 站点 / 自定义 CLI) 过滤 RouteAnalyticsBucket 与作用域比较 | `filterBucketsByScope()`, `resolveScopeSiteId()`, `isSameRouteScope()`, `ROUTE_SCOPE_ALL` |
 | **routeTtfb.ts** | 首字时间 P50/P95/P99 分位数（复用 routeLatency 桶解析） | `computeFirstBytePercentiles()`, `formatTtfb()` |
 | **siteDailyStats.ts** | 站点每日快照衍生指标 | `summariseDailySnapshots()` |
+| **siteGridTemplate.ts** | 站点列表栅格模板的唯一来源（前 N-1 列固定像素、History 列弹性、末列固定操作区），保证表头与数据行严格对齐 | `buildSiteGridTemplate()`, `SITE_ACTIONS_COLUMN_WIDTH` |
 | **siteOverview.ts** | 站点资源 / 签到聚合 | `buildSiteOverviewMetrics()`, `buildSiteCheckinOverviewRows()` |
 | **siteSort.ts** | 站点排序工具 | `compareSitesByName()`, `compareSitesByBalance()` |
 
