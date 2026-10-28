@@ -6,7 +6,7 @@
 
   **API Hub Management Tools** 是一个用于管理、检测和运维 API 中转站的桌面客户端。
 
-  当前版本：`v3.1.5`
+  当前版本：`v3.1.6`
 
   基于 [Electron](https://www.electronjs.org/) + [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) 构建。
 

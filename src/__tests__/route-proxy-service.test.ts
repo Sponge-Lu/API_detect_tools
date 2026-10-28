@@ -7219,7 +7219,9 @@ describe('route-proxy-service upstream failure classification', () => {
     vi.mocked(isRoutePathDisabled).mockImplementation(
       channel => disabled.has((channel as { apiKeyId: string }).apiKeyId) && disabled.size >= 2
     );
-    vi.mocked(getRoutePathDisabledUntil).mockImplementation(() => Date.now() + 12_000);
+    vi.mocked(getRoutePathDisabledUntil).mockImplementation(
+      (_channel, now = Date.now()) => now + 12_000
+    );
     const response = createMockResponse();
 
     await handleRequest(createRequest(), response);

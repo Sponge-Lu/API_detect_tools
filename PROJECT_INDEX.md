@@ -6,7 +6,7 @@
 
 存储治理新增：`src/main/storage/database/` 提供 SQLite schema、受控连接、事务和校验快照；`storage/repositories/` 提供站点/账户映射；`app-storage-contract.ts` 定义共享版本契约。`scripts/run-storage-tests.ts` 在 Electron ABI 下执行真实数据库测试，`scripts/package-storage-smoke.ts` 验证隔离 Windows 打包产物，`scripts/prepare-sqlite.ps1` 检查/准备匹配驱动。生产切换状态见 `docs/ARCHITECTURE_REFACTOR_PROGRESS.md`。
 
-**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.5**。
+**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.6**。
 
 **技术栈**
 
@@ -324,7 +324,7 @@
 
 ---
 
-**版本**：3.1.5
+**版本**：3.1.6
 **更新日期**：2026-10-29
 **维护者**：API Hub Team
 
