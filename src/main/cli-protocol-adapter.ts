@@ -967,7 +967,6 @@ function validateParallelToolCalls(
  * 因此校验放行、转换时静默忽略，绝不抛 unsupported_field。
  */
 const ANTHROPIC_TOP_LEVEL_DROP_KEYS = new Set(['metadata', 'thinking', 'speed', 'service_tier']);
-const ANTHROPIC_BLOCK_DROP_KEYS = new Set(['cache_control']);
 /**
  * OpenAI 侧同理：这些字段只影响存储/遥测/缓存路由（官方 API 参考如此归类），
  * 不影响生成结果；跨协议转换时静默丢弃，避免真实 CLI 流量整包被拒。

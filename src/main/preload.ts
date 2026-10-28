@@ -119,6 +119,7 @@ import type {
   RouteSessionRoutingConfig,
   RouteInstanceUpdate,
   RouteClientRoutingConfig,
+  GlobalModelRoute,
 } from '../shared/types/route-proxy';
 import type { EndpointTestSelectionInput, EndpointTestTarget } from '../shared/types/endpoint-test';
 import type { BrowserProfileOptionId } from '../shared/types/site';
@@ -603,6 +604,11 @@ const electronAPI = {
     listRouteInstances: () => invokeRoute('route:list-route-instances'),
     updateClientRouting: (profileId: string, updates: Partial<RouteClientRoutingConfig>) =>
       invokeRoute('route:update-client-routing', profileId, updates),
+    upsertGlobalModelRoute: (
+      id: string | undefined,
+      updates: Partial<Omit<GlobalModelRoute, 'id'>>
+    ) => invokeRoute('route:upsert-global-model-route', id, updates),
+    deleteGlobalModelRoute: (id: string) => invokeRoute('route:delete-global-model-route', id),
     createArmedRouteInstance: (input: { modelId?: string; reasoningEffort?: string }) =>
       invokeRoute('route:create-armed-route-instance', input),
     updateRouteInstance: (instanceId: string, updates: RouteInstanceUpdate) =>

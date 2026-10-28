@@ -31,7 +31,6 @@
 - Codex 配置支持传入 `codexDetail` 参数
 - `wire_api` 固定为 `"responses"`（chat 模式已废弃）
 - 生成的配置文件包含测试结果注释
-- 中文站点名称自动转换为拼音（使用 pinyin-pro 库）
 ---
 ### sessionEventLog.ts - 操作记录
 **职责**: 将 renderer 侧的关键操作写入 `toastStore.eventHistory`，供站点管理页的操作记录弹窗展示。

@@ -110,15 +110,6 @@ export function sortBackupsByDate(backups: WebDAVBackupInfo[]): WebDAVBackupInfo
 }
 
 export class WebDAVManager {
-  private defaultConfig: WebDAVConfig;
-
-  constructor(config?: Partial<WebDAVConfig>) {
-    this.defaultConfig = {
-      ...DEFAULT_WEBDAV_CONFIG,
-      ...config,
-    };
-  }
-
   /**
    * 创建 WebDAV 客户端
    */

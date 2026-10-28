@@ -8,7 +8,7 @@ import * as checkinOperations from './auth/checkin-operations';
 import * as authenticationOperations from './auth/authentication-operations';
 import * as apiKeysOperations from './auth/api-keys-operations';
 import * as detectionOperations from './auth/detection-operations';
-import { isAuthFailureResponse, buildLoginExpiredErrorMessage } from './auth/api-key-policy';
+import { buildLoginExpiredErrorMessage } from './auth/api-key-policy';
 export {
   isMaskedApiKeyValue,
   isAuthFailureText,
@@ -520,10 +520,6 @@ export class TokenService {
       tokenData,
       userGroups
     );
-  }
-
-  private isSub2ApiAuthFailureResponse(payload: any, status?: number): boolean {
-    return isAuthFailureResponse(payload, status);
   }
 
   private buildSub2ApiTokenExpiredError(payload: any): Error {
@@ -1085,20 +1081,6 @@ export class TokenService {
       responseMessage.includes('SSLV3_ALERT') ||
       responseMessage.includes('TLSV1_ALERT')
     );
-  }
-
-  /**
-   * 根据站点URL动态选择合适的User-ID请求头名称
-   */
-  private getUserIdHeaderName(siteUrl: string): string {
-    const hostname = siteUrl.toLowerCase();
-    if (hostname.includes('veloera') || hostname.includes('velo')) {
-      return 'Veloera-User';
-    } else if (hostname.includes('onehub') || hostname.includes('hub')) {
-      return 'User-id';
-    } else {
-      return 'New-API-User';
-    }
   }
 
   private resolveSiteTypeByUrl(baseUrl: string, explicitSiteType?: SiteType) {

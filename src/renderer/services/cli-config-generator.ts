@@ -9,7 +9,6 @@
  * - PROJECT_INDEX.md
  */
 
-import { pinyin } from 'pinyin-pro';
 import {
   buildVersionedApiUrl,
   resolveApiKeyForUse,
@@ -207,37 +206,6 @@ function generateWireApiComment(codexDetail?: { responses: boolean | null }): st
  * @param params - 配置参数（支持 codexDetail 用于自动选择 wire_api）
  * @returns 生成的配置文件内容
  */
-/**
- * 将站点名称转换为 ASCII 兼容的提供商名称
- * 中文字符会被转换为拼音，其他非英文字符会被移除
- * @param siteName - 原始站点名称（可能包含中文或其他语言）
- * @returns 仅包含英文字母、数字和下划线的提供商名称
- */
-export function sanitizeProviderName(siteName: string): string {
-  // 使用 pinyin-pro 将中文转换为拼音（无声调，连续输出）
-  let name = pinyin(siteName, { toneType: 'none', type: 'array' }).join('');
-
-  // 移除所有非英文字母和数字的字符（包括其他语言文字）
-  name = name.replace(/[^a-zA-Z0-9]/g, '_');
-
-  // 移除连续的下划线
-  name = name.replace(/_+/g, '_');
-
-  // 移除首尾下划线
-  name = name.replace(/^_+|_+$/g, '');
-
-  // 确保名称以字母开头（TOML 标识符要求）
-  if (!/^[a-zA-Z]/.test(name)) {
-    name = 'P_' + name;
-  }
-
-  // 首字母大写，使其更像提供商名称
-  if (name.length > 0) {
-    name = name.charAt(0).toUpperCase() + name.slice(1);
-  }
-
-  return name || 'Provider';
-}
 
 function generateCodexConfigInternal(
   params: CodexConfigParams,

@@ -41,7 +41,7 @@
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
-| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | 损坏恢复、原子保存、客户端模式/模型/钉住重载、保存失败和并发客户端回滚隔离、路由状态恢复 |
+| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | 损坏恢复、原子保存、客户端模式/模型/钉住重载、全局固定模型保存与重复匹配校验、保存失败和并发回滚隔离、路由状态恢复 |
 | **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理、同目标串行写入和 Windows final rename 临时错误重试、孤儿 .tmp 清理 |
 | **atomic-json-fsync.test.ts** | 原子写入 fsync 持久性测试 | rename 前 fsync 临时文件（默认开启）、sync:false 跳过；独立成文件避免与 rename 重试 mock 互相污染 |
 | **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、portable 仅含 config+custom-cli、受保护浏览器状态不变更约束 |
@@ -54,9 +54,10 @@
 | **endpoint-test-panel.test.tsx** | 端点测试 UI 回归 | 三卡常驻展开、Key 分组/全部模型切换、独立选择、最新时间恢复与成功/失败显示 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
 | **route-model-grouping.test.ts** | 重定向自动归组与收录测试 | 型号/版本边界、同名跨站点扩展及手动排除 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消、上游失败分类记账与流式校验、request_fatal 负缓存指纹、全局尝试预算 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | 全局固定模型跨客户端分流与会话隔离、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消、上游失败分类记账与流式校验、request_fatal 负缓存指纹、全局尝试预算 |
 | **route-proxy-lifecycle.test.ts** | 代理监听生命周期测试 | 并发启动、启动中停止、交错重启、端口冲突恢复与残留连接关闭 |
 | **route-store.test.ts** | 路由服务器状态测试 | 启停同步缓存配置、过期运行状态响应隔离与失败后的状态回读 |
+| **route-handlers.test.ts** | 路由 IPC 配置投影回归 | 固定模型卡片创建后，经真实 IPC 配置返回、后台轮询及完整刷新仍保留 |
 | **route-upstream-forwarder.socket.test.ts** | 上游转发器真实 socket 集成测试 | 本地上游 + 本地代理走 Node 传输：SSE 跨 chunk 分帧透传与 usage 提取、上游中途断连补发 `event: error`、非流式 JSON 缓冲 |
 | **route-upstream-failure.test.ts** | 上游失败分类器单测 | 分类顺序与配额优先级、确证禁用原因解析、Retry-After 解析、留存排序、类别到 outcome 的映射 |
 | **route-session-binding-service.test.ts** | 会话-通道绑定侧车单测 | 持久化往返、未落盘先可读、TTL 与条数上限、instance/profile 清理、损坏文件降级 |
@@ -128,7 +129,6 @@
 | **test-environment-alert.test.ts** | 测试环境告警 shim | 测试环境下告警降噪 |
 | **theme-visual-consistency.test.tsx** | 主题视觉一致性 | 四套预设下 token 与组件视觉一致 |
 | **vitest-config-format.test.ts** | Vitest 配置格式 | `vitest.config.mts` 结构约束 |
-| **route-workbench-redesign.pristine.test.tsx** | Route 页基线快照 | 重设计前的页面结构基线 |
 | **codex-official-api-detection.property.test.ts** | Codex 官方 API Key 检测测试 | isOfficialOpenAIApiKey 函数 |
 | **theme-token-contract.property.test.tsx** | 主题 token 合约属性测试 | 浅/暗双主题模式、主题归一化、中性 token、AppButton 主题接线 |
 | **app-button.property.test.tsx** | AppButton 原语属性测试 | AppButton 样式、交互、状态 |

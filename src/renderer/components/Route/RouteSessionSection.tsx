@@ -4,6 +4,9 @@ import {
   ChevronRight,
   CircleStop,
   Copy,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
   Pin,
   RefreshCw,
   RotateCcw,
@@ -16,6 +19,7 @@ import {
   isRouteThinkingEffortPreset,
   normalizeRouteClientRoutingConfig,
   type RouteClientRoutingConfig,
+  type GlobalModelRoute,
   type RouteInstance,
   type RouteInstanceUpdate,
 } from '../../../shared/types/route-proxy';
@@ -25,6 +29,7 @@ import { toast } from '../../store/toastStore';
 import { AppButton } from '../AppButton/AppButton';
 import { AppCard } from '../AppCard';
 import { AppSelect } from '../AppSelect';
+import { AppModal } from '../AppModal/AppModal';
 import { AgentLogo } from '../AgentLogo';
 import {
   buildRouteSessionOrdinals,
@@ -200,6 +205,10 @@ function ReasoningEffortEditor({
 export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
   const config = useRouteStore(state => state.config);
   const saveClientRouting = useRouteStore(state => state.saveClientRouting);
+  const saveGlobalModelRoute = useRouteStore(state => state.saveGlobalModelRoute);
+  const deleteGlobalModelRoute = useRouteStore(state => state.deleteGlobalModelRoute);
+  const [globalEditor, setGlobalEditor] = useState<GlobalModelRoute | 'new' | null>(null);
+  const [savingGlobalRoutes, setSavingGlobalRoutes] = useState<Set<string>>(new Set());
   const [instances, setInstances] = useState<RouteInstance[]>([]);
   const [profiles, setProfiles] = useState<ConfigFileProfile[]>([]);
   const clientRouting = config?.clientRouting;
@@ -270,7 +279,9 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
       group.roots.push(instance);
       grouped.set(id, group);
     }
-    return Array.from(grouped.values());
+    return Array.from(grouped.values()).sort(
+      (left, right) => Number(right.id === 'unbound') - Number(left.id === 'unbound')
+    );
   }, [profiles, rootInstances]);
   const [loading, setLoading] = useState(false);
   const modelOptions = useMemo(
@@ -280,9 +291,10 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
           ...Object.values(config?.modelRegistry.entries || {}).map(entry => entry.canonicalName),
           ...instances.map(instance => instance.modelId),
           ...Object.values(clientRouting || {}).map(value => value.modelId || ''),
+          ...(config?.globalModelRoutes || []).map(route => route.modelId),
         ])
       ).filter(Boolean),
-    [config?.modelRegistry.entries, instances, clientRouting]
+    [config?.modelRegistry.entries, config?.globalModelRoutes, instances, clientRouting]
   );
 
   const loadInstances = useCallback(async () => {
@@ -330,6 +342,7 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
       toast.error(response?.error || '创建等待路由失败');
       return;
     }
+    setCollapsedGroups(current => ({ ...current, unbound: false }));
     await loadInstances();
   };
 
@@ -363,6 +376,25 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
       return;
     }
     await loadInstances();
+  };
+
+  const updateGlobal = async (
+    id: string,
+    updates: Partial<Omit<GlobalModelRoute, 'id'>> | null
+  ) => {
+    setSavingGlobalRoutes(current => new Set(current).add(id));
+    try {
+      if (updates) await saveGlobalModelRoute(id, updates);
+      else await deleteGlobalModelRoute(id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '固定模型路由操作失败');
+    } finally {
+      setSavingGlobalRoutes(current => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   return (
@@ -406,10 +438,44 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </AppButton>
+          <details
+            className="relative"
+            onBlur={event => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                event.currentTarget.removeAttribute('open');
+              }
+            }}
+            onKeyDown={event => {
+              if (event.key === 'Escape') {
+                event.currentTarget.removeAttribute('open');
+                event.currentTarget.querySelector('summary')?.focus();
+              }
+            }}
+          >
+            <summary
+              aria-label="路由卡片操作"
+              title="路由卡片操作"
+              className="cursor-pointer list-none rounded p-1 text-[var(--text-secondary)] hover:bg-[var(--surface-2)] [&::-webkit-details-marker]:hidden"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </summary>
+            <div className="absolute right-0 z-20 mt-1 w-52 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-1 shadow-lg">
+              <button
+                type="button"
+                className="w-full rounded px-3 py-2 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)]"
+                onClick={event => {
+                  event.currentTarget.closest('details')?.removeAttribute('open');
+                  setGlobalEditor('new');
+                }}
+              >
+                添加全局固定模型路由
+              </button>
+            </div>
+          </details>
         </div>
       </div>
 
-      {groups.length === 0 ? (
+      {groups.length === 0 && !config?.globalModelRoutes?.length ? (
         <div className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
           暂无会话路由。可以点击上方按钮为下一个新会话创建路由，也可以直接发送请求自动创建。
         </div>
@@ -557,10 +623,265 @@ export function RouteSessionSection({ mini = false }: { mini?: boolean } = {}) {
                 </section>
               );
             })}
+            {config?.globalModelRoutes?.length ? (
+              <section
+                data-testid="route-global-model-group"
+                className="min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)]"
+              >
+                <h3 className="px-2 py-1 text-xs font-semibold text-[var(--text-primary)]">
+                  全局固定模型路由
+                </h3>
+                <div
+                  className={
+                    mini ? 'grid gap-1.5 p-1.5 pt-0' : 'grid min-w-[60rem] grid-cols-3 gap-2 p-2'
+                  }
+                >
+                  {config.globalModelRoutes.map(route => (
+                    <GlobalModelRouteCard
+                      key={route.id}
+                      route={route}
+                      mini={mini}
+                      modelOptions={modelOptions}
+                      disabled={savingGlobalRoutes.has(route.id)}
+                      onUpdate={updates => updateGlobal(route.id, updates)}
+                      onEdit={() => setGlobalEditor(route)}
+                      onDelete={() => updateGlobal(route.id, null)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : null}
           </div>
         </div>
       )}
+      {globalEditor !== null ? (
+        <GlobalModelRouteDialog
+          route={globalEditor === 'new' ? undefined : globalEditor}
+          modelOptions={modelOptions}
+          onClose={() => setGlobalEditor(null)}
+          onSave={async updates => {
+            await saveGlobalModelRoute(
+              globalEditor === 'new' ? undefined : globalEditor.id,
+              updates
+            );
+            setGlobalEditor(null);
+          }}
+        />
+      ) : null}
     </AppCard>
+  );
+}
+
+function GlobalModelRouteCard({
+  route,
+  mini,
+  modelOptions,
+  disabled,
+  onUpdate,
+  onEdit,
+  onDelete,
+}: {
+  route: GlobalModelRoute;
+  mini: boolean;
+  modelOptions: string[];
+  disabled: boolean;
+  onUpdate: (updates: Partial<Omit<GlobalModelRoute, 'id'>>) => Promise<void>;
+  onEdit: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  return (
+    <article
+      data-testid={`route-global-model-card-${route.id}`}
+      data-density={mini ? 'mini' : 'compact'}
+      className={`flex min-w-0 flex-col rounded-[var(--radius-md)] border border-l-[3px] border-[var(--line-soft)] border-l-[var(--accent)] bg-[var(--surface-2)] ${mini ? 'gap-0.5 px-2 py-1' : 'gap-2 p-3'} ${route.enabled ? '' : 'opacity-60'}`}
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span
+          className="min-w-0 flex-1 truncate text-xs font-semibold text-[var(--text-primary)]"
+          title={route.name}
+        >
+          {route.name}
+        </span>
+        <label className="flex shrink-0 items-center gap-1 text-[11px] text-[var(--text-secondary)]">
+          <input
+            type="checkbox"
+            aria-label={`${route.name} 启用`}
+            checked={route.enabled}
+            disabled={disabled}
+            onChange={event => void onUpdate({ enabled: event.target.checked })}
+          />
+          启用
+        </label>
+        <button
+          type="button"
+          aria-label={`编辑 ${route.name}`}
+          title="编辑匹配条件"
+          disabled={disabled}
+          onClick={onEdit}
+          className="rounded p-0.5 text-[var(--text-secondary)] hover:text-[var(--accent)]"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={`删除 ${route.name}`}
+          title="删除固定模型路由"
+          disabled={disabled}
+          onClick={() => void onDelete()}
+          className="rounded p-0.5 text-[var(--text-secondary)] hover:text-[var(--danger)]"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div
+        className="truncate text-[11px] text-[var(--text-secondary)]"
+        title={`所有客户端 · 精确匹配 ${route.requestModel}`}
+      >
+        匹配：{route.requestModel}
+      </div>
+      <div
+        className={`flex min-w-0 gap-1.5 border-t border-[var(--line-soft)] ${mini ? 'pt-0.5' : 'pt-2'}`}
+      >
+        <div className="min-w-0 flex-1">
+          <AppSelect
+            size="sm"
+            className={mini ? ghostSelectClassName : selectClassName}
+            aria-label={`${route.name} 目标模型`}
+            value={route.modelId}
+            disabled={disabled}
+            onChange={event => void onUpdate({ modelId: event.target.value })}
+          >
+            {modelOptions.map(model => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </AppSelect>
+        </div>
+        <div className={mini ? 'w-20 shrink-0' : 'w-28 shrink-0'}>
+          <ReasoningEffortEditor
+            instance={route}
+            disabled={disabled}
+            onSave={value => onUpdate({ reasoningEffort: value })}
+            selectClassName={mini ? ghostSelectClassName : selectClassName}
+            customInputClassName={mini ? flatInputClassName : inputClassName}
+          />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function GlobalModelRouteDialog({
+  route,
+  modelOptions,
+  onSave,
+  onClose,
+}: {
+  route?: GlobalModelRoute;
+  modelOptions: string[];
+  onSave: (updates: Omit<GlobalModelRoute, 'id'>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState<Omit<GlobalModelRoute, 'id'>>(() => ({
+    name: route?.name || '',
+    requestModel: route?.requestModel || '',
+    modelId: route?.modelId || '',
+    reasoningEffort: route?.reasoningEffort || 'medium',
+    enabled: route?.enabled ?? true,
+  }));
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await onSave(draft);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存固定模型路由失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <AppModal
+      isOpen
+      title={route ? '编辑全局固定模型路由' : '添加全局固定模型路由'}
+      size="sm"
+      onClose={() => {
+        if (!saving) onClose();
+      }}
+      footer={
+        <>
+          <AppButton variant="secondary" disabled={saving} onClick={onClose}>
+            取消
+          </AppButton>
+          <AppButton
+            loading={saving}
+            disabled={
+              saving ||
+              !draft.name.trim() ||
+              !draft.requestModel.trim() ||
+              !draft.modelId ||
+              !draft.reasoningEffort.trim()
+            }
+            onClick={() => void submit()}
+          >
+            保存
+          </AppButton>
+        </>
+      }
+    >
+      <div className="grid gap-3">
+        <label className="grid gap-1 text-xs text-[var(--text-secondary)]">
+          名称
+          <input
+            className={inputClassName}
+            value={draft.name}
+            disabled={saving}
+            onChange={event => setDraft(current => ({ ...current, name: event.target.value }))}
+          />
+        </label>
+        <label className="grid gap-1 text-xs text-[var(--text-secondary)]">
+          匹配请求模型
+          <input
+            className={inputClassName}
+            placeholder="例如 grok-4.20-fast"
+            value={draft.requestModel}
+            disabled={saving}
+            onChange={event =>
+              setDraft(current => ({ ...current, requestModel: event.target.value }))
+            }
+          />
+        </label>
+        <p className="text-xs text-[var(--text-tertiary)]">
+          所有客户端按请求中的模型名称精确匹配，优先于客户端和会话路由。
+        </p>
+        <label className="grid gap-1 text-xs text-[var(--text-secondary)]">
+          目标模型
+          <AppSelect
+            size="sm"
+            className={selectClassName}
+            value={draft.modelId}
+            disabled={saving}
+            onChange={event => setDraft(current => ({ ...current, modelId: event.target.value }))}
+          >
+            <option value="">选择模型</option>
+            {modelOptions.map(model => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </AppSelect>
+        </label>
+        <div className="grid gap-1 text-xs text-[var(--text-secondary)]">
+          <span>思考强度</span>
+          <ReasoningEffortEditor
+            instance={{ id: 'global-model-draft', reasoningEffort: draft.reasoningEffort }}
+            disabled={saving}
+            onSave={async value => setDraft(current => ({ ...current, reasoningEffort: value }))}
+          />
+        </div>
+      </div>
+    </AppModal>
   );
 }
 

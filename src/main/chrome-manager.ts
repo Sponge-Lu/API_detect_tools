@@ -2847,12 +2847,4 @@ export class ChromeManager {
   private getChromePath(): string | null {
     return browserPath.getChromePath();
   }
-
-  /**
-   * 获取 Windows 下系统默认浏览器的可执行文件路径
-   * 仅用于在 getChromePath 中作为优先候选（且仅当其为 Chromium 内核时才会被使用）
-   */
-  private getSystemDefaultBrowserPathWin(): string | null {
-    return browserPath.getSystemDefaultBrowserPathWin();
-  }
 }

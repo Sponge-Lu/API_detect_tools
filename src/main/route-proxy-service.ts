@@ -2193,9 +2193,14 @@ export async function handleRequest(
     return;
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
+  const globalModelRoute =
+    routeProfile && !targetLock && !stateAffinityRecord
+      ? routing.globalModelRoutes?.find(route => route.enabled && route.requestModel === rawModel)
+      : undefined;
   // A client credential identifies the profile, never the conversation.
   if (
     routeProfile &&
+    !globalModelRoute &&
     routingMode === 'session' &&
     !observedRouteInstanceKey &&
     endpointOperation.capability === 'generation-convertible' &&
@@ -2219,6 +2224,7 @@ export async function handleRequest(
     return;
   }
   if (
+    !globalModelRoute &&
     !observedRouteInstanceKey &&
     Object.values(sessionRouting.instances || {}).some(
       instance => instance.routingState === 'armed'
@@ -2234,8 +2240,9 @@ export async function handleRequest(
     requestedModel: rawModel,
     reasoningEffort: requestedReasoningEffort,
   });
-  const routeInstanceResolution: RouteInstanceResolution =
-    routingMode === 'client'
+  const routeInstanceResolution: RouteInstanceResolution = globalModelRoute
+    ? { instance: null, changed: false, resolutionPath: 'global-model' }
+    : routingMode === 'client'
       ? { instance: null, changed: false, resolutionPath: 'client' }
       : await unifiedConfigManager.mutateConfig(async () => {
           const result = resolveRouteInstanceForRequest({
@@ -2299,13 +2306,15 @@ export async function handleRequest(
       : observedRouteInstanceKey
         ? undefined
         : 'no_identity_evidence',
-    bindingState: routeInstanceResolution.instance
-      ? 'bound'
-      : routeInstanceResolution.utilityRequest
-        ? 'utility'
-        : hasRejectedRouteInstanceEvidence
-          ? 'rejected'
-          : 'unidentified',
+    bindingState: globalModelRoute
+      ? 'global-model'
+      : routeInstanceResolution.instance
+        ? 'bound'
+        : routeInstanceResolution.utilityRequest
+          ? 'utility'
+          : hasRejectedRouteInstanceEvidence
+            ? 'rejected'
+            : 'unidentified',
     profileIdHash: fingerprintRouteIdentity(routeProfile?.id),
     instanceIdHash: fingerprintRouteIdentity(routeInstanceResolution.instance?.id),
   });
@@ -2351,6 +2360,7 @@ export async function handleRequest(
       routeProfile?.name;
   }
   const selectedThinkingEffort =
+    normalizeRouteThinkingEffort(globalModelRoute?.reasoningEffort) ??
     (routingMode === 'client'
       ? normalizeRouteThinkingEffort(clientRouting?.reasoningEffort)
       : null) ??
@@ -2361,6 +2371,7 @@ export async function handleRequest(
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
   let canonicalModel: string | null =
+    globalModelRoute?.modelId ||
     (routingMode === 'client'
       ? resolveCanonicalModelFromRegistry(routing, clientRouting?.modelId || null)
       : null) ||
@@ -2372,13 +2383,16 @@ export async function handleRequest(
     canonicalModel,
     routingMode,
     profileId: routeProfile?.id,
+    globalModelRouteId: globalModelRoute?.id,
     modelSelectionSource: targetLock
       ? 'target-lock'
-      : routingMode === 'client' && clientRouting?.modelId
-        ? 'client'
-        : routeInstanceResolution.instance
-          ? 'session'
-          : 'request',
+      : globalModelRoute
+        ? 'global-model'
+        : routingMode === 'client' && clientRouting?.modelId
+          ? 'client'
+          : routeInstanceResolution.instance
+            ? 'session'
+            : 'request',
   });
 
   let activeRouteRuleId: string | undefined;

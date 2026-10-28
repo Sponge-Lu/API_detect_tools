@@ -8,6 +8,8 @@ export const ROUTE_STABLE_COMMAND_CHANNELS: readonly string[] = [
   'route:save-cli-model-selections',
   'route:save-cli-thinking-effort-selections',
   'route:update-client-routing',
+  'route:upsert-global-model-route',
+  'route:delete-global-model-route',
   'route:create-armed-route-instance',
   'route:update-route-instance',
   'route:close-route-instance',

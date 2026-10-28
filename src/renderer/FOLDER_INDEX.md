@@ -137,12 +137,6 @@ const result = await window.ipcRenderer.invoke('api:request', {
 **关键函数**:
 - `resolveModelPricing(pricingData)` - 返回 `token` 或 `perCall` 模式及对应价格字段
 - `isPerCallPricing(pricingData)` - 判断模型是否显式按次计费
-### routeRulePresentation.ts
-**职责**: 将路由规则转换为可解释展示文案
-**关键方法**:
-- `buildRouteRuleSummary(rule, context?)` - 生成人类可读摘要
-- `buildRouteRuleSelectionReason(rule)` - 生成“为何命中”说明
-- `buildRouteRuleTags(rule, context?)` - 生成紧凑标签列表
 ---
 ## 📊 数据流
 ### 用户操作流程

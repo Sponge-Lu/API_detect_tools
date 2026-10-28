@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "3.1.4",
+  "version": "3.1.5",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": {
     "name": "API Hub Team",
@@ -12,6 +12,7 @@
   },
   "scripts": {
     "prepare:sqlite": "pwsh -NoProfile -File scripts/prepare-sqlite.ps1",
+    "test:artifacts": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node --test .cache/storage-tests/scripts/packaged-smoke-artifacts.test.js",
     "test:storage": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/run-storage-tests.js",
     "verify:storage:packaged": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/package-storage-smoke.js",
     "verify:storage:product": "npm run build && node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/package-product-storage-smoke.js",
@@ -50,17 +51,14 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "@tanstack/react-virtual": "^3.13.12",
     "axios": "^1.6.0",
     "better-sqlite3": "11.10.0",
     "electron-log": "^5.4.3",
     "jsonc-parser": "^3.3.1",
-    "pinyin-pro": "^3.27.0",
     "puppeteer-core": "^21.0.0",
     "webdav": "^5.8.0",
     "yaml": "^2.9.1",
-    "zod": "^4.1.13",
-    "zustand": "^5.0.8"
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
@@ -94,14 +92,14 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.15",
-    "terser": "^5.31.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.48.0",
     "vite": "^5.4.0",
-    "vitest": "^4.0.14"
+    "vitest": "^4.0.14",
+    "zustand": "^5.0.8"
   },
   "build": {
-    "buildVersion": "3.1.4",
+    "buildVersion": "3.1.5",
     "beforePack": "scripts/before-pack.cjs",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",

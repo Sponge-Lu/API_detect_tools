@@ -46,6 +46,7 @@ import type {
   RouteSessionExtractionRule,
   RouteInstanceUpdate,
   RouteClientRoutingConfig,
+  GlobalModelRoute,
 } from '../../shared/types/route-proxy';
 import type {
   EndpointTestSelectionInput,
@@ -77,6 +78,7 @@ export function registerRouteHandlers() {
         cliThinkingEffortSelections: routing.cliThinkingEffortSelections,
         sessionRouting: routing.sessionRouting,
         clientRouting: routing.clientRouting,
+        globalModelRoutes: routing.globalModelRoutes,
         stats: routing.stats,
         routePathStates: routing.routePathStates,
         health: routing.health,
@@ -249,6 +251,25 @@ export function registerRouteHandlers() {
       }
     }
   );
+
+  handleStorageIpc(
+    'route:upsert-global-model-route',
+    async (_, id: string | undefined, updates: Partial<Omit<GlobalModelRoute, 'id'>>) => {
+      try {
+        return ok(await unifiedConfigManager.upsertGlobalModelRoute(id, updates));
+      } catch (e: any) {
+        return err(e.message);
+      }
+    }
+  );
+
+  handleStorageIpc('route:delete-global-model-route', async (_, id: string) => {
+    try {
+      return ok(await unifiedConfigManager.deleteGlobalModelRoute(id));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
 
   handleStorageIpc('route:list-sessions', async (_, scope?: RouteSessionListScope) => {
     try {

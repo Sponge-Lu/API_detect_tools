@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
+import type { GlobalModelRoute } from '../shared/types/route-proxy';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // request_fatal 负缓存是模块级状态，必须每个用例前清空，否则
@@ -1460,6 +1461,7 @@ describe('route-proxy-service session channel binding end to end', () => {
     } as never);
     const routing = {
       clientRouting: {} as Record<string, RouteClientRoutingConfig>,
+      globalModelRoutes: [] as GlobalModelRoute[],
       server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
       rules: [rule],
       cliModelSelections: { claudeCode: null, codex: null },
@@ -1819,6 +1821,121 @@ describe('route-proxy-service session channel binding end to end', () => {
     );
     expect(routing.sessionRouting.instances.legacy).toEqual(legacy);
   });
+
+  it.each(['session', 'client'] as const)(
+    'routes fixed MCP models across clients in %s mode without touching session cards',
+    async mode => {
+      vi.clearAllMocks();
+      const waiting = {
+        id: 'waiting',
+        display: {},
+        modelId: 'waiting-model',
+        reasoningEffort: 'low',
+        routingState: 'armed',
+        presenceState: 'unknown',
+      };
+      const routing = setupSessionRoute({ waiting, existing: liveInstance('existing') });
+      routing.globalModelRoutes = [
+        {
+          id: 'grok-search',
+          name: 'Grok Search',
+          requestModel: 'grok-wire',
+          modelId: 'grok-target',
+          reasoningEffort: 'xhigh',
+          enabled: true,
+        },
+      ];
+      const before = structuredClone(routing.sessionRouting);
+      vi.mocked(extractModelFromBody).mockReturnValue('grok-wire');
+      vi.mocked(resolveChannels).mockReturnValue([
+        { ...channelA, canonicalModel: 'grok-target', resolvedModel: 'grok-upstream' },
+      ]);
+      const getBinding = vi.spyOn(routeSessionBindingService, 'get');
+      const bind = vi.spyOn(routeSessionBindingService, 'bind');
+      for (const profileId of ['codex-client', 'claude-client', 'opencode-client']) {
+        routing.clientRouting[profileId] = {
+          mode,
+          modelId: 'normal-model',
+          reasoningEffort: 'low',
+          pinned: false,
+        };
+        vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+          id: profileId,
+          name: profileId,
+        } as never);
+        for (const identity of [{}, { 'session-id': 'existing' }]) {
+          const response = createMockResponse();
+          await handleRequest(
+            createJsonRequest(
+              '/v1/chat/completions',
+              {
+                authorization: `Bearer ${profileId}`,
+                ...identity,
+              },
+              { model: 'grok-wire', messages: [{ role: 'user', content: 'search' }] }
+            ),
+            response
+          );
+          expect(response.statusCode).toBe(200);
+          expect(recordRouteRequest).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              profileId,
+              modelSelectionSource: 'global-model',
+              globalModelRouteId: 'grok-search',
+              canonicalModel: 'grok-target',
+              reasoningEffort: 'xhigh',
+              routeInstanceId: undefined,
+            })
+          );
+        }
+      }
+      expect(findMatchingRule).toHaveBeenLastCalledWith(
+        expect.any(Array),
+        'openai-chat-completions',
+        'grok-target'
+      );
+      const sent = JSON.parse(
+        Buffer.from(vi.mocked(httpRawRequest).mock.calls[0][1].body as Buffer).toString('utf8')
+      );
+      expect(sent).toMatchObject({ model: 'grok-upstream', reasoning_effort: 'xhigh' });
+      expect(routing.sessionRouting).toEqual(before);
+      expect(getBinding).not.toHaveBeenCalled();
+      expect(bind).not.toHaveBeenCalled();
+      expect(unifiedConfigManager.saveConfig).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['disabled', 'different-model', 'invalid-key'])(
+    'does not bypass normal validation for a fixed route with %s',
+    async condition => {
+      vi.clearAllMocks();
+      const routing = setupSessionRoute();
+      routing.globalModelRoutes = [
+        {
+          id: 'grok-search',
+          name: 'Grok Search',
+          requestModel: condition === 'different-model' ? 'other-model' : 'gpt-4.1-mini',
+          modelId: 'grok-target',
+          reasoningEffort: 'high',
+          enabled: condition !== 'disabled',
+        },
+      ];
+      if (condition === 'invalid-key')
+        vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue(null);
+      const response = createMockResponse();
+      await handleRequest(
+        createJsonRequest(
+          '/v1/chat/completions',
+          { authorization: 'Bearer key' },
+          { model: 'gpt-4.1-mini', messages: [] }
+        ),
+        response
+      );
+      expect(response.statusCode).toBe(condition === 'invalid-key' ? 401 : 409);
+      expect(httpRawRequest).not.toHaveBeenCalled();
+      expect(routing.sessionRouting.instances).toEqual({});
+    }
+  );
 
   it('uses one client target for multiple sessions without consuming an armed card or session bindings', async () => {
     vi.clearAllMocks();

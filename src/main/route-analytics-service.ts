@@ -274,6 +274,7 @@ function appendRouteRequestLog(params: {
   routingMode?: RouteRequestLogItem['routingMode'];
   profileId?: string;
   modelSelectionSource?: RouteRequestLogItem['modelSelectionSource'];
+  globalModelRouteId?: string;
   requestId: string;
   requestSelectionStartedAt?: number;
   attempt: number;
@@ -322,6 +323,7 @@ function appendRouteRequestLog(params: {
     routingMode: params.routingMode,
     profileId: params.profileId,
     modelSelectionSource: params.modelSelectionSource,
+    globalModelRouteId: params.globalModelRouteId,
     id: buildRouteRequestLogId(params.at),
     requestId: params.requestId,
     requestSelectionStartedAt: params.requestSelectionStartedAt,
@@ -457,6 +459,7 @@ export function recordRouteRequest(params: {
   routingMode?: RouteRequestLogItem['routingMode'];
   profileId?: string;
   modelSelectionSource?: RouteRequestLogItem['modelSelectionSource'];
+  globalModelRouteId?: string;
   requestId: string;
   requestSelectionStartedAt?: number;
   attempt: number;
@@ -521,6 +524,7 @@ export function recordRouteRequest(params: {
     routingMode: params.routingMode,
     profileId: params.profileId,
     modelSelectionSource: params.modelSelectionSource,
+    globalModelRouteId: params.globalModelRouteId,
     requestId: params.requestId,
     requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,

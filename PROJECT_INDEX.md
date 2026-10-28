@@ -2,9 +2,11 @@
 
 ## 项目概览
 
+打包验证产物：`scripts/packaged-smoke-artifacts.ts` 为 product/driver 各保留最近一次成功和失败结果，跳过无完成标记及链接目录；`npm run test:artifacts` 执行 `scripts/packaged-smoke-artifacts.test.ts` 验证清理边界。
+
 存储治理新增：`src/main/storage/database/` 提供 SQLite schema、受控连接、事务和校验快照；`storage/repositories/` 提供站点/账户映射；`app-storage-contract.ts` 定义共享版本契约。`scripts/run-storage-tests.ts` 在 Electron ABI 下执行真实数据库测试，`scripts/package-storage-smoke.ts` 验证隔离 Windows 打包产物，`scripts/prepare-sqlite.ps1` 检查/准备匹配驱动。生产切换状态见 `docs/ARCHITECTURE_REFACTOR_PROGRESS.md`。
 
-**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.3**。
+**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.5**。
 
 **技术栈**
 
@@ -106,7 +108,7 @@
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色，条形图右侧内联汇总 48h 请求数与加权成功率 |
 | `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab1 信息表单、Tab2 资源布局与 Tab3 端点测试共享紧凑视觉规格、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
-| `src/renderer/components/Route/*` | 路由页内部区块（`ConfigProfilesSection` 配置卡片与 `DshConfigControls` DSH 专用设置、`RouteSessionSection` 双模式会话卡片、`ProxyStats/` 服务器与 CLI 模型区块、`Redirection/` 模型映射、`Usability/` History 条形图） |
+| `src/renderer/components/Route/*` | 路由页内部区块（`ConfigProfilesSection` 配置卡片与 `DshConfigControls` DSH 专用设置、`RouteSessionSection` 双模式会话卡片及全局固定模型路由、`ProxyStats/` 服务器与凭证管理、`Redirection/` 模型映射、`Usability/` History 条形图） |
 | `src/renderer/components/Route/Redirection/ModelDiscoveryDialog.tsx` / `src/shared/utils/routeModelGrouping.ts` | 自动发现重定向候选并由用户选择启用；共享收录/排除规则，保持页面、注册表和实际路由一致；由 `route-model-grouping.test.ts` 及路由、配置回归测试覆盖 |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
@@ -117,7 +119,6 @@
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
 | `src/renderer/utils/siteGridTemplate.ts` | 站点列表栅格模板的唯一来源：前 N-1 列固定像素、History 列 `minmax(默认宽, 1fr)` 吸收剩余空间、末列固定操作区，保证表头与数据行右边界严格对齐 |
 | `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
-| `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
 | `src/renderer/utils/routeSessionOrdinal.ts` | 为父 RouteInstance 分配稳定主编号，并以持久化 childOrdinal 生成异模型子卡 `#N.M` 编号；客户端+编号哈希取色的会话色板（sessionColorForSession） |
 | `src/renderer/utils/routeLatency.ts` | 从 latencyHistogram 桶估算 P90/P99 延迟分位数，样本 <20 时返回 null；命名导出桶解析与百分位算法供 routeTtfb 复用 |
 | `src/renderer/utils/routeLogAxis.ts` | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射 + 默认刻度 (1s/3s/5s/10s/30s/60s/120s) |
@@ -251,6 +252,7 @@
 - 新增 `src/main/route-history-service.ts`
 - 新增 `src/__tests__/endpoint-test-service.test.ts`、`src/__tests__/upstream-credential-resolver.test.ts`、`src/__tests__/endpoint-test-panel.test.tsx`
 - 新增 `src/__tests__/route-proxy-service.test.ts`
+- `src/__tests__/route-handlers.test.ts`：全局固定模型卡片经 IPC 返回、后台轮询和完整刷新后的显示回归。
 - 新增 `src/__tests__/route-rule-engine.test.ts`
 - 新增 `src/main/route-analytics-service.ts`
 - 新增 `src/main/route-channel-resolver.ts`
@@ -278,7 +280,6 @@
 - 新增 `src/renderer/pages/DataOverviewPage.tsx`
 - 新增 `src/renderer/utils/siteOverview.ts`
 - 新增 `src/renderer/utils/modelPricing.ts`
-- 新增 `src/renderer/utils/routeRulePresentation.ts`
 - 新增 `src/__tests__/data-overview-page.test.tsx`
 - 新增 `src/__tests__/unified-cli-config-dialog.test.tsx`
 - 新增 `scripts/dev-cleanup.cjs`、`scripts/dev-main.cjs`、`scripts/dev.cjs`、`scripts/run-node-module.cjs`、`scripts/repair-legacy-accounts.cjs`，并保留 `scripts/migrate-config-v224-to-v301.cjs` 用于将 v2.1.24 配置拆分为 clean config、runtime-cache 与 route state 文件
@@ -323,8 +324,8 @@
 
 ---
 
-**版本**：3.1.4
-**更新日期**：2026-10-25
+**版本**：3.1.5
+**更新日期**：2026-10-29
 **维护者**：API Hub Team
 
 ## 架构与数据管理重构（2026-10-24）

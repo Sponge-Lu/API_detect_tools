@@ -2,16 +2,15 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { createPackagedSmokeArtifacts } from './packaged-smoke-artifacts';
 
 if (process.platform !== 'win32')
   throw new Error('Product packaging smoke currently verifies Windows only');
 const root = process.cwd();
-const fixture = path.join(
-  root,
-  '.cache/architecture-refactor-tests',
-  `packaged-product-${Date.now()}`
-);
-mkdirSync(fixture, { recursive: true });
+const artifacts = createPackagedSmokeArtifacts(root, 'product');
+const { fixture } = artifacts;
+let passed = false;
+process.once('exit', code => artifacts.finish(code === 0 && passed));
 const env: NodeJS.ProcessEnv = {
   ...process.env,
   STORAGE_SMOKE_ROOT: path.join(fixture, 'user-data'),
@@ -97,4 +96,5 @@ for (let phase = 1; phase <= 3; phase++) {
   assert.equal(report.packaged, true);
   assert.equal(report.phase, phase);
 }
+passed = true;
 console.log(`Full product migration/edit/rollback/backup/restore/restart passed: ${fixture}`);

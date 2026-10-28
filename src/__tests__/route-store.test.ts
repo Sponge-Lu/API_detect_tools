@@ -17,6 +17,67 @@ beforeEach(() => {
 });
 
 describe('route server controls', () => {
+  it('keeps global model routes in the store and retains them after a failed deletion', async () => {
+    const saved = {
+      id: 'global-1',
+      name: 'Search',
+      requestModel: 'wire',
+      modelId: 'target',
+      reasoningEffort: 'high',
+      enabled: true,
+    };
+    window.electronAPI.route.upsertGlobalModelRoute = vi
+      .fn()
+      .mockResolvedValue({ success: true, data: saved });
+    await useRouteStore.getState().saveGlobalModelRoute(undefined, saved);
+    expect(useRouteStore.getState().config?.globalModelRoutes).toEqual([saved]);
+    window.electronAPI.route.deleteGlobalModelRoute = vi
+      .fn()
+      .mockResolvedValue({ success: false, error: 'Disk unavailable' });
+    await expect(useRouteStore.getState().deleteGlobalModelRoute(saved.id)).rejects.toThrow(
+      'Disk unavailable'
+    );
+    expect(useRouteStore.getState().config?.globalModelRoutes).toEqual([saved]);
+    window.electronAPI.route.deleteGlobalModelRoute = vi
+      .fn()
+      .mockResolvedValue({ success: true, data: true });
+    await useRouteStore.getState().deleteGlobalModelRoute(saved.id);
+    expect(useRouteStore.getState().config?.globalModelRoutes).toEqual([]);
+  });
+
+  it('does not replace a saved global model card with a stale runtime refresh', async () => {
+    const oldConfig = structuredClone(DEFAULT_ROUTING_CONFIG);
+    let resolveRefresh!: (value: unknown) => void;
+    window.electronAPI.route.getConfig = vi.fn().mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveRefresh = resolve;
+        })
+    );
+    const refresh = useRouteStore.getState().refreshRuntimeState();
+    const saved = {
+      id: 'global-1',
+      name: 'Search',
+      requestModel: 'wire',
+      modelId: 'target',
+      reasoningEffort: 'high',
+      enabled: true,
+    };
+    window.electronAPI.route.upsertGlobalModelRoute = vi
+      .fn()
+      .mockResolvedValue({ success: true, data: saved });
+    await useRouteStore.getState().saveGlobalModelRoute(undefined, saved);
+    resolveRefresh({ success: true, data: oldConfig });
+    await refresh;
+    expect(useRouteStore.getState().config?.globalModelRoutes).toEqual([saved]);
+
+    window.electronAPI.route.getConfig = vi
+      .fn()
+      .mockResolvedValue({ success: true, data: oldConfig });
+    await useRouteStore.getState().refreshRuntimeState();
+    expect(useRouteStore.getState().config?.globalModelRoutes).toEqual([]);
+  });
+
   it('keeps client routing settings in the shared store across view remounts', async () => {
     const saved = {
       mode: 'client' as const,

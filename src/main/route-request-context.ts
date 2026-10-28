@@ -126,6 +126,7 @@ export class RouteRequestContext {
       routingMode: this.logContext.routingMode,
       profileId: this.logContext.profileId,
       modelSelectionSource: this.logContext.modelSelectionSource,
+      globalModelRouteId: this.logContext.globalModelRouteId,
       requestSelectionStartedAt: this.startedAt,
       agentId: this.agentId,
       agentName: this.agentName,

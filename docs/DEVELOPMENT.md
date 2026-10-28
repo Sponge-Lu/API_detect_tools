@@ -83,7 +83,10 @@ npm run format
 npm run test
 npm run test:watch
 npm run test:coverage
+npm run test:artifacts
 ```
+
+`test:artifacts` 验证打包冒烟测试产物的保留规则。产品与驱动测试分别保留最新成功和失败产物，仅清理更早的已标记产物；未标记或无法识别的目录不自动删除。
 
 ---
 

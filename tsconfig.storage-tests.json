@@ -8,6 +8,7 @@
     "scripts/run-storage-tests.ts",
     "scripts/package-storage-smoke.ts",
     "scripts/package-product-storage-smoke.ts",
+    "scripts/packaged-smoke-artifacts.test.ts",
     "src/main/storage/**/*.ts",
     "src/__tests__/storage/**/*.integration.ts",
     "src/__tests__/storage/packaged-smoke.ts",

@@ -66,6 +66,7 @@ import {
 import type {
   RoutingConfig,
   RouteClientRoutingConfig,
+  GlobalModelRoute,
   RouteInstance,
   RouteInstanceUpdate,
   RouteRule,
@@ -95,7 +96,6 @@ import {
   updateRouteInstance,
 } from './route-session-service';
 import {
-  BUILTIN_CLI_LABELS,
   BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   DEFAULT_CLI_CONFIG,
@@ -106,6 +106,7 @@ import {
 import {
   DEFAULT_ROUTING_CONFIG,
   normalizeRouteClientRoutingConfig,
+  normalizeGlobalModelRoute,
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
   DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
@@ -126,7 +127,6 @@ const CONFIG_READ_RETRY_DELAYS_MS = [50, 100, 200, 400];
 const AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY = 0;
 const LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6';
 const LEGACY_ROUTE_REDIRECTION_EXAMPLE_AUTO_RULE_ID = 'auto-cli-model-claudeCode-claude-opus-4-6';
-const ROUTE_CLI_LABELS: Record<RouteCliType, string> = BUILTIN_CLI_LABELS;
 const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
 
 function normalizeRouteCliSelections(
@@ -1423,6 +1423,17 @@ export class UnifiedConfigManager {
       config.routing = structuredClone(DEFAULT_ROUTING_CONFIG);
     }
     const r = config.routing;
+    const globalRouteIds = new Set<string>();
+    const globalRequestModels = new Set<string>();
+    r.globalModelRoutes = (Array.isArray(r.globalModelRoutes) ? r.globalModelRoutes : [])
+      .map(normalizeGlobalModelRoute)
+      .filter((route): route is GlobalModelRoute => {
+        if (!route || globalRouteIds.has(route.id)) return false;
+        globalRouteIds.add(route.id);
+        if (route.enabled && globalRequestModels.has(route.requestModel)) route.enabled = false;
+        if (route.enabled) globalRequestModels.add(route.requestModel);
+        return true;
+      });
     r.clientRouting = Object.fromEntries(
       Object.entries(r.clientRouting || {}).map(([profileId, value]) => [
         profileId,
@@ -2651,6 +2662,73 @@ export class UnifiedConfigManager {
         if (current) current.instances[instanceId] = previous;
         throw error;
       }
+    });
+  }
+
+  async upsertGlobalModelRoute(
+    id: string | undefined,
+    updates: Partial<Omit<GlobalModelRoute, 'id'>>
+  ): Promise<GlobalModelRoute> {
+    return this.mutateConfig(async () => {
+      if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+        throw new Error('固定模型路由配置无效');
+      }
+      const routing = this.getRoutingConfig();
+      const previous = routing.globalModelRoutes || [];
+      const existing = id === undefined ? undefined : previous.find(route => route.id === id);
+      if (id !== undefined && !existing) throw new Error('固定模型路由不存在');
+      const next = normalizeGlobalModelRoute({
+        enabled: true,
+        reasoningEffort: 'medium',
+        ...existing,
+        ...updates,
+        id: existing?.id || `global-model-${randomBytes(16).toString('hex')}`,
+      });
+      if (!next) throw new Error('请填写名称、匹配请求模型、目标模型和有效的思考强度');
+      if (
+        next.enabled &&
+        previous.some(
+          route => route.id !== next.id && route.enabled && route.requestModel === next.requestModel
+        )
+      )
+        throw new Error('该请求模型已有启用的全局固定路由');
+      routing.globalModelRoutes = existing
+        ? previous.map(route => (route.id === next.id ? next : route))
+        : [...previous, next];
+      try {
+        await this.saveConfig();
+      } catch (error) {
+        const latest = this.getRoutingConfig();
+        latest.globalModelRoutes = (latest.globalModelRoutes || []).flatMap(route => {
+          if (route.id !== next.id || JSON.stringify(route) !== JSON.stringify(next))
+            return [route];
+          return existing ? [existing] : [];
+        });
+        throw error;
+      }
+      return next;
+    });
+  }
+
+  async deleteGlobalModelRoute(id: string): Promise<boolean> {
+    return this.mutateConfig(async () => {
+      const routing = this.getRoutingConfig();
+      const previous = routing.globalModelRoutes || [];
+      const removed = previous.find(route => route.id === id);
+      if (!removed) return false;
+      routing.globalModelRoutes = previous.filter(route => route.id !== id);
+      try {
+        await this.saveConfig();
+      } catch (error) {
+        const latest = this.getRoutingConfig();
+        if (!(latest.globalModelRoutes || []).some(route => route.id === id)) {
+          const restored = [...(latest.globalModelRoutes || [])];
+          restored.splice(Math.min(previous.indexOf(removed), restored.length), 0, removed);
+          latest.globalModelRoutes = restored;
+        }
+        throw error;
+      }
+      return true;
     });
   }
 

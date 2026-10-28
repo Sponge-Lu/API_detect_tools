@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RouteSessionSection } from '../renderer/components/Route/RouteSessionSection';
-import type { RouteInstance, RoutingConfig } from '../shared/types/route-proxy';
+import type { GlobalModelRoute, RouteInstance, RoutingConfig } from '../shared/types/route-proxy';
 import type { ConfigFileProfile } from '../shared/types/config-file-profile';
 import { normalizeRouteClientRoutingConfig } from '../shared/types/route-proxy';
 
@@ -13,6 +13,8 @@ const mockCancel = vi.fn();
 const mockArchive = vi.fn();
 const mockRestore = vi.fn();
 const mockUpdateClient = vi.fn();
+const mockSaveGlobal = vi.fn();
+const mockDeleteGlobal = vi.fn();
 let mockConfig: RoutingConfig;
 
 vi.mock('../renderer/store/routeStore', () => ({
@@ -20,10 +22,14 @@ vi.mock('../renderer/store/routeStore', () => ({
     selector: (state: {
       config: RoutingConfig;
       saveClientRouting: (profileId: string, updates: unknown) => Promise<unknown>;
+      saveGlobalModelRoute: typeof mockSaveGlobal;
+      deleteGlobalModelRoute: typeof mockDeleteGlobal;
     }) => unknown
   ) =>
     selector({
       config: mockConfig,
+      saveGlobalModelRoute: mockSaveGlobal,
+      deleteGlobalModelRoute: mockDeleteGlobal,
       saveClientRouting: async (profileId: string, updates: unknown) => {
         const response = await mockUpdateClient(profileId, updates);
         if (!response.success) throw new Error(response.error);
@@ -103,6 +109,17 @@ beforeEach(() => {
     return { success: true, data: next };
   });
   route.updateClientRouting = mockUpdateClient;
+  mockSaveGlobal.mockReset().mockImplementation(async (id, updates) => {
+    const routes = mockConfig.globalModelRoutes || [];
+    const card = { ...routes.find(route => route.id === id), ...updates, id: id || 'global-1' };
+    mockConfig.globalModelRoutes = id
+      ? routes.map(route => (route.id === id ? card : route))
+      : [...routes, card];
+    return card;
+  });
+  mockDeleteGlobal.mockReset().mockImplementation(async id => {
+    mockConfig.globalModelRoutes = mockConfig.globalModelRoutes?.filter(route => route.id !== id);
+  });
 });
 
 afterEach(() => {
@@ -110,6 +127,93 @@ afterEach(() => {
 });
 
 describe('route session instance cards', () => {
+  const globalCard = (): GlobalModelRoute => ({
+    id: 'global-1',
+    name: 'Grok Search',
+    requestModel: 'grok-wire',
+    modelId: 'model-a',
+    reasoningEffort: 'high',
+    enabled: true,
+  });
+
+  it('places waiting cards first and global cards last at mini density', async () => {
+    mockConfig.globalModelRoutes = [globalCard()];
+    mockList.mockResolvedValue({
+      success: true,
+      data: [activeRoute(), { ...armedRoute(), id: 'waiting' }],
+    });
+    render(<RouteSessionSection mini />);
+    await screen.findByText('session-1');
+    const grid = screen.getByTestId('route-session-grid');
+    expect(grid.firstElementChild).toHaveAttribute('data-testid', 'route-client-group-unbound');
+    expect(grid.lastElementChild).toHaveAttribute('data-testid', 'route-global-model-group');
+    const card = screen.getByTestId('route-global-model-card-global-1');
+    expect(card).toHaveAttribute('data-density', 'mini');
+    expect(within(card).queryByText(/Session/)).not.toBeInTheDocument();
+  });
+
+  it('creates global routes from the compact menu without creating a waiting session', async () => {
+    render(<RouteSessionSection mini />);
+    await screen.findByText('session-1');
+    fireEvent.click(screen.getByLabelText('路由卡片操作'));
+    fireEvent.click(screen.getByRole('button', { name: '添加全局固定模型路由' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: '保存' })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: 'Grok Search' } });
+    fireEvent.change(within(dialog).getByLabelText('匹配请求模型'), {
+      target: { value: 'grok-wire' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('目标模型'), { target: { value: 'model-a' } });
+    fireEvent.change(within(dialog).getByLabelText('global-model-draft 思考强度'), {
+      target: { value: 'xhigh' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }));
+    await waitFor(() =>
+      expect(mockSaveGlobal).toHaveBeenCalledWith(undefined, {
+        name: 'Grok Search',
+        requestModel: 'grok-wire',
+        modelId: 'model-a',
+        reasoningEffort: 'xhigh',
+        enabled: true,
+      })
+    );
+    expect(await screen.findByTestId('route-global-model-card-global-1')).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('edits global targets and custom effort independently from matching, and supports disable and delete', async () => {
+    mockConfig.globalModelRoutes = [globalCard()];
+    mockList.mockResolvedValue({ success: true, data: [{ ...activeRoute(), modelId: 'model-b' }] });
+    render(<RouteSessionSection mini />);
+    await screen.findByText('session-1');
+    const card = screen.getByTestId('route-global-model-card-global-1');
+    fireEvent.change(within(card).getByLabelText('Grok Search 目标模型'), {
+      target: { value: 'model-b' },
+    });
+    await waitFor(() => expect(mockConfig.globalModelRoutes?.[0].modelId).toBe('model-b'));
+    await waitFor(() => expect(within(card).getByLabelText('global-1 思考强度')).toBeEnabled());
+    fireEvent.change(within(card).getByLabelText('global-1 思考强度'), {
+      target: { value: '__custom__' },
+    });
+    fireEvent.change(within(card).getByLabelText('global-1 自定义思考强度'), {
+      target: { value: '8192' },
+    });
+    fireEvent.blur(within(card).getByLabelText('global-1 自定义思考强度'));
+    await waitFor(() => expect(mockConfig.globalModelRoutes?.[0].reasoningEffort).toBe('8192'));
+    expect(mockConfig.globalModelRoutes?.[0].requestModel).toBe('grok-wire');
+    await waitFor(() => expect(within(card).getByLabelText('Grok Search 启用')).toBeEnabled());
+    fireEvent.click(within(card).getByLabelText('Grok Search 启用'));
+    await waitFor(() => expect(mockConfig.globalModelRoutes?.[0].enabled).toBe(false));
+    await waitFor(() =>
+      expect(within(card).getByRole('button', { name: '删除 Grok Search' })).toBeEnabled()
+    );
+    fireEvent.click(within(card).getByRole('button', { name: '删除 Grok Search' }));
+    await waitFor(() =>
+      expect(screen.queryByTestId('route-global-model-card-global-1')).not.toBeInTheDocument()
+    );
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
   it('creates an armed route card immediately when starting a new session route', async () => {
     render(<RouteSessionSection />);
     await screen.findByText('session-1');

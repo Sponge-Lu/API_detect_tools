@@ -888,7 +888,7 @@ export function LogsPage({
                             ? '会话级路由'
                             : '',
                         item.modelSelectionSource
-                          ? `模型来源：${{ client: '客户端设置', session: '会话设置', request: '请求', 'target-lock': '目标锁定' }[item.modelSelectionSource]}`
+                          ? `模型来源：${{ client: '客户端设置', session: '会话设置', request: '请求', 'target-lock': '目标锁定', 'global-model': '全局固定模型' }[item.modelSelectionSource]}`
                           : '',
                       ]
                         .filter(Boolean)

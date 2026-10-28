@@ -2,18 +2,17 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { createPackagedSmokeArtifacts } from './packaged-smoke-artifacts';
 
 if (process.platform !== 'win32')
   throw new Error('This packaging check currently verifies Windows only');
 const root = process.cwd();
-const fixture = path.join(
-  root,
-  '.cache/architecture-refactor-tests',
-  `packaged-driver-${Date.now()}`
-);
+const artifacts = createPackagedSmokeArtifacts(root, 'driver');
+const { fixture } = artifacts;
+let passed = false;
+process.once('exit', code => artifacts.finish(code === 0 && passed));
 const userData = path.join(fixture, 'user-data');
 const temporary = path.join(fixture, 'temporary');
-mkdirSync(fixture, { recursive: true });
 mkdirSync(temporary, { recursive: true });
 const env = {
   ...process.env,
@@ -116,4 +115,5 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   assert.equal(report.packaged, true);
   assert.equal(report.visits, attempt);
 }
+passed = true;
 console.log(`Packaged SQLite write/restart/backup checks passed: ${fixture}`);

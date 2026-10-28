@@ -30,7 +30,6 @@
 | **routeSessionOrdinal.ts** | 同一客户端父会话的稳定主编号与异模型子卡持久化副编号，统一格式化 `#N` / `#N.M` 标签；客户端+编号哈希取色的会话色板（卡片色条与优先级色点共用） | `buildRouteSessionOrdinals()`, `formatRouteSessionOrdinal()`, `formatRouteSessionLabel()`, `sessionColorForSession()`, `sessionColorForKey()` |
 | **routeLogAxis.ts** | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射与默认刻度 | `createSegmentedResponseTimeScale()`, `buildAxisTicks()`, `DEFAULT_FIRST_BYTE_AXIS_TICKS` |
 | **routeModelDistribution.ts** | 按 canonicalModel 聚合路由桶生成模型热力项（含成功率），并提供 squarified treemap 布局 | `buildModelDistribution()`, `squarifiedTreemap()` |
-| **routeRulePresentation.ts** | 路由规则摘要 / 命中原因 / CLI 标签 | `getRouteCliLabel()`, `summarizeRouteRule()` |
 | **routeSankey.ts** | 路由数据子页模型 → site/account/apiKey 通道二部图聚合（含 Top-N + 「其他」合并 + link 成功率） | `buildRouteSankeyGraph()`, `SANKEY_OTHER_MODEL_KEY`, `SANKEY_OTHER_CHANNEL_KEY` |
 | **routeScatter.ts** | 通道散点点位聚合（成功率分桶 / 首字响应 / 请求量）+ 引线候选 + greedy 防重叠 | `buildRouteScatterPoints()`, `buildScatterLabelCandidates()`, `selectScatterLabels()` |
 | **routeScopeFilter.ts** | 路由数据子页 scope (全部 / 站点 / 自定义 CLI) 过滤 RouteAnalyticsBucket 与作用域比较 | `filterBucketsByScope()`, `resolveScopeSiteId()`, `isSameRouteScope()`, `ROUTE_SCOPE_ALL` |

@@ -8,6 +8,7 @@ import { currentDataEpoch } from '../services/data-generation';
 import type {
   RoutingConfig,
   RouteClientRoutingConfig,
+  GlobalModelRoute,
   RouteRule,
   RouteProxyServerConfig,
   RouteModelRegistryConfig,
@@ -29,6 +30,11 @@ interface RouteState {
 
   // Actions - 配置
   fetchConfig: () => Promise<void>;
+  saveGlobalModelRoute: (
+    id: string | undefined,
+    updates: Partial<Omit<GlobalModelRoute, 'id'>>
+  ) => Promise<GlobalModelRoute>;
+  deleteGlobalModelRoute: (id: string) => Promise<void>;
   saveClientRouting: (
     profileId: string,
     updates: Partial<RouteClientRoutingConfig>
@@ -101,6 +107,48 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
   },
 
+  saveGlobalModelRoute: async (id, updates) => {
+    const epoch = currentDataEpoch();
+    const response = await window.electronAPI.route?.upsertGlobalModelRoute?.(id, updates);
+    if (!response?.success || !response.data)
+      throw new Error(response?.error || '保存固定模型路由失败');
+    const saved = response.data;
+    if (epoch === currentDataEpoch()) {
+      ++routeQueryRevision;
+      set(state => {
+        if (!state.config) return {};
+        const routes = state.config.globalModelRoutes || [];
+        return {
+          config: {
+            ...state.config,
+            globalModelRoutes: routes.some(route => route.id === saved.id)
+              ? routes.map(route => (route.id === saved.id ? saved : route))
+              : [...routes, saved],
+          },
+        };
+      });
+    }
+    return saved;
+  },
+
+  deleteGlobalModelRoute: async id => {
+    const epoch = currentDataEpoch();
+    const response = await window.electronAPI.route?.deleteGlobalModelRoute?.(id);
+    if (!response?.success) throw new Error(response?.error || '删除固定模型路由失败');
+    if (epoch !== currentDataEpoch()) return;
+    ++routeQueryRevision;
+    set(state => ({
+      config: state.config
+        ? {
+            ...state.config,
+            globalModelRoutes: (state.config.globalModelRoutes || []).filter(
+              route => route.id !== id
+            ),
+          }
+        : null,
+    }));
+  },
+
   saveClientRouting: async (profileId, updates) => {
     const response = await window.electronAPI.route?.updateClientRouting?.(profileId, updates);
     if (!response?.success || !response.data)
@@ -119,6 +167,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   refreshRuntimeState: async () => {
     const epoch = currentDataEpoch();
+    const query = routeQueryRevision;
     try {
       const res = await window.electronAPI.route?.getConfig();
       if (epoch !== currentDataEpoch()) return;
@@ -136,6 +185,10 @@ export const useRouteStore = create<RouteState>((set, get) => ({
             ...state.config,
             server: res.data.server,
             clientRouting: res.data.clientRouting,
+            globalModelRoutes:
+              query === routeQueryRevision
+                ? res.data.globalModelRoutes
+                : state.config.globalModelRoutes,
             stats: res.data.stats,
             routePathStates: res.data.routePathStates,
             routeEndpointCapabilities: res.data.routeEndpointCapabilities,

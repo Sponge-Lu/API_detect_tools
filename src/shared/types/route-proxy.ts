@@ -784,7 +784,8 @@ export type RouteTokenUsageSource = 'upstream' | 'local-estimate';
 export interface RouteRequestLogItem {
   routingMode?: RouteRoutingMode;
   profileId?: string;
-  modelSelectionSource?: 'client' | 'session' | 'request' | 'target-lock';
+  modelSelectionSource?: 'client' | 'session' | 'request' | 'target-lock' | 'global-model';
+  globalModelRouteId?: string;
   id: string;
   requestId: string;
   requestSelectionStartedAt?: number;
@@ -909,6 +910,36 @@ export interface RouteAnalyticsObjectStatsItem {
 
 export type RouteRoutingMode = 'client' | 'session';
 
+export interface GlobalModelRoute {
+  id: string;
+  name: string;
+  requestModel: string;
+  modelId: string;
+  reasoningEffort: RouteThinkingEffort;
+  enabled: boolean;
+}
+
+export function normalizeGlobalModelRoute(value: unknown): GlobalModelRoute | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const input = value as Partial<GlobalModelRoute>;
+  const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  const id = text(input.id);
+  const name = text(input.name);
+  const requestModel = text(input.requestModel);
+  const modelId = text(input.modelId);
+  const reasoningEffort = normalizeRouteThinkingEffort(input.reasoningEffort);
+  if (
+    !id ||
+    !name ||
+    !requestModel ||
+    !modelId ||
+    !reasoningEffort ||
+    typeof input.enabled !== 'boolean'
+  )
+    return null;
+  return { id, name, requestModel, modelId, reasoningEffort, enabled: input.enabled };
+}
+
 export interface RouteClientRoutingConfig {
   mode: RouteRoutingMode;
   modelId: string | null;
@@ -932,6 +963,7 @@ export function normalizeRouteClientRoutingConfig(value: unknown): RouteClientRo
 export interface RoutingConfig {
   storageVersion?: StateVersion;
   clientRouting?: Record<string, RouteClientRoutingConfig>;
+  globalModelRoutes?: GlobalModelRoute[];
   server: RouteProxyServerConfig;
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
@@ -989,6 +1021,7 @@ export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
 
 export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   clientRouting: {},
+  globalModelRoutes: [],
   server: DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   rules: [],
   cliModelSelections: { claudeCode: null, codex: null, openCode: null, grokBuild: null },

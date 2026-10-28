@@ -2421,32 +2421,6 @@ export class ApiService {
     return undefined;
   }
 
-  private extractTodayUsage(data: any): number | undefined {
-    // 查找今日消费字段（多路径尝试）
-    const paths = [
-      'data.today_quota_consumption', // New API
-      'data.user_info.today_quota_consumption', // 嵌套格式
-      'data.today_consumption', // 某些站点
-      'data.today_used', // 某些站点
-      'today_quota_consumption', // 直接字段
-      'today_consumption', // 直接字段
-      'today_used', // 直接字段
-    ];
-
-    for (const path of paths) {
-      const value = this.getNestedValue(data, path);
-      if (typeof value === 'number' && value !== null && value !== undefined) {
-        // 根据数值大小判断是否需要转换
-        const converted = value > 1000 ? value / 500000 : value;
-        Logger.info(`✅ [ApiService] 从 ${path} 提取今日消费: ${converted} (原始值: ${value})`);
-        return converted;
-      }
-    }
-
-    Logger.warn('⚠️ [ApiService] 未找到今日消费字段，返回0');
-    return 0; // 默认返回0而不是undefined
-  }
-
   /**
    * 获取今日时间戳范围（UTC+8时区）
    */

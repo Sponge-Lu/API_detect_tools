@@ -69,6 +69,7 @@ export interface RouteInstanceResolution {
   changed: boolean;
   resolutionPath?:
     | 'client'
+    | 'global-model'
     | 'exact'
     | 'parent'
     | 'parent-unresolved'

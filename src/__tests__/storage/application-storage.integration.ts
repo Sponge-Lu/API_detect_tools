@@ -89,6 +89,16 @@ const config = () => ({
       entries: {},
     },
     clientRouting: {},
+    globalModelRoutes: [
+      {
+        id: 'global-search',
+        name: 'Search',
+        requestModel: 'grok-wire',
+        modelId: 'target',
+        reasoningEffort: 'high',
+        enabled: true,
+      },
+    ],
     sessionRouting: { instances: {}, overrides: {}, currentRouteBySlot: {} },
   },
 });

@@ -1336,7 +1336,6 @@ export async function deleteSub2ApiApiToken(
   if (!tokenIdentifier.id) {
     throw new Error('sub2api 删除 API Key 需要 id');
   }
-  const tokenId = tokenIdentifier.id;
 
   const url = `${cleanBaseUrl}/api/v1/keys/${encodeURIComponent(tokenIdentifier.id)}`;
   try {

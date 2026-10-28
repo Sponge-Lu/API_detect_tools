@@ -130,6 +130,12 @@ const configCollections: Collection[] = [
     keys: ['document_id', 'collection', 'record_key'],
     kind: 'array',
   },
+  {
+    location: 'routing.globalModelRoutes',
+    table: 'document_records',
+    keys: ['document_id', 'collection', 'record_key'],
+    kind: 'array',
+  },
   ...[
     'routing.modelRegistry.overrides',
     'routing.sessionRouting.overrides',

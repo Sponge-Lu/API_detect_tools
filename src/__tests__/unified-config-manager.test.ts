@@ -319,6 +319,101 @@ describe('UnifiedConfigManager', () => {
     expect(restored.sites[0].name).toBe('Recovered Site');
   });
 
+  it('persists global model cards independently and rejects duplicate enabled matches', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    const card = await manager.upsertGlobalModelRoute(undefined, {
+      name: ' Grok Search ',
+      requestModel: ' grok-wire ',
+      modelId: 'target-a',
+      reasoningEffort: ' HIGH ',
+    });
+    expect(card).toMatchObject({
+      name: 'Grok Search',
+      requestModel: 'grok-wire',
+      reasoningEffort: 'high',
+      enabled: true,
+    });
+    await expect(
+      manager.upsertGlobalModelRoute(undefined, { ...card, name: 'Duplicate' })
+    ).rejects.toThrow('已有启用');
+    await manager.upsertGlobalModelRoute(card.id, { modelId: 'target-b', reasoningEffort: '8192' });
+    await manager.loadConfig();
+    expect(manager.getRoutingConfig().globalModelRoutes).toEqual([
+      { ...card, modelId: 'target-b', reasoningEffort: '8192' },
+    ]);
+    expect(manager.getRoutingConfig().sessionRouting?.instances).toEqual({});
+    const disabled = await manager.upsertGlobalModelRoute(undefined, { ...card, enabled: false });
+    await expect(manager.upsertGlobalModelRoute(disabled.id, { enabled: true })).rejects.toThrow(
+      '已有启用'
+    );
+    await manager.deleteGlobalModelRoute(card.id);
+    await manager.upsertGlobalModelRoute(disabled.id, { enabled: true });
+    await manager.loadConfig();
+    expect(manager.getRoutingConfig().globalModelRoutes).toEqual([{ ...disabled, enabled: true }]);
+  });
+
+  it('validates fixed model cards and restores them when saving or deleting fails', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await expect(manager.upsertGlobalModelRoute(undefined, { name: 'Incomplete' })).rejects.toThrow(
+      '请填写'
+    );
+    const card = await manager.upsertGlobalModelRoute(undefined, {
+      name: 'Grok',
+      requestModel: 'grok-wire',
+      modelId: 'target',
+      reasoningEffort: 'high',
+    });
+    await expect(manager.upsertGlobalModelRoute('missing', { modelId: 'other' })).rejects.toThrow(
+      '不存在'
+    );
+    vi.spyOn(manager, 'saveConfig').mockRejectedValue(new Error('Disk unavailable'));
+    await expect(manager.upsertGlobalModelRoute(card.id, { modelId: 'other' })).rejects.toThrow(
+      'Disk unavailable'
+    );
+    expect(manager.getRoutingConfig().globalModelRoutes).toEqual([card]);
+    await expect(manager.deleteGlobalModelRoute(card.id)).rejects.toThrow('Disk unavailable');
+    expect(manager.getRoutingConfig().globalModelRoutes).toEqual([card]);
+  });
+
+  it.each(['update', 'delete'] as const)(
+    'preserves another global card when a concurrent %s fails',
+    async operation => {
+      const manager = await loadManager();
+      await manager.saveConfig(createSampleConfig() as any);
+      const first = await manager.upsertGlobalModelRoute(undefined, {
+        name: 'First',
+        requestModel: 'first-wire',
+        modelId: 'first-target',
+        reasoningEffort: 'high',
+      });
+      let rejectFirst!: (error: Error) => void;
+      vi.spyOn(manager, 'saveConfig')
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectFirst = reject;
+            })
+        )
+        .mockResolvedValue(undefined);
+      const pending =
+        operation === 'update'
+          ? manager.upsertGlobalModelRoute(first.id, { modelId: 'changed' })
+          : manager.deleteGlobalModelRoute(first.id);
+      const rejected = expect(pending).rejects.toThrow('Disk unavailable');
+      const second = await manager.upsertGlobalModelRoute(undefined, {
+        name: 'Second',
+        requestModel: 'second-wire',
+        modelId: 'second-target',
+        reasoningEffort: 'low',
+      });
+      rejectFirst(new Error('Disk unavailable'));
+      await rejected;
+      expect(manager.getRoutingConfig().globalModelRoutes).toEqual([first, second]);
+    }
+  );
+
   it('persists independent client modes, targets and pins across reload without changing session data', async () => {
     const manager = await loadManager();
     await manager.saveConfig(createSampleConfig() as any);

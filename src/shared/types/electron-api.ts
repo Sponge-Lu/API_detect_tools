@@ -435,6 +435,19 @@ export interface ElectronAPI {
       data?: import('./route-proxy').RouteClientRoutingConfig;
       error?: string;
     }>;
+    upsertGlobalModelRoute?: (
+      id: string | undefined,
+      updates: Partial<Omit<import('./route-proxy').GlobalModelRoute, 'id'>>
+    ) => Promise<{
+      success: boolean;
+      data?: import('./route-proxy').GlobalModelRoute;
+      error?: string;
+    }>;
+    deleteGlobalModelRoute?: (id: string) => Promise<{
+      success: boolean;
+      data?: boolean;
+      error?: string;
+    }>;
     listRouteInstances?: () => Promise<{
       success: boolean;
       data?: RouteInstance[];
