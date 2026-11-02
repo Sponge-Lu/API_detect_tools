@@ -55,7 +55,8 @@
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
 | **route-model-grouping.test.ts** | 重定向自动归组与收录测试 | 型号/版本边界、同名跨站点扩展及手动排除 |
 | **route-proxy-service.test.ts** | 路由代理调度回归测试 | 全局固定模型跨客户端分流与会话隔离、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消、上游失败分类记账与流式校验、request_fatal 负缓存指纹、全局尝试预算 |
-| **route-proxy-lifecycle.test.ts** | 代理监听生命周期测试 | 并发启动、启动中停止、交错重启、端口冲突恢复与残留连接关闭 |
+| **route-proxy-access.test.ts** | 局域网来源策略测试 | 私有子网与掩码、本机、映射 IPv4、公网/IPv6/未知来源拒绝、网卡读取失败关闭、本机 URL |
+| **route-proxy-lifecycle.test.ts** | 代理监听生命周期测试 | 并发启动、启动中停止、交错重启、端口冲突恢复与残留连接关闭、局域网切换与伪造来源头拒绝 |
 | **route-store.test.ts** | 路由服务器状态测试 | 启停同步缓存配置、过期运行状态响应隔离与失败后的状态回读 |
 | **route-handlers.test.ts** | 路由 IPC 配置投影回归 | 固定模型卡片创建后，经真实 IPC 配置返回、后台轮询及完整刷新仍保留 |
 | **route-upstream-forwarder.socket.test.ts** | 上游转发器真实 socket 集成测试 | 本地上游 + 本地代理走 Node 传输：SSE 跨 chunk 分帧透传与 usage 提取、上游中途断连补发 `event: error`、非流式 JSON 缓冲 |

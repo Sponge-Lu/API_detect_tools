@@ -411,7 +411,8 @@ export function buildRouteProxyBaseUrl(server: {
   host?: string | null;
   port?: number | null;
 }): string {
-  const host = (server.host || '127.0.0.1').trim() || '127.0.0.1';
+  const host =
+    server.host === '0.0.0.0' ? '127.0.0.1' : (server.host || '127.0.0.1').trim() || '127.0.0.1';
   const port = Number.isFinite(server.port) ? Number(server.port) : 3210;
   return `http://${host}:${port}`;
 }

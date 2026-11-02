@@ -7,6 +7,7 @@ import { getApplicationStorage } from './storage/application-storage';
  */
 
 import * as http from 'http';
+import { isAllowedRouteProxyClient } from './route-proxy-access';
 import { createHash } from 'crypto';
 import { URL } from 'url';
 import Logger from './utils/logger';
@@ -3687,15 +3688,37 @@ export function startProxyServer(): Promise<void> {
 }
 
 async function startProxyListener(): Promise<void> {
-  if (isRunning) {
-    log.warn('Proxy server already running');
-    return;
-  }
-
   const routing = unifiedConfigManager.getRoutingConfig();
   const { port, host } = routing.server;
+  if (isRunning) {
+    const address = proxyServer?.address();
+    if (
+      address &&
+      typeof address !== 'string' &&
+      address.address === host &&
+      address.port === port
+    ) {
+      return;
+    }
+    await stopProxyListener();
+  }
 
   const server = http.createServer((req, res) => {
+    if (
+      !isAllowedRouteProxyClient(
+        req.socket.remoteAddress,
+        unifiedConfigManager.getRoutingConfig().server.host
+      )
+    ) {
+      res.setHeader('Connection', 'close');
+      writeRouteProxyJsonError(
+        res,
+        403,
+        'lan_access_forbidden',
+        'Only loopback and directly connected private IPv4 clients are allowed'
+      );
+      return;
+    }
     // 运行态闸门：停止后若仍有请求抵达（例如残留连接），一律拒绝而非继续转发上游
     if (
       !isRunning ||

@@ -17,6 +17,28 @@ beforeEach(() => {
 });
 
 describe('route server controls', () => {
+  it('refreshes configuration and listener status after saving LAN access', async () => {
+    const config = structuredClone(DEFAULT_ROUTING_CONFIG);
+    config.server.host = '0.0.0.0';
+    window.electronAPI.route.saveServerConfig = vi.fn().mockResolvedValue({ success: true });
+    window.electronAPI.route.getConfig = vi.fn().mockResolvedValue({ success: true, data: config });
+    await useRouteStore.getState().saveServerConfig({ host: '0.0.0.0' });
+    expect(useRouteStore.getState().config?.server.host).toBe('0.0.0.0');
+    expect(useRouteStore.getState().serverRunning).toBe(false);
+  });
+
+  it('surfaces a saved listener restart failure and refreshes the stopped state', async () => {
+    const config = structuredClone(DEFAULT_ROUTING_CONFIG);
+    config.server.host = '0.0.0.0';
+    window.electronAPI.route.saveServerConfig = vi.fn().mockRejectedValue(new Error('Bind failed'));
+    window.electronAPI.route.getConfig = vi.fn().mockResolvedValue({ success: true, data: config });
+    await expect(useRouteStore.getState().saveServerConfig({ host: '0.0.0.0' })).rejects.toThrow(
+      'Bind failed'
+    );
+    expect(useRouteStore.getState().config?.server.host).toBe('0.0.0.0');
+    expect(useRouteStore.getState().serverRunning).toBe(false);
+  });
+
   it('keeps global model routes in the store and retains them after a failed deletion', async () => {
     const saved = {
       id: 'global-1',

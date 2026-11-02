@@ -354,7 +354,7 @@ export interface RouteStateAffinitySummary {
 /** 代理服务器配置 */
 export interface RouteProxyServerConfig {
   enabled: boolean;
-  host: '127.0.0.1';
+  host: '127.0.0.1' | '0.0.0.0';
   port: number;
   unifiedApiKey: string;
   upstreamProxyUrl?: string;

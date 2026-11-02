@@ -66,6 +66,7 @@
 | **route-upstream-forwarder.ts** | 单次上游尝试的传输层：上游 URL/请求头构造、增量流校验/协议转换、原生 Anthropic 流延迟提交窗口与截断降级、SSE 错误补发 | `forwardToUpstream()`, `buildUpstreamRequestUrl()`, `buildUpstreamHeaders()` |
 | **route-request-context.ts** | 单个下游请求的生命周期状态：客户端取消传播、尝试计数、请求日志上下文与终结错误码诊断 | `RouteRequestContext`, `markRouteTerminalError()` |
 | **route-usage.ts** | 上游响应体/SSE 用量与思考强度解析（纯函数） | `extractUsageFromBody()`, `extractRouteReasoningEffort()` |
+| **route-proxy-access.ts** | 本机与直连私有 IPv4 子网来源校验，局域网访问失败关闭 | `isAllowedRouteProxyClient()` |
 | **route-proxy-shared.ts** | 路由代理模块间共享的路径/协议推断小工具 | `inferSourceProtocol()`, `getRequestPathname()` |
 | **route-session-service.ts** | RouteInstance 三元键、DSH 原生及兼容会话标识、父子谱系、ARMED 和生命周期管理；钉住保护阻止归档，归一化合并保留保护状态 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
 | **route-target-lock.ts** | 路由层内部 target-lock 请求的编解码、终止错误状态与单测试上游尝试预算；端点测试不依赖 | `buildTargetLockRouteApiKey()`, `parseTargetLockRouteApiKey()` |

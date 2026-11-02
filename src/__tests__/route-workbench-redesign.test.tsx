@@ -952,6 +952,32 @@ beforeEach(() => {
 });
 
 describe('route workbench redesign', () => {
+  it('saves LAN access separately from the loopback client URL', async () => {
+    render(<RoutePage />);
+    const checkbox = screen.getByRole('checkbox', { name: '允许局域网访问' });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(mockSaveServerConfig).toHaveBeenCalledWith({ host: '0.0.0.0' }));
+  });
+
+  it('keeps the local Base URL and allows disabling LAN access', async () => {
+    mockConfig.server.host = '0.0.0.0';
+    render(<RoutePage />);
+    const checkbox = screen.getByRole('checkbox', { name: '允许局域网访问' });
+    expect(checkbox).toBeChecked();
+    expect(screen.getByLabelText('Base URL')).toHaveValue('http://127.0.0.1:3000');
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(mockSaveServerConfig).toHaveBeenCalledWith({ host: '127.0.0.1' }));
+  });
+
+  it('reports a failed LAN setting save', async () => {
+    mockSaveServerConfig.mockRejectedValue(new Error('Save failed'));
+    render(<RoutePage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: '允许局域网访问' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Save failed'));
+    expect(screen.getByRole('checkbox', { name: '允许局域网访问' })).not.toBeChecked();
+  });
+
   it('reports a failed stop without claiming the proxy stopped', async () => {
     mockStopServer.mockResolvedValue(false);
     vi.mocked(toast.success).mockClear();

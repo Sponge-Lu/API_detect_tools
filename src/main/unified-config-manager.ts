@@ -1541,7 +1541,7 @@ export class UnifiedConfigManager {
     }
     // 补全 server 字段
     const s = r.server;
-    if (!s.host) s.host = '127.0.0.1';
+    if (s.host !== '0.0.0.0') s.host = '127.0.0.1';
     if (!s.port) s.port = 3210;
     if (!s.unifiedApiKey) {
       s.unifiedApiKey = `sk-route-${randomBytes(16).toString('hex')}`;
@@ -2295,6 +2295,13 @@ export class UnifiedConfigManager {
   async updateRouteServerConfig(updates: Partial<RoutingConfig['server']>): Promise<void> {
     return this.mutateConfig(async () => {
       if (!this.config) throw new Error('Config not loaded');
+      if (
+        updates.host !== undefined &&
+        updates.host !== '127.0.0.1' &&
+        updates.host !== '0.0.0.0'
+      ) {
+        throw new Error('监听地址仅支持本机或局域网模式');
+      }
       this.normalizeRoutingConfig(this.config);
       this.config.routing!.server = { ...this.config.routing!.server, ...updates };
       await this.saveConfig();

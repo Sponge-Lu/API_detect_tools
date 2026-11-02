@@ -216,12 +216,18 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   saveServerConfig: async updates => {
-    const res = await window.electronAPI.route?.saveServerConfig(updates);
+    const res = await window.electronAPI.route?.saveServerConfig(updates).catch(async error => {
+      await get().fetchConfig();
+      await get().fetchRuntimeStatus();
+      throw error;
+    });
     if (res?.success) {
       await get().fetchConfig();
+      await get().fetchRuntimeStatus();
       sessionEventLog.success('route', '路由服务器配置已保存');
     } else {
       sessionEventLog.error('route', '路由服务器配置保存失败');
+      throw new Error(res?.error || '路由服务器配置保存失败');
     }
   },
 

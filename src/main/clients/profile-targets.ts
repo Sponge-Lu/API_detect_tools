@@ -12,6 +12,7 @@ import { BUILTIN_GROUP_IDS, isApiKeyActive } from '../../shared/types/site';
 import { isDshConfigProfile } from '../../shared/config/dsh-client-config';
 
 import { resolveDshProfileConfig } from '../dsh-config-file-profile';
+import { buildRouteProxyBaseUrl } from '../route-target-lock';
 
 export async function resolveProfileValues(
   profile: ConfigFileProfile
@@ -43,7 +44,7 @@ export async function resolveProfileValues(
       throw new Error('请先为此配置卡片生成独立的本地路由 API Key');
     }
     return {
-      baseUrl: `http://${server.host}:${server.port}`,
+      baseUrl: buildRouteProxyBaseUrl(server),
       apiKey: profile.localRouteCredential.apiKey,
       model: target.model || '',
       targetLabel: '本地路由',

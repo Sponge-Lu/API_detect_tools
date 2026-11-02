@@ -6,7 +6,7 @@
 
   **API Hub Management Tools** 是一个用于管理、检测和运维 API 中转站的桌面客户端。
 
-  当前版本：`v3.1.6`
+  当前版本：`v3.1.7`
 
   基于 [Electron](https://www.electronjs.org/) + [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) 构建。
 
@@ -23,6 +23,7 @@
 - **数据总览**：默认首页，拆分为站点数据与路由数据，查看站点余额、今日消费、请求数、签到概览、资源榜单、路由 KPI 与趋势分析。
 - **本地路由工作台**：集中配置代理服务、默认模型、模型重定向、通道优先级与三态熔断策略，按 Agent + 运行位置 + Session ID 做会话级路由。
 - **全局固定模型路由**：按请求模型名称精确匹配，统一指定目标模型与思考强度，支持缺少会话身份的 MCP 请求。
+- **局域网访问**：可选开放直连私有 IPv4 子网访问，保留客户端独立 API Key 验证，本机客户端继续使用回环地址。
 - **DSH 会话级接入**：一键把 DeepSeek Harness 的 provider 指向本地路由，支持漂移检测、存量会话迁移与按条目回滚。
 - **CLI 配置与兼容性**：支持 Claude Code、Codex、OpenCode、Grok Build 的配置生成、预览、编辑与一键写入，以及三协议原生端点测试。
 - **更新与备份**：支持应用内更新、自动备份、本地恢复与 WebDAV 云端备份。

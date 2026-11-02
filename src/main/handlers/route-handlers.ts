@@ -107,6 +107,11 @@ export function registerRouteHandlers() {
       if (typeof updates.enabled === 'boolean') {
         if (updates.enabled) await startProxyServer();
         else await stopProxyServer();
+      } else if (
+        (updates.host !== undefined || updates.port !== undefined) &&
+        getProxyStatus().running
+      ) {
+        await startProxyServer();
       }
     }
   );

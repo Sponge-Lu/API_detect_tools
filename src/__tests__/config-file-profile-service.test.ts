@@ -1022,6 +1022,25 @@ describe('config file profile service', () => {
     ).rejects.toThrow('请先为此配置卡片生成独立的本地路由 API Key');
   });
 
+  it('generates loopback client URLs when the listener allows LAN access', async () => {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    const previousHost = mocks.routing.server.host;
+    mocks.routing.server.host = '0.0.0.0';
+    try {
+      const input = profile([path.join(directory, 'config.env')]);
+      await saveConfigFileProfiles([input]);
+      const preview = await previewConfigFileProfile({
+        profileId: input.id,
+        applyMode: 'overwrite',
+      });
+      expect(preview.files[0].nextContent).toContain('url=http://127.0.0.1:3210');
+      expect(preview.files[0].nextContent).not.toContain('0.0.0.0');
+    } finally {
+      mocks.routing.server.host = previousHost;
+    }
+  });
+
   it('rotates a profile key only after confirmed file diff commit', async () => {
     const directory = await createTempDirectory();
     mocks.userData = directory;

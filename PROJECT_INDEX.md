@@ -6,7 +6,7 @@
 
 存储治理新增：`src/main/storage/database/` 提供 SQLite schema、受控连接、事务和校验快照；`storage/repositories/` 提供站点/账户映射；`app-storage-contract.ts` 定义共享版本契约。`scripts/run-storage-tests.ts` 在 Electron ABI 下执行真实数据库测试，`scripts/package-storage-smoke.ts` 验证隔离 Windows 打包产物，`scripts/prepare-sqlite.ps1` 检查/准备匹配驱动。生产切换状态见 `docs/ARCHITECTURE_REFACTOR_PROGRESS.md`。
 
-**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.6**。
+**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.7**。
 
 **技术栈**
 
@@ -80,6 +80,7 @@
 | `src/main/route-upstream-forwarder.ts` | 单次上游尝试的传输层：上游 URL / 请求头构造、增量流校验与协议转换、原生 Anthropic 流延迟提交窗口与截断降级、SSE 错误补发 |
 | `src/main/route-request-context.ts` | 单个下游请求的生命周期状态：客户端取消传播、尝试计数、请求日志上下文与终结错误码诊断 |
 | `src/main/route-usage.ts` | 上游响应体 / SSE 用量与思考强度解析（纯函数），供代理与日志共用 |
+| `src/main/route-proxy-access.ts` | 路由来源校验，仅允许本机及已开启局域网模式下的直连私有 IPv4 子网；由 `route-proxy-access.test.ts` 和监听生命周期测试覆盖 |
 | `src/main/route-proxy-shared.ts` | 路由代理模块间共享的路径与协议推断小工具 |
 | `src/main/route-upstream-failure.ts` | 上游失败分类（请求侧 / 通道侧 / 瞬时 / 配额耗尽）、确证不可用原因解析、`Retry-After` 解析与响应体摘要归一化 |
 | `src/main/route-rule-engine.ts` | 路由规则匹配与命中解释，规则选路与单次请求改写抽为独立函数 |
@@ -324,8 +325,8 @@
 
 ---
 
-**版本**：3.1.6
-**更新日期**：2026-10-29
+**版本**：3.1.7
+**更新日期**：2026-11-02
 **维护者**：API Hub Team
 
 ## 架构与数据管理重构（2026-10-24）

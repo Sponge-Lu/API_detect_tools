@@ -1,6 +1,13 @@
 import * as http from 'http';
+import * as os from 'os';
 const TEST_PORT = 39217;
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('os', async importOriginal => {
+  const actual = await importOriginal<typeof import('os')>();
+  const mocked = { ...actual, networkInterfaces: vi.fn(actual.networkInterfaces) };
+  return { ...mocked, default: mocked };
+});
 
 vi.mock('../main/utils/logger', () => {
   const stub = {
@@ -20,6 +27,7 @@ vi.mock('../main/unified-config-manager', () => ({
     })),
   },
 }));
+vi.mock('../main/route-analytics-service', () => ({ recordRouteRequest: vi.fn() }));
 
 import {
   getProxyStatus,
@@ -30,10 +38,14 @@ import {
 import { DEFAULT_ROUTE_PROXY_SERVER_CONFIG } from '../shared/types/route-proxy';
 import { unifiedConfigManager } from '../main/unified-config-manager';
 
-function requestOver(agent: http.Agent, port: number): Promise<{ status: number; body: string }> {
+function requestOver(
+  agent: http.Agent,
+  port: number,
+  headers: http.OutgoingHttpHeaders = {}
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const request = http.request(
-      { host: '127.0.0.1', port, path: '/v1/messages', method: 'POST', agent },
+      { host: '127.0.0.1', port, path: '/v1/messages', method: 'POST', agent, headers },
       response => {
         const chunks: Buffer[] = [];
         response.on('data', chunk => chunks.push(chunk));
@@ -68,6 +80,7 @@ afterEach(async () => {
     }
   }
   vi.mocked(http.Server.prototype.listen).mockRestore();
+  vi.restoreAllMocks();
 });
 
 describe('route proxy default enablement', () => {
@@ -88,6 +101,69 @@ describe('route proxy default enablement', () => {
 });
 
 describe('route proxy stop actually stops serving', () => {
+  it('rebinds the listener when switching between local and LAN modes', async () => {
+    await startProxyServer();
+    const routing = unifiedConfigManager.getRoutingConfig();
+    routing.server.host = '0.0.0.0';
+    await startProxyServer();
+    expect(http.Server.prototype.listen).toHaveBeenLastCalledWith(
+      TEST_PORT,
+      '0.0.0.0',
+      expect.any(Function)
+    );
+    routing.server.host = '127.0.0.1';
+    await startProxyServer();
+    expect(http.Server.prototype.listen).toHaveBeenLastCalledWith(
+      TEST_PORT,
+      '127.0.0.1',
+      expect.any(Function)
+    );
+    expect(http.Server.prototype.listen).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['8.8.8.8', '0.0.0.0', 403],
+    ['192.168.10.20', '127.0.0.1', 403],
+    ['192.168.11.20', '0.0.0.0', 403],
+    ['192.168.10.20', '0.0.0.0', 401],
+  ] as const)(
+    'checks socket peer %s in mode %s before authentication',
+    async (peer, host, status) => {
+      unifiedConfigManager.getRoutingConfig().server.host = host;
+      vi.mocked(os.networkInterfaces).mockReturnValue({
+        Ethernet: [
+          {
+            address: '192.168.10.5',
+            netmask: '255.255.255.0',
+            family: 'IPv4',
+            internal: false,
+            mac: '00:11:22:33:44:55',
+            cidr: '192.168.10.5/24',
+          },
+        ],
+      });
+      await startProxyServer();
+      const server = vi.mocked(http.Server.prototype.listen).mock.contexts.at(-1)!;
+      server.prependListener('request', req => {
+        Object.defineProperty(req.socket, 'remoteAddress', { value: peer, configurable: true });
+      });
+      const agent = new http.Agent({ keepAlive: false });
+      try {
+        const response = await requestOver(agent, TEST_PORT, {
+          'X-Forwarded-For': '192.168.10.20',
+          Forwarded: 'for=127.0.0.1',
+          'X-Real-IP': '127.0.0.1',
+        });
+        expect(response.status, response.body).toBe(status);
+        expect(response.body).toContain(
+          status === 403 ? 'lan_access_forbidden' : 'invalid_api_key'
+        );
+      } finally {
+        agent.destroy();
+      }
+    }
+  );
+
   it('finishes stopping when stop is requested while the listener is starting', async () => {
     const starting = startProxyServer();
     const stopping = stopProxyServer();

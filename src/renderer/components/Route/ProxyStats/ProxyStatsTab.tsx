@@ -52,6 +52,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
     }))
   );
   const [toggling, setToggling] = useState(false);
+  const [savingLanAccess, setSavingLanAccess] = useState(false);
   const [localRouteProfiles, setLocalRouteProfiles] = useState<ConfigFileProfile[]>([]);
   const [visibleProfileKeys, setVisibleProfileKeys] = useState<Record<string, boolean>>({});
   const [credentialActionProfileId, setCredentialActionProfileId] = useState<string | null>(null);
@@ -116,6 +117,17 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
       toast.error(error instanceof Error ? error.message : '未知错误');
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleLanAccessChange = async (enabled: boolean) => {
+    setSavingLanAccess(true);
+    try {
+      await saveServerConfig({ host: enabled ? '0.0.0.0' : '127.0.0.1' });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存局域网访问设置失败');
+    } finally {
+      setSavingLanAccess(false);
     }
   };
 
@@ -321,7 +333,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               size="sm"
               className="ml-auto shrink-0"
               onClick={handleToggle}
-              disabled={toggling}
+              disabled={toggling || savingLanAccess}
             >
               {toggling ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -347,7 +359,11 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               defaultValue={server.port}
               onBlur={e => {
                 const port = parseInt(e.target.value, 10);
-                if (!isNaN(port) && port > 0 && port < 65536) saveServerConfig({ port });
+                if (!isNaN(port) && port > 0 && port < 65536) {
+                  void saveServerConfig({ port }).catch(error =>
+                    toast.error(error instanceof Error ? error.message : '保存端口失败')
+                  );
+                }
               }}
             />
             <AppInput
@@ -357,17 +373,37 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               type="text"
               defaultValue={server.upstreamProxyUrl || ''}
               placeholder="http://127.0.0.1:7890"
-              onBlur={e => saveServerConfig({ upstreamProxyUrl: e.target.value.trim() })}
+              onBlur={e =>
+                void saveServerConfig({ upstreamProxyUrl: e.target.value.trim() }).catch(error =>
+                  toast.error(error instanceof Error ? error.message : '保存上游代理失败')
+                )
+              }
             />
             <AppInput
               id="route-server-base-url"
               label="Base URL"
               size="sm"
               type="text"
-              value={`http://${server.host}:${server.port}`}
+              value={`http://${server.host === '0.0.0.0' ? '127.0.0.1' : server.host}:${server.port}`}
               readOnly
               containerClassName="[&_input]:font-mono"
             />
+          </div>
+          <div className="mt-3 text-xs text-[var(--text-secondary)]">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={server.host === '0.0.0.0'}
+                disabled={toggling || savingLanAccess}
+                onChange={event => void handleLanAccessChange(event.target.checked)}
+              />
+              允许局域网访问
+            </label>
+            <p className="mt-1 text-[var(--text-tertiary)]">
+              {server.host === '0.0.0.0'
+                ? `其他设备使用 http://本机局域网IPv4:${server.port} 和客户端独立 API Key；仅允许直连私有子网。请放行防火墙对应端口。`
+                : '仅允许本机访问。开启后仍需客户端独立 API Key，修改会重启正在运行的服务。'}
+            </p>
           </div>
           <div className="mt-4 border-t border-[var(--line-muted)] pt-3">
             <div className="mb-2 flex items-center justify-between gap-2">

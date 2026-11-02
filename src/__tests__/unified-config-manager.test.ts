@@ -679,6 +679,21 @@ describe('UnifiedConfigManager', () => {
     expect(manager.getRoutingConfig().server.enabled).toBe(false);
   });
 
+  it('persists LAN mode and rejects unsupported listener addresses', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as unknown as UnifiedConfig);
+    expect(manager.getRoutingConfig().server.host).toBe('127.0.0.1');
+    await manager.updateRouteServerConfig({ host: '0.0.0.0' });
+    const reloaded = await loadManager();
+    await reloaded.loadConfig();
+    expect(reloaded.getRoutingConfig().server.host).toBe('0.0.0.0');
+    await expect(manager.updateRouteServerConfig({ host: '::' as '127.0.0.1' })).rejects.toThrow(
+      '监听地址'
+    );
+    await manager.updateRouteServerConfig({ host: '127.0.0.1' });
+    expect(manager.getRoutingConfig().server.host).toBe('127.0.0.1');
+  });
+
   it('drops legacy active_account_id from persisted config during normalize + save', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
