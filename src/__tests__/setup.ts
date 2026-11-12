@@ -1,8 +1,8 @@
-import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
 // Mock Electron API for renderer tests
 if (typeof window !== 'undefined') {
+  await import('@testing-library/jest-dom');
   vi.stubGlobal('alert', vi.fn());
   if (typeof (globalThis as any).ResizeObserver === 'undefined') {
     (globalThis as any).ResizeObserver = class {

@@ -1684,6 +1684,12 @@ describe('route workbench redesign', () => {
 
     const detailActions = screen.getByTestId('redirect-detail-actions');
     expect(within(detailActions).getByRole('button', { name: '规则' })).toBeInTheDocument();
+    for (const label of ['置顶', '上移', '下移', '置底']) {
+      const button = within(detailActions).getByRole('button', { name: label });
+      expect(button.textContent).toBe('');
+      expect(button).toHaveAttribute('title', label);
+      expect(button.querySelector('svg')).not.toBeNull();
+    }
     expect(
       within(detailActions).getByRole('button', { name: '恢复 claude-opus-4-6 路由路径' })
     ).toBeInTheDocument();
@@ -2044,6 +2050,52 @@ describe('route workbench redesign', () => {
       })
     );
     expect(mockUpsertMappingOverride).not.toHaveBeenCalled();
+  });
+
+  it('discovers Claude base versions and recognizes existing auto groups with legacy variant keys', async () => {
+    const models = [
+      'claude-opus-4-6',
+      'claude-opus-4-6-thinking',
+      'claude-opus-4-5-20251101',
+      'claude-opus-4-5(fingerprint≈k10)',
+    ];
+    const registry = createModelRegistryConfig();
+    const sources = models.map(model =>
+      createSource({ sourceKey: `site-1:acc-1:${model}`, originalModel: model, vendor: 'claude' })
+    );
+    mockConfig.modelRegistry = {
+      ...registry,
+      sources,
+      entries: {},
+      overrides: [],
+      displayItems: [
+        {
+          ...registry.displayItems[0]!,
+          canonicalName: 'my-opus-route',
+          sourceKeys: [sources[0]!.sourceKey],
+          originalModelOrder: [models[0]!],
+          autoCollect: { modelKeys: ['claude-opus-4-6-thinking'], excludedModels: [] },
+        },
+      ],
+    };
+    render(<ModelRedirectionTab />);
+    fireEvent.click(screen.getByRole('button', { name: '选择重定向' }));
+    const dialog = await screen.findByRole('dialog', { name: '选择重定向模型' });
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(2);
+    const enabled = within(dialog).getByRole('checkbox', { name: '启用 claude-opus-4-6' });
+    expect(enabled).toBeChecked();
+    expect(enabled).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: '启用 claude-opus-4-5' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '启用所选（1）' }));
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(1));
+    expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canonicalName: 'claude-opus-4-5',
+        sourceKeys: sources.slice(2).map(source => source.sourceKey),
+        originalModelOrder: models.slice(2).sort(),
+        autoCollect: { modelKeys: ['claude-opus-4-5'], excludedModels: [] },
+      })
+    );
   });
 
   it('keeps failed discovery selections retryable without saving successful groups twice', async () => {
@@ -3310,6 +3362,99 @@ describe('route workbench redesign', () => {
         'false'
       );
     });
+  });
+
+  it('uses the refreshed storage version when timestamps are unchanged before disabling and saving', async () => {
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.success).mockClear();
+    const version = { generation: 'test-generation', scope: 'app-config' as const, revision: 1 };
+    mockConfig.modelRegistry.storageVersion = version;
+    const { rerender } = render(<ModelRedirectionTab />);
+    const detailPane = await findPriorityDetailPane();
+
+    let refreshedVersion = { ...version, revision: 2 };
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: { ...mockConfig.modelRegistry, storageVersion: refreshedVersion },
+    };
+    rerender(<ModelRedirectionTab />);
+
+    mockUpsertDisplayItem.mockImplementation(async (item: RouteModelDisplayItem) => {
+      expect(item.storageVersion).toEqual(refreshedVersion);
+      const savedVersion = { ...refreshedVersion, revision: refreshedVersion.revision + 1 };
+      refreshedVersion = savedVersion;
+      const savedRegistry = {
+        ...mockConfig.modelRegistry,
+        storageVersion: savedVersion,
+        displayItems: mockConfig.modelRegistry.displayItems.map(existing =>
+          existing.id === item.id ? { ...item, storageVersion: savedVersion } : existing
+        ),
+      };
+      mockConfig = { ...mockConfig, modelRegistry: savedRegistry };
+      return savedRegistry;
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 禁用' }));
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('重定向优先级已更新'));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(2));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(mockUpsertDisplayItem.mock.lastCall?.[0].priorityConfig.disabledSiteIds).toEqual([
+      'site-2',
+    ]);
+  });
+
+  it('advances the committed version between queued priority disables', async () => {
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.success).mockClear();
+    let expectedVersion = {
+      generation: 'queued-generation',
+      scope: 'app-config' as const,
+      revision: 1,
+    };
+    mockConfig.modelRegistry.storageVersion = expectedVersion;
+    const releases: Array<() => void> = [];
+    mockUpsertDisplayItem.mockImplementation(async (item: RouteModelDisplayItem) => {
+      expect(item.storageVersion).toEqual(expectedVersion);
+      if (mockUpsertDisplayItem.mock.calls.length <= 2) {
+        await new Promise<void>(resolve => releases.push(resolve));
+      }
+      expectedVersion = { ...expectedVersion, revision: expectedVersion.revision + 1 };
+      const savedRegistry = {
+        ...mockConfig.modelRegistry,
+        storageVersion: expectedVersion,
+        displayItems: mockConfig.modelRegistry.displayItems.map(existing =>
+          existing.id === item.id ? { ...item, storageVersion: expectedVersion } : existing
+        ),
+      };
+      mockConfig = { ...mockConfig, modelRegistry: savedRegistry };
+      return savedRegistry;
+    });
+    render(<ModelRedirectionTab />);
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 禁用' }));
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'main-key 禁用' }));
+    await act(async () => releases[0]!());
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(2));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'backup-key 禁用' }));
+    await act(async () => releases[1]!());
+    await waitFor(() => expect(mockUpsertDisplayItem).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('重定向优先级已更新'));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(mockUpsertDisplayItem.mock.lastCall?.[0].storageVersion.revision).toBe(3);
+    expect(mockUpsertDisplayItem.mock.lastCall?.[0].priorityConfig.disabledSiteIds).toEqual([
+      'site-2',
+    ]);
+    expect(
+      mockUpsertDisplayItem.mock.lastCall?.[0].priorityConfig.disabledApiKeyPriorityKeys
+    ).toEqual(
+      expect.arrayContaining([
+        buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
+        buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id'),
+      ])
+    );
   });
 
   it('auto-saves when a site is disabled or re-enabled without dirtying the save button', async () => {

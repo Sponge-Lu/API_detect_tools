@@ -496,6 +496,13 @@ function buildGenericChannels(
   let nextSiteOrder = 0;
   let nextApiKeyOrder = 0;
 
+  const accountsBySite = new Map<string, typeof unifiedConfig.accounts>();
+  for (const account of unifiedConfig.accounts) {
+    const accounts = accountsBySite.get(account.site_id) ?? [];
+    accounts.push(account);
+    accountsBySite.set(account.site_id, accounts);
+  }
+
   for (const site of unifiedConfig.sites) {
     if (!site.enabled) {
       continue;
@@ -505,7 +512,7 @@ function buildGenericChannels(
       continue;
     }
 
-    const siteAccounts = unifiedConfig.accounts.filter(account => account.site_id === site.id);
+    const siteAccounts = accountsBySite.get(site.id) ?? [];
 
     for (const account of siteAccounts) {
       if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(account.id)) {

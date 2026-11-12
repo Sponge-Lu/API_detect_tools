@@ -60,3 +60,4 @@
 ## 架构与数据管理重构（2026-10-24）
 
 - [atomic-json.ts](atomic-json.ts): 既有业务入口接入数据库/命令边界，保留兼容业务行为
+- [request-body.ts](request-body.ts) 代理请求体容量、客户端取消及监听器清理。

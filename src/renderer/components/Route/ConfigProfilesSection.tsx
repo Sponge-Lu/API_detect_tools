@@ -122,7 +122,7 @@ export function ConfigProfilesSection() {
         resolvedEntries.filter((entry): entry is NonNullable<typeof entry> => !!entry)
       )
     );
-  }, []);
+  }, [guardProfileResponse]);
 
   const refreshCatalog = useCallback(async () => {
     const request = ++catalogSequence.current;
@@ -130,7 +130,7 @@ export function ConfigProfilesSection() {
       window.electronAPI.configFileProfiles.getTargetCatalog()
     );
     if (request === catalogSequence.current) setCatalog(catalog);
-  }, []);
+  }, [guardProfileResponse]);
 
   useEffect(() => {
     void reload().catch(error => toast.error(errorMessage(error, '加载配置文件失败')));

@@ -235,6 +235,24 @@ describe('UnifiedConfigManager', () => {
     await fs.rm(userDataDir, { recursive: true, force: true });
   });
 
+  it('benchmark saves a 1000-site synthetic configuration through the manager', async () => {
+    const config = createSampleConfig();
+    config.sites = Array.from({ length: 1000 }, (_, index) => ({
+      ...config.sites[0],
+      id: `site-${index}`,
+      name: `Site ${index}`,
+    }));
+    await fs.writeFile(path.join(userDataDir, 'config.json'), JSON.stringify(config), 'utf8');
+    const manager = await loadManager();
+    await manager.loadConfig();
+    const started = performance.now();
+    await manager.saveConfig();
+    console.log(
+      JSON.stringify({ benchmark: 'config-save-1000-sites', ms: performance.now() - started })
+    );
+    expect(manager.exportConfigSync()?.sites).toHaveLength(1000);
+  });
+
   it.each([false, true])(
     'preserves concurrent cache refreshes without replacing explicit draft caches (%s)',
     async replaceCache => {
@@ -289,6 +307,51 @@ describe('UnifiedConfigManager', () => {
       expect(published.accounts[0].cached_data?.balance).toBe(replaceCache ? 3 : 2);
     }
   );
+
+  it.each([
+    ['claude-opus-4.6', 'claude-opus-4-6'],
+    ['model/name', 'model-name'],
+    ['x'.repeat(81), `${'x'.repeat(80)}y`],
+    ['claude-opus-4-6', 'claude-opus-4-6'],
+  ])('persists unique automatic rule identities for %s and %s', async (firstModel, nextModel) => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as UnifiedConfig);
+    const first = await manager.ensureRouteRuleForProtocolModelSelection(
+      'anthropic-messages',
+      firstModel
+    );
+    expect(first).not.toBeNull();
+    if (firstModel === nextModel) {
+      await manager.upsertRouteRule({ ...first!, enabled: false });
+    }
+    const before = structuredClone(manager.getRoutingConfig().rules);
+    const storageModule = await import('../main/storage/application-storage');
+    const { mapDocument } = await import('../main/storage/repositories/document-mapping');
+    const commit = vi.fn(async (_id, _scope, _version, document) => {
+      mapDocument('stable-config', document);
+    });
+    vi.spyOn(storageModule, 'getApplicationStorage').mockReturnValue({
+      coordinator: { version: () => ({ generation: 'test', scope: 'app-config', revision: 1 }) },
+      commitDocument: commit,
+    } as unknown as ReturnType<typeof storageModule.getApplicationStorage>);
+
+    const created = await manager.ensureRouteRuleForProtocolModelSelection(
+      'anthropic-messages',
+      nextModel
+    );
+    expect(created).toMatchObject({
+      pattern: nextModel,
+      enabled: true,
+      sourceProtocol: 'anthropic-messages',
+    });
+    expect(created!.id).not.toBe(first!.id);
+    expect(manager.getRoutingConfig().rules).toEqual([...before, created]);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(
+      await manager.ensureRouteRuleForProtocolModelSelection('anthropic-messages', nextModel)
+    ).toBeNull();
+    expect(commit).toHaveBeenCalledOnce();
+  });
 
   it('restores the latest valid backup when config.json contains malformed JSON', async () => {
     const configPath = path.join(userDataDir, 'config.json');
@@ -1134,6 +1197,78 @@ describe('UnifiedConfigManager', () => {
       lastStatusCode: 503,
     });
   });
+
+  it.each([false, true])(
+    'publishes rule suspension resets from the SQLite mutation draft (all models: %s)',
+    async allModels => {
+      const manager = await loadManager();
+      await manager.saveConfig(createSampleConfig() as UnifiedConfig);
+      const routing = manager.getRoutingConfig();
+      const now = Date.now();
+      routing.modelRegistry.displayItems.push({
+        id: 'manual:gpt-5',
+        vendor: 'gpt',
+        canonicalName: 'gpt-5',
+        sourceKeys: [],
+        autoCollect: { modelKeys: ['gpt-5'] },
+        mode: 'manual',
+        createdAt: now,
+        updatedAt: now,
+        priorityConfig: {
+          sitePriorities: { 'site-1': 0 },
+          apiKeyPriorities: {},
+          disabledSiteIds: ['site-1'],
+          disabledApiKeyPriorityKeys: ['manual-disabled-key'],
+        },
+      });
+      const manualPriority = structuredClone(routing.modelRegistry.displayItems[0].priorityConfig);
+      const reasons = [
+        'success_rate_below_threshold',
+        'upstream_credential_rejected',
+        'upstream_model_unavailable',
+      ] as const;
+      for (const [index, disabledReason] of reasons.entries()) {
+        const state = {
+          routeRuleId: 'rule-1',
+          siteId: 'site-1',
+          accountId: 'account-1',
+          apiKeyId: `key-${index}`,
+          canonicalModel: 'gpt-5',
+          resolvedModel: `gpt-5-${index}`,
+          windowStartedAt: now,
+          windowRequestCount: 3,
+          windowSuccessCount: 0,
+          successRate: 0,
+          disabledUntil: now + 60000,
+          disabledReason,
+          updatedAt: now,
+        };
+        routing.routePathStates[buildRoutePathStateKey(state)] = state;
+      }
+      const otherState = {
+        ...Object.values(routing.routePathStates)[0],
+        canonicalModel: 'gpt-4',
+      };
+      routing.routePathStates[buildRoutePathStateKey(otherState)] = otherState;
+      const storageModule = await import('../main/storage/application-storage');
+      vi.spyOn(storageModule, 'getApplicationStorage').mockReturnValue({
+        coordinator: { version: () => ({ generation: 'test', scope: 'app-config', revision: 1 }) },
+        commitDocument: vi.fn().mockResolvedValue(undefined),
+      } as unknown as ReturnType<typeof storageModule.getApplicationStorage>);
+      const { routeStateManager } = await import('../main/route-state-manager');
+      const saveRuntime = vi.spyOn(routeStateManager, 'saveRuntimeState').mockResolvedValue();
+
+      expect(await manager.resetRoutePathStates(allModels ? {} : { canonicalModel: 'gpt-5' })).toBe(
+        allModels ? 4 : 3
+      );
+      const published = manager.getRoutingConfig();
+      expect(Object.values(published.routePathStates).map(state => state.canonicalModel)).toEqual(
+        allModels ? [] : ['gpt-4']
+      );
+      expect(published.modelRegistry.displayItems[0].priorityConfig).toEqual(manualPriority);
+      expect(saveRuntime).toHaveBeenCalledOnce();
+    }
+  );
 
   it('resets one route path state by concrete priority hit identity', async () => {
     const manager = await loadManager();
@@ -2515,3 +2650,4 @@ describe('UnifiedConfigManager', () => {
     expect(persisted.accounts[0].cached_data?.cli_compatibility).toBeUndefined();
   });
 });
+// @vitest-environment node

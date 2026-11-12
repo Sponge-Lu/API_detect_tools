@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Eraser } from 'lucide-react';
+import Logger from '../utils/logger';
 import {
   type RouteInstance,
   type RouteModelRegistryConfig,
@@ -116,14 +117,18 @@ interface RouteLogRowViewModel {
   costInfo: RouteLogCostInfo;
 }
 
+const timestampFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  month: '2-digit',
+  day: '2-digit',
+});
+const tokenFormatter = new Intl.NumberFormat('zh-CN');
+const costFormatter = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 });
+
 function formatTimestamp(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(value);
+  return timestampFormatter.format(value);
 }
 
 function formatDisplayName(name?: string): string {
@@ -139,7 +144,7 @@ function formatTokenCount(value?: number | null): string {
     return '—';
   }
 
-  return new Intl.NumberFormat('zh-CN').format(value);
+  return tokenFormatter.format(value);
 }
 
 function formatEstimatedCost(value: number): string {
@@ -158,9 +163,7 @@ function formatEstimatedCost(value: number): string {
       .replace(/\.0+e/u, 'e');
   }
 
-  return new Intl.NumberFormat('zh-CN', {
-    maximumFractionDigits: 3,
-  }).format(value);
+  return costFormatter.format(value);
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -623,6 +626,20 @@ export function LogsPage({
     null
   );
   const [routeInstances, setRouteInstances] = useState<RouteInstance[]>([]);
+  const knownInstanceIds = useRef(new Set<string>());
+  const instanceLoad = useRef<Promise<void> | null>(null);
+  const instanceRefreshNeeded = useRef(false);
+  const instanceRevision = useRef(0);
+  const mounted = useRef(true);
+  const logsRevision = useRef(0);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      instanceRefreshNeeded.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!liveRouteConfig) {
@@ -633,6 +650,8 @@ export function LogsPage({
   }, [liveRouteConfig]);
 
   const loadRouteLogs = useCallback(async (options?: LoadRouteLogsOptions) => {
+    const logRevision = ++logsRevision.current;
+    const revision = ++instanceRevision.current;
     const background = options?.background ?? false;
     const includeConfig = options?.includeConfig ?? true;
     const routeApi = window.electronAPI.route;
@@ -654,6 +673,7 @@ export function LogsPage({
         includeConfig && routeApi.getConfig ? routeApi.getConfig() : Promise.resolve(null),
         routeApi.listRouteInstances?.() ?? Promise.resolve(undefined),
       ]);
+      if (!mounted.current || logRevision !== logsRevision.current) return;
       if (!result?.success) {
         if (!background) {
           setRouteLogs([]);
@@ -663,7 +683,10 @@ export function LogsPage({
       }
       setRouteLogs(result.data || []);
       setRouteLogsError(null);
-      if (routeInstancesResult?.success) {
+      if (routeInstancesResult?.success && revision === instanceRevision.current) {
+        knownInstanceIds.current = new Set(
+          (routeInstancesResult.data || []).map(instance => instance.id)
+        );
         setRouteInstances(routeInstancesResult.data || []);
       }
       if (includeConfig) {
@@ -689,6 +712,9 @@ export function LogsPage({
   }, []);
 
   const clearRouteLogs = useCallback(async () => {
+    logsRevision.current++;
+    instanceRevision.current++;
+    instanceRefreshNeeded.current = false;
     const routeApi = window.electronAPI.route;
     if (!routeApi?.clearRequestLogs) {
       setRouteLogsError(getRouteLogsUnavailableMessage());
@@ -710,21 +736,51 @@ export function LogsPage({
 
   /** 新实例的日志到达时刷新序号映射；本地内存读，开销可忽略 */
   const loadRouteInstances = useCallback(async () => {
-    const result = await window.electronAPI.route?.listRouteInstances?.();
-    if (result?.success) {
-      setRouteInstances(result.data || []);
+    if (!mounted.current) return;
+    if (instanceLoad.current) {
+      instanceRefreshNeeded.current = true;
+      return instanceLoad.current;
+    }
+    const revision = ++instanceRevision.current;
+    const request = Promise.resolve()
+      .then(async () => {
+        const result = await window.electronAPI.route?.listRouteInstances?.();
+        if (mounted.current && result?.success && revision === instanceRevision.current) {
+          knownInstanceIds.current = new Set((result.data || []).map(instance => instance.id));
+          setRouteInstances(result.data || []);
+        }
+      })
+      .catch(error => Logger.error('加载路由会话失败:', error));
+    instanceLoad.current = request;
+    try {
+      await request;
+    } finally {
+      if (instanceLoad.current === request) instanceLoad.current = null;
+      if (mounted.current && instanceRefreshNeeded.current) {
+        instanceRefreshNeeded.current = false;
+        void loadRouteInstances();
+      }
     }
   }, []);
 
   useEffect(() => {
     void loadRouteLogs({ background: true });
+    return window.electronAPI.appData?.onChanged?.(payload => {
+      if (!payload.restored) return;
+      knownInstanceIds.current.clear();
+      instanceRevision.current++;
+      instanceRefreshNeeded.current = false;
+      setRouteInstances([]);
+      setRouteLogs([]);
+      void loadRouteLogs({ background: true });
+    });
   }, [loadRouteLogs]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.route?.onRequestLogAppended?.(item => {
       setRouteLogs(currentLogs => prependRouteLogItem(currentLogs, item));
       setRouteLogsError(null);
-      if (item.routeInstanceId) {
+      if (item.routeInstanceId && !knownInstanceIds.current.has(item.routeInstanceId)) {
         void loadRouteInstances();
       }
     });

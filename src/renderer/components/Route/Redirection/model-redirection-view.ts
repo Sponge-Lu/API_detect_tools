@@ -1403,6 +1403,7 @@ export function buildDisplayItemViews(
     const expandedSourceKeys = expandRouteModelSourceKeys(itemWithOverrideSources, sourcePool);
     const expandedItem: RouteModelDisplayItem = {
       ...itemWithOverrideSources,
+      storageVersion: registry.storageVersion ?? itemWithOverrideSources.storageVersion,
       sourceKeys: expandedSourceKeys,
       originalModelOrder: normalizeOriginalModelOrder(
         itemWithOverrideSources.originalModelOrder,

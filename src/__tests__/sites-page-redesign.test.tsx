@@ -17,6 +17,7 @@ import { useToastStore } from '../renderer/store/toastStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 import type { DetectionResult, SiteConfig } from '../renderer/App';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import * as dailyStats from '../renderer/utils/siteDailyStats';
 
 const baseSite: SiteConfig = {
   id: 'site-1',
@@ -179,6 +180,41 @@ const customCliConfig: CustomCliConfig = {
 };
 
 describe('sites page redesign', () => {
+  it('uses actual midday time for card rates and refreshes at the next local day', async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(dailyStats, 'getSiteDailyStats');
+    const noon = new Date(2026, 10, 12, 12, 0, 0);
+    vi.setSystemTime(noon);
+    const view = render(
+      <SiteCard
+        {...buildSiteCardProps({
+          siteResult: {
+            name: baseSite.name,
+            status: '成功',
+            models: [],
+            todayRequests: 720,
+            todayTotalTokens: 1440,
+            lastRefresh: noon.getTime(),
+          },
+        })}
+      />
+    );
+    try {
+      expect(spy.mock.calls.at(-1)?.[1]?.getTime()).toBe(noon.getTime());
+      expect(spy.mock.results.at(-1)?.value.rpm).toBe(1);
+      expect(spy.mock.results.at(-1)?.value.tpm).toBe(2);
+      vi.setSystemTime(new Date(2026, 10, 13, 0, 0, 0));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60000);
+      });
+      expect(spy.mock.results.at(-1)?.value.todayRequests).toBe(0);
+      expect(spy.mock.results.at(-1)?.value.rpm).toBe(0);
+    } finally {
+      view.unmount();
+      spy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
   beforeEach(() => {
     localStorage.removeItem('panel-active-tab');
     window.electronAPI.openUrl = vi.fn().mockResolvedValue(undefined);

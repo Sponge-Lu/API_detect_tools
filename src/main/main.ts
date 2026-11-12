@@ -106,7 +106,7 @@ async function getSavedTheme(): Promise<ThemeMode> {
   }
 }
 
-async function createWindow() {
+async function createWindow(beforeLoad?: () => Promise<void>) {
   // 根据环境选择合适的图标，打包后从 resources 目录读取 ico 文件
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.ico')
@@ -159,6 +159,7 @@ async function createWindow() {
     logger: Logger,
   });
   window.on('closed', () => rendererHealth.dispose());
+  await beforeLoad?.();
   await rendererHealth.load();
 }
 
@@ -256,23 +257,23 @@ app
     configureRouteApiKeyResolver(tokenService);
 
     // 创建窗口
-    await createWindow();
+    await createWindow(async () => {
+      // 初始化窗口关闭行为管理器（需要在窗口创建后）
+      if (mainWindow) {
+        closeBehaviorManager = createCloseBehaviorManager(mainWindow);
+        await closeBehaviorManager.initialize();
+        Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
+      }
 
-    // 初始化窗口关闭行为管理器（需要在窗口创建后）
-    if (mainWindow) {
-      closeBehaviorManager = createCloseBehaviorManager(mainWindow);
-      await closeBehaviorManager.initialize();
-      Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
-    }
-
-    // 注册所有 IPC 处理器
-    registerAllHandlers({
-      chromeManager,
-      apiService,
-      tokenService,
-      backupManager,
-      getMainWindow: () => mainWindow,
-      closeBehaviorManager: closeBehaviorManager || undefined,
+      // 注册所有 IPC 处理器
+      registerAllHandlers({
+        chromeManager,
+        apiService,
+        tokenService,
+        backupManager,
+        getMainWindow: () => mainWindow,
+        closeBehaviorManager: closeBehaviorManager || undefined,
+      });
     });
 
     // 初始化路由代理服务（如已启用则启动本地代理）

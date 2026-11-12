@@ -1,4 +1,5 @@
 import { getApplicationStorage } from './storage/application-storage';
+import { readRequestBody } from './utils/request-body';
 /**
  * 路由代理服务器
  * 输入: CLI 请求 (HTTP), RoutingConfig, ModelRegistry
@@ -53,6 +54,7 @@ import type {
 } from '../shared/types/route-proxy';
 import {
   buildRouteApiKeyPriorityKey,
+  normalizeRouteBodyLimit,
   buildRoutePathStateKey,
   normalizeRouteThinkingEffort,
   normalizeRouteRuntimeConfig,
@@ -1193,50 +1195,6 @@ export function pickDistributedChannelIndex<
   return index > 0 ? index : 0;
 }
 
-function readBody(req: http.IncomingMessage): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let settled = false;
-
-    const cleanup = () => {
-      req.off('data', onData);
-      req.off('end', onEnd);
-      req.off('aborted', onAborted);
-      req.off('close', onClose);
-      req.off('error', onError);
-    };
-    const resolveOnce = (body: Buffer) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(body);
-    };
-    const rejectOnce = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-    const onData = (chunk: Buffer | string) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    };
-    const onEnd = () => resolveOnce(Buffer.concat(chunks));
-    const onAborted = () => rejectOnce(createRouteClientCancelledError());
-    const onClose = () => {
-      if (!req.complete) {
-        rejectOnce(createRouteClientCancelledError());
-      }
-    };
-    const onError = (error: Error) => rejectOnce(error);
-
-    req.on('data', onData);
-    req.on('end', onEnd);
-    req.on('aborted', onAborted);
-    req.on('close', onClose);
-    req.on('error', onError);
-  });
-}
-
 export function applyRouteThinkingEffortOverride(
   bodyBuffer: Buffer,
   effort: RouteThinkingEffort | null | undefined,
@@ -1750,17 +1708,25 @@ async function planRuleRouteCandidates(input: RuleRoutePlanInput): Promise<RuleR
 
   // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
   // RouteInstance model is authoritative; otherwise the wire model seeds the route.
-  let sortedRules = sortRules(routing.rules);
+  const sortedRules = sortRules(routing.rules);
   const matchModel = canonicalModel || rawModel;
   let rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
 
   if (!rule && (routeInstance || input.hasRouteProfile) && matchModel) {
-    await unifiedConfigManager.ensureRouteRuleForProtocolModelSelection(sourceProtocol, matchModel);
+    const createdRule = await unifiedConfigManager.ensureRouteRuleForProtocolModelSelection(
+      sourceProtocol,
+      matchModel
+    );
     if (ctx.stopIfClientCancelled()) {
       return null;
     }
-    sortedRules = sortRules(routing.rules);
-    rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
+    rule =
+      createdRule ??
+      findMatchingProtocolRule(
+        sortRules(unifiedConfigManager.getRoutingConfig().rules),
+        sourceProtocol,
+        matchModel
+      );
   }
 
   if (!rule) {
@@ -2092,9 +2058,30 @@ export async function handleRequest(
   // 读取请求体
   let bodyBuffer: Buffer;
   try {
-    bodyBuffer = await readBody(req);
+    bodyBuffer = await readRequestBody(
+      req,
+      normalizeRouteBodyLimit(routing.server.maxRequestBodyBytes),
+      createRouteClientCancelledError
+    );
     ctx.requestBodyRead = true;
   } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'BODY_TOO_LARGE') {
+      ctx.recordRequest({
+        ...ctx.logContext,
+        outcome: 'failure',
+        statusCode: 413,
+        error: 'request_body_too_large',
+      });
+      res.setHeader('Connection', 'close');
+      writeRouteProxyJsonError(
+        res,
+        413,
+        'request_body_too_large',
+        'Request body exceeds configured limit'
+      );
+      ctx.finish();
+      return;
+    }
     if (isRouteClientCancelledError(err)) {
       ctx.cancel();
       ctx.finish();

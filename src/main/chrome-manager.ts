@@ -2,6 +2,7 @@ import * as pageAuth from './browser-runtime/page-auth';
 import type { LocalStorageData } from './browser-runtime/page-auth';
 import * as browserPath from './browser-runtime/browser-path';
 import { BrowserSlot, createEmptySlot } from './browser-runtime/browser-slot';
+import { createNavigatedPage, onceRelease } from './browser-runtime/page-lifecycle';
 
 /**
  * 输入: Puppeteer (浏览器自动化), Electron app (应用路径), Logger (日志记录)
@@ -202,9 +203,9 @@ export class ChromeManager {
     }
 
     // 返回释放函数
-    return () => {
+    return onceRelease(() => {
       this.releaseBrowser();
-    };
+    });
   }
 
   /**
@@ -390,14 +391,7 @@ export class ChromeManager {
     await this.cleanupOldPages(url);
 
     // 多 Tab 模式：每次检测创建独立的 Page，避免并发检测时多个站点抢同一个页面
-    const page = await this.browser.newPage();
-    (page as any).__slotIndex = 0;
-    Logger.info('📄 [ChromeManager] 创建新页面');
-
-    Logger.info(`🌐 [ChromeManager] 导航到: ${url}`);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-
-    return page;
+    return createNavigatedPage(this.browser, url, 0);
   }
 
   /**
@@ -2569,17 +2563,14 @@ export class ChromeManager {
     }
 
     try {
-      const page = await slot.browser.newPage();
-      (page as any).__slotIndex = slotIndex;
+      const page = await createNavigatedPage(slot.browser, url, slotIndex);
       Logger.info(`📄 ${tag} 创建新页面`);
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-
-      const release = () => {
+      const release = onceRelease(() => {
         this.releaseSlot(slotIndex);
-      };
+      });
       return { page, release };
     } catch (error: any) {
-      slot.refCount--;
+      this.releaseSlot(slotIndex);
       Logger.error(`❌ ${tag} createPage 失败: ${error.message}`);
       throw error;
     }

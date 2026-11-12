@@ -33,7 +33,7 @@ export function ModelDiscoveryDialog({
     ...savedKeys,
     ...displayItems.flatMap(item => [
       getRouteModelKey(item.canonicalName),
-      ...(item.autoCollect?.modelKeys || []),
+      ...(item.autoCollect?.modelKeys || []).map(getRouteModelKey),
     ]),
   ]);
   const pending = candidates.filter(

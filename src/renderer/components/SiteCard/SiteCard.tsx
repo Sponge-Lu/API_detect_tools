@@ -87,10 +87,14 @@ export const SiteCard = React.memo(
 
       // 非当天时间：x天前，超过7天全部显示7天前
       return diffDays >= 7 ? '7天前' : `${diffDays}天前`;
+      // The date tick invalidates the label at midnight while calculations retain the current time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [siteResult?.lastRefresh, siteAccount?.last_sync_time, dateStr]);
 
     const dailyStats = useMemo(
       () => getSiteDailyStats(siteResult, new Date()),
+      // The date tick refreshes daily rates at midnight while preserving elapsed-minute calculations.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       [siteResult, dateStr]
     );
     const {

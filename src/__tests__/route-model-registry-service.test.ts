@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as modelMetadataService from '../main/model-metadata-service';
 import type {
@@ -167,6 +168,30 @@ function createSource(overrides: Partial<RouteModelSourceRef> = {}): RouteModelS
 }
 
 describe('route model registry service', () => {
+  it('benchmark resolves 10000 accounts in stable site order', () => {
+    const sites = Array.from({ length: 1000 }, (_, index) => ({
+      id: `site-${index}`,
+      enabled: true,
+      api_key: 'synthetic-key',
+    }));
+    const accounts = Array.from({ length: 10000 }, (_, index) => ({
+      id: `account-${index}`,
+      site_id: `site-${index % 1000}`,
+    }));
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({ sites, accounts });
+    const started = performance.now();
+    const channels = resolveChannels(createRouteRule());
+    console.log(
+      JSON.stringify({
+        benchmark: 'channel-resolution-10000-accounts',
+        ms: performance.now() - started,
+      })
+    );
+    expect(channels).toHaveLength(10000);
+    expect(channels.slice(0, 10).map(channel => channel.accountId)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `account-${index * 1000}`)
+    );
+  });
   afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
     unifiedConfigManagerMock.exportConfigSync.mockReset();

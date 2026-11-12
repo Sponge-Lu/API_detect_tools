@@ -10,6 +10,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
+    // Pure main-process suites explicitly select node via @vitest-environment.
     environment: 'jsdom',
     setupFiles: ['./src/__tests__/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],

@@ -109,3 +109,4 @@ describe('route-rule-engine', () => {
     expect(matched?.id).toBe('canonical-high-priority');
   });
 });
+// @vitest-environment node

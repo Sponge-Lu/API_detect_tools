@@ -336,19 +336,22 @@ export function useSitesController({ setPageHeaderActions }: SitesPageProps) {
   };
 
   // saveConfig
-  const saveConfig = async (newConfig: Config) => {
-    try {
-      setSaving(true);
-      await saveAppConfig(newConfig);
-      setConfig(newConfig);
-    } catch (error) {
-      Logger.error('保存配置失败:', error);
-      toast.error('保存配置失败: ' + error);
-      throw error;
-    } finally {
-      setSaving(false);
-    }
-  };
+  const saveConfig = useCallback(
+    async (newConfig: Config) => {
+      try {
+        setSaving(true);
+        await saveAppConfig(newConfig);
+        setConfig(newConfig);
+      } catch (error) {
+        Logger.error('保存配置失败:', error);
+        toast.error('保存配置失败: ' + error);
+        throw error;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [setConfig, setSaving]
+  );
 
   // 弹窗辅助函数
   const showDialog = useCallback(
@@ -986,6 +989,8 @@ export function useSitesController({ setPageHeaderActions }: SitesPageProps) {
           return 0;
       }
     },
+    // Refresh daily sort metrics at midnight using the actual elapsed time of day.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [effectiveSortField, modelPricing, dateStr]
   );
 
@@ -1016,7 +1021,7 @@ export function useSitesController({ setPageHeaderActions }: SitesPageProps) {
       const comparison = a.sortMetric - b.sortMetric;
       return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [config?.sites, results, effectiveSortField, sortOrder, getSortValue, dateStr]);
+  }, [config?.sites, results, effectiveSortField, sortOrder, getSortValue]);
 
   // 展平为 per-account 卡片列表
   const flattenedCards: FlattenedCardItem[] = useMemo(() => {

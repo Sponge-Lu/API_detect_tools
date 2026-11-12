@@ -273,6 +273,10 @@ function createMockResponse(): Parameters<typeof handleRequest>[1] & {
     destroyed: false,
     emit: events.emit.bind(events),
     headers: {} as Record<string, unknown>,
+    setHeader(name: string, value: unknown) {
+      this.headers[name.toLowerCase()] = value;
+      return this;
+    },
     headersSent: false,
     listenerCount: events.listenerCount.bind(events),
     off: events.off.bind(events),
@@ -346,6 +350,32 @@ function expectSingleRequestDiagnostics(expected: {
 }
 
 describe('route-proxy-service endpoint classification', () => {
+  it('records one 413 terminal failure and never selects an upstream for an oversized body', async () => {
+    vi.clearAllMocks();
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => ({
+        server: { unifiedApiKey: 'sk-route', maxRequestBodyBytes: 4 },
+      })),
+    });
+    const request = createJsonRequest(
+      '/v1/responses',
+      { authorization: 'Bearer sk-route' },
+      { input: 'oversized' }
+    );
+    const response = createMockResponse();
+    await handleRequest(request, response);
+    expect(response.statusCode).toBe(413);
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'failure',
+        statusCode: 413,
+        error: 'request_body_too_large',
+      })
+    );
+    expect(resolveChannels).not.toHaveBeenCalled();
+    expect(request.listenerCount('data')).toBe(0);
+  });
   it('collects Bearer and x-api-key credentials without client or endpoint precedence', () => {
     expect(
       extractRouteCredentialCandidates({
@@ -948,11 +978,17 @@ describe('route-proxy-service Responses state affinity', () => {
       ...profile,
       credentialOnly: true,
     } as never);
-    const ensureRouteRuleForProtocolModelSelection = vi.fn(async () => rule);
+    const initialRouting = unifiedConfigManager.getRoutingConfig();
+    initialRouting.rules = [];
+    const ensureRouteRuleForProtocolModelSelection = vi.fn(async () => {
+      Object.assign(unifiedConfigManager, {
+        getRoutingConfig: vi.fn(() => ({ ...initialRouting, rules: [rule] })),
+      });
+      return rule;
+    });
     Object.assign(unifiedConfigManager, { ensureRouteRuleForProtocolModelSelection });
-    vi.mocked(findMatchingRule)
-      .mockReturnValueOnce(null)
-      .mockReturnValueOnce(rule as never);
+    vi.mocked(sortRules).mockImplementation(rules => [...rules]);
+    vi.mocked(findMatchingRule).mockImplementation(rules => (rules[0] as never) ?? null);
     vi.mocked(httpRawRequest).mockResolvedValue({
       status: 200,
       headers: { 'content-type': 'application/json' },

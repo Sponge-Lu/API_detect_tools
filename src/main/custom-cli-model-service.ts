@@ -22,6 +22,43 @@ const log = Logger.scope('CustomCliModelService');
 
 const FETCH_TIMEOUT_MS = 10000; // 10 秒超时
 
+let activeRequests = 0;
+const activeByOrigin = new Map<string, number>();
+const modelRequestQueue: Array<{ origin: string; start: () => void }> = [];
+
+function drainModelRequests(): void {
+  while (activeRequests < 4) {
+    const index = modelRequestQueue.findIndex(job => (activeByOrigin.get(job.origin) ?? 0) < 2);
+    if (index < 0) return;
+    const [job] = modelRequestQueue.splice(index, 1);
+    activeRequests++;
+    activeByOrigin.set(job.origin, (activeByOrigin.get(job.origin) ?? 0) + 1);
+    job.start();
+  }
+}
+
+function scheduleModelRequest<T>(url: string, request: () => Promise<T>): Promise<T> {
+  const origin = new URL(url).origin;
+  return new Promise<T>((resolve, reject) => {
+    modelRequestQueue.push({
+      origin,
+      start: () => {
+        void Promise.resolve()
+          .then(request)
+          .then(resolve, reject)
+          .finally(() => {
+            activeRequests--;
+            const remaining = (activeByOrigin.get(origin) ?? 1) - 1;
+            if (remaining) activeByOrigin.set(origin, remaining);
+            else activeByOrigin.delete(origin);
+            drainModelRequests();
+          });
+      },
+    });
+    drainModelRequests();
+  });
+}
+
 function buildModelsUrl(value: string): string {
   const normalized = value.trim().replace(/\/+$/, '');
   if (/\/v1\/models(?:[/?#]|$)/i.test(normalized)) {
@@ -121,51 +158,55 @@ export async function fetchModels(configId: string): Promise<FetchModelsResult> 
     if (apiKeys.length === 0)
       return { success: false, models: [], error: '未配置 API Key', perKey: [] };
 
-    const perKey: NonNullable<FetchModelsResult['perKey']> = [];
+    const perKey: NonNullable<FetchModelsResult['perKey']> = new Array(apiKeys.length);
     const updatedKeys = apiKeys.map(key => ({ ...key }));
-    for (const key of updatedKeys) {
-      const requestStartedAt = Date.now();
-      try {
-        const apiKey = resolveApiKeyForUse(key.key);
-        if (!apiKey) throw new Error('API Key 为空或被掩码隐藏');
-        const response = await httpGet(url, {
-          timeout: FETCH_TIMEOUT_MS,
-          headers: {
-            'Content-Type': 'application/json',
-            ...buildApiKeyHeaders(apiKey, customCliConfig.routeAuthScheme),
-          },
-        });
-        if (response.status < 200 || response.status >= 300) {
-          perKey.push({
+    await Promise.all(
+      updatedKeys.map(async (key, index) => {
+        const requestStartedAt = Date.now();
+        try {
+          const apiKey = resolveApiKeyForUse(key.key);
+          if (!apiKey) throw new Error('API Key 为空或被掩码隐藏');
+          const response = await scheduleModelRequest(url, () =>
+            httpGet(url, {
+              timeout: FETCH_TIMEOUT_MS,
+              headers: {
+                'Content-Type': 'application/json',
+                ...buildApiKeyHeaders(apiKey, customCliConfig.routeAuthScheme),
+              },
+            })
+          );
+          if (response.status < 200 || response.status >= 300) {
+            perKey[index] = {
+              keyId: key.id,
+              success: false,
+              models: key.models,
+              error: buildUpstreamErrorMessage(response.status, response.data),
+            };
+            return;
+          }
+          const models = extractModelIds(response.data);
+          if (models.length === 0) {
+            perKey[index] = {
+              keyId: key.id,
+              success: false,
+              models: key.models,
+              error: '无法解析模型列表响应',
+            };
+            return;
+          }
+          key.models = models;
+          key.lastModelFetch = requestStartedAt;
+          perKey[index] = { keyId: key.id, success: true, models };
+        } catch (error: any) {
+          perKey[index] = {
             keyId: key.id,
             success: false,
             models: key.models,
-            error: buildUpstreamErrorMessage(response.status, response.data),
-          });
-          continue;
+            error: error?.message || '未知错误',
+          };
         }
-        const models = extractModelIds(response.data);
-        if (models.length === 0) {
-          perKey.push({
-            keyId: key.id,
-            success: false,
-            models: key.models,
-            error: '无法解析模型列表响应',
-          });
-          continue;
-        }
-        key.models = models;
-        key.lastModelFetch = requestStartedAt;
-        perKey.push({ keyId: key.id, success: true, models });
-      } catch (error: any) {
-        perKey.push({
-          keyId: key.id,
-          success: false,
-          models: key.models,
-          error: error?.message || '未知错误',
-        });
-      }
-    }
+      })
+    );
     let models = Array.from(new Set(updatedKeys.flatMap(key => key.models)));
     const success = perKey.some(item => item.success);
     const errors = perKey
@@ -241,13 +282,15 @@ export async function fetchAllModels(): Promise<
     error?: string;
   }> = [];
 
-  for (const customCliConfig of storage.configs) {
-    const result = await fetchModels(customCliConfig.id);
-    results.push({
-      configId: customCliConfig.id,
-      ...result,
-    });
-  }
+  await Promise.all(
+    storage.configs.map(async (customCliConfig, index) => {
+      const result = await fetchModels(customCliConfig.id);
+      results[index] = {
+        configId: customCliConfig.id,
+        ...result,
+      };
+    })
+  );
 
   return results;
 }

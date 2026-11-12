@@ -118,6 +118,7 @@ import {
   normalizeRouteCliSelection,
   normalizeRouteThinkingEffortSelections,
   normalizeRouteRuntimeConfig,
+  normalizeRouteBodyLimit,
   type RouteThinkingEffort,
 } from '../shared/types/route-proxy';
 
@@ -448,14 +449,8 @@ export class UnifiedConfigManager {
             this.committedConfig.routing.sessionRouting?.instances[instance.id]?.lastRequestAt;
       }
       if (draft && this.committedConfig) {
-        for (const site of draft.sites)
-          site.cached_data = this.committedConfig.sites.find(
-            item => item.id === site.id
-          )?.cached_data;
-        for (const account of draft.accounts)
-          account.cached_data = this.committedConfig.accounts.find(
-            item => item.id === account.id
-          )?.cached_data;
+        for (const site of draft.sites) site.cached_data = siteCaches.get(site.id);
+        for (const account of draft.accounts) account.cached_data = accountCaches.get(account.id);
       }
       const context = {
         config: draft,
@@ -472,14 +467,14 @@ export class UnifiedConfigManager {
         return await this.mutationContext.run(context, async () => {
           const result = await operation();
           if (context.dirty && context.config) {
+            const siteIds = new Set(context.config.sites.map(site => site.id));
+            const accountIds = new Set(context.config.accounts.map(account => account.id));
             const removedSites = new Set(
-              this.committedConfig?.sites
-                .filter(site => !context.config!.sites.some(next => next.id === site.id))
-                .map(site => site.id)
+              this.committedConfig?.sites.filter(site => !siteIds.has(site.id)).map(site => site.id)
             );
             const removedAccounts = new Set(
               this.committedConfig?.accounts
-                .filter(account => !context.config!.accounts.some(next => next.id === account.id))
+                .filter(account => !accountIds.has(account.id))
                 .map(account => account.id)
             );
             for (const rule of context.config.routing?.rules ?? []) {
@@ -1441,6 +1436,7 @@ export class UnifiedConfigManager {
       ])
     );
     if (!r.server) r.server = { ...DEFAULT_ROUTING_CONFIG.server };
+    r.server.maxRequestBodyBytes = normalizeRouteBodyLimit(r.server.maxRequestBodyBytes);
     if (!r.rules) r.rules = [];
     r.rules = r.rules.filter(rule => ROUTE_SOURCE_PROTOCOLS.includes(rule.sourceProtocol));
     if (!r.stats) r.stats = {};
@@ -2440,6 +2436,8 @@ export class UnifiedConfigManager {
     return this.mutateConfig(async () => {
       if (!this.config) throw new Error('Config not loaded');
       this.normalizeRoutingConfig(this.config);
+      // Runtime-only resets must also publish the SQLite mutation draft to memory.
+      if (getApplicationStorage()) await this.saveConfig();
 
       const routeRuleId = params.routeRuleId?.trim();
       const canonicalModel = params.canonicalModel?.trim();
@@ -2612,7 +2610,12 @@ export class UnifiedConfigManager {
       }
 
       const now = Date.now();
-      const ruleId = buildAutoProtocolModelRouteRuleId(sourceProtocol, normalizedModel);
+      const baseRuleId = buildAutoProtocolModelRouteRuleId(sourceProtocol, normalizedModel);
+      const existingIds = new Set(routing.rules.map(rule => rule.id));
+      let ruleId = baseRuleId;
+      for (let suffix = 2; existingIds.has(ruleId); suffix += 1) {
+        ruleId = `${baseRuleId}-${suffix}`;
+      }
       const rule: RouteRule = {
         id: ruleId,
         name: `${sourceProtocol} / ${normalizedModel}`,

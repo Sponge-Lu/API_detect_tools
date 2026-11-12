@@ -29,3 +29,4 @@
 - [browser-slot.ts](browser-slot.ts): 自动化浏览器槽位类型和初始状态
 - [browser-path.ts](browser-path.ts): 配置/环境/内置/系统浏览器可执行路径选择
 - [page-auth.ts](page-auth.ts): 页面 localStorage 与用户信息认证数据解析
+- [page-lifecycle.ts](page-lifecycle.ts) 页面创建、失败关闭与幂等引用释放。

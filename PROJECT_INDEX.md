@@ -6,7 +6,7 @@
 
 存储治理新增：`src/main/storage/database/` 提供 SQLite schema、受控连接、事务和校验快照；`storage/repositories/` 提供站点/账户映射；`app-storage-contract.ts` 定义共享版本契约。`scripts/run-storage-tests.ts` 在 Electron ABI 下执行真实数据库测试，`scripts/package-storage-smoke.ts` 验证隔离 Windows 打包产物，`scripts/prepare-sqlite.ps1` 检查/准备匹配驱动。生产切换状态见 `docs/ARCHITECTURE_REFACTOR_PROGRESS.md`。
 
-**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.7**。
+**API Hub Management Tools** 是一个用于 API 中转站运维的 Electron 桌面应用，当前版本为 **v3.1.8**。
 
 **技术栈**
 
@@ -325,7 +325,7 @@
 
 ---
 
-**版本**：3.1.7
+**版本**：3.1.8
 **更新日期**：2026-11-02
 **维护者**：API Hub Team
 
@@ -338,3 +338,15 @@
 - scripts/prepare-native.cjs、prepare-sqlite.ps1、build-preload.cjs：Electron ABI 准备和 sandbox preload 构建；run-storage-tests.ts / package-product-storage-smoke.ts 提供真实数据库与实际 ASAR 产品门禁。
 - [字段映射](docs/STORAGE_SCHEMA.md)、[运行/备份/恢复](docs/STORAGE_OPERATIONS.md)、[实施验收](docs/ARCHITECTURE_REFACTOR_PROGRESS.md)。
 - 已移除 DeepSeek 专用交接提示词；本轮架构与存储改动纳入 v3.1.4。
+## 2026-11-12 优化增量
+
+- `src/main/browser-runtime/page-lifecycle.ts` 管理页面导航失败关闭和幂等引用释放。
+- `src/main/utils/request-body.ts` 按字节限制代理请求体并释放监听器。
+- `src/renderer/components/Route/Redirection/ModelRedirectionEditor.tsx` 展示重定向编辑器。
+- `src/__tests__/request-manager.test.ts`、`page-lifecycle.test.ts`、`request-body.test.ts` 覆盖并发与容量边界。
+- `scripts/check-lint-baseline.cjs`、`lint-baseline.json` 按文件、规则及消息限制警告增长。
+- `scripts/check-bundle-budget.cjs` 检查实际渲染构建体积，`npm run benchmark:project` 输出合成工作负载耗时。
+- `.github/workflows/checks.yml` 普通分支与 PR 验证，包含真实 SQLite。
+
+- `src/__tests__/chrome-lifecycle.test.ts`、`useApplicationData.test.tsx` 覆盖槽位引用与前后台加载竞态。
+- `scripts/optimization-gates.test.cjs` 验证缺失产物、超预算及新增警告拒绝路径。

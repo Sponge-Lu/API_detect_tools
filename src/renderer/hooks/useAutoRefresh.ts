@@ -245,9 +245,10 @@ export function useAutoRefresh(options: UseAutoRefreshOptions): UseAutoRefreshRe
 
   // 组件卸载时清理所有定时器
   useEffect(() => {
+    const timers = timersRef.current;
     return () => {
-      timersRef.current.forEach(({ timerId }) => clearInterval(timerId));
-      timersRef.current.clear();
+      timers.forEach(({ timerId }) => clearInterval(timerId));
+      timers.clear();
     };
   }, []);
 

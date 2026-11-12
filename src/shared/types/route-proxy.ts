@@ -352,6 +352,15 @@ export interface RouteStateAffinitySummary {
 }
 
 /** 代理服务器配置 */
+export function normalizeRouteBodyLimit(value: unknown): number {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= 1024 * 1024 * 1024
+    ? value
+    : 64 * 1024 * 1024;
+}
+
 export interface RouteProxyServerConfig {
   enabled: boolean;
   host: '127.0.0.1' | '0.0.0.0';
@@ -359,6 +368,7 @@ export interface RouteProxyServerConfig {
   unifiedApiKey: string;
   upstreamProxyUrl?: string;
   requestTimeoutMs: number;
+  maxRequestBodyBytes?: number;
   retryCount: number;
   healthCheckIntervalMinutes: number;
 }
@@ -993,6 +1003,7 @@ export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
   unifiedApiKey: '',
   upstreamProxyUrl: '',
   requestTimeoutMs: 60000,
+  maxRequestBodyBytes: 64 * 1024 * 1024,
   retryCount: 1,
   healthCheckIntervalMinutes: 60,
 };

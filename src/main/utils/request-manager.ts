@@ -21,7 +21,6 @@ interface CacheEntry<T> {
 
 interface PendingRequest<T> {
   promise: Promise<T>;
-  timestamp: number;
 }
 
 class RequestManager {
@@ -30,8 +29,7 @@ class RequestManager {
 
   // 默认缓存时间 30 秒
   private defaultTTL = 30 * 1000;
-  // 请求去重窗口 2 秒
-  private dedupeWindow = 2 * 1000;
+  private readonly maxCacheEntries = 500;
 
   /**
    * 执行请求，自动去重和缓存
@@ -55,23 +53,24 @@ class RequestManager {
 
     // 检查是否有相同请求正在进行
     const pending = this.pending.get(key) as PendingRequest<T> | undefined;
-    if (pending && Date.now() - pending.timestamp < this.dedupeWindow) {
+    if (pending) {
       log.debug(`Deduped request: ${key}`);
       return pending.promise;
     }
 
     // 发起新请求
     log.debug(`New request: ${key}`);
-    const promise = fetcher();
-    this.pending.set(key, { promise, timestamp: Date.now() });
+    const promise = Promise.resolve().then(fetcher);
+    const entry = { promise };
+    this.pending.set(key, entry);
 
     try {
       const result = await promise;
       // 缓存结果
-      this.setCache(key, result, ttl);
+      if (this.pending.get(key) === entry) this.setCache(key, result, ttl);
       return result;
     } finally {
-      this.pending.delete(key);
+      if (this.pending.get(key) === entry) this.pending.delete(key);
     }
   }
 
@@ -82,7 +81,7 @@ class RequestManager {
     const entry = this.cache.get(key) as CacheEntry<T> | undefined;
     if (!entry) return undefined;
 
-    if (Date.now() - entry.timestamp > entry.ttl) {
+    if (Date.now() - entry.timestamp >= entry.ttl) {
       this.cache.delete(key);
       return undefined;
     }
@@ -94,7 +93,16 @@ class RequestManager {
    * 设置缓存
    */
   private setCache<T>(key: string, data: T, ttl: number): void {
+    const now = Date.now();
+    for (const [cachedKey, entry] of this.cache) {
+      if (now - entry.timestamp >= entry.ttl) this.cache.delete(cachedKey);
+    }
+    if (ttl <= 0) return;
+    this.cache.delete(key);
     this.cache.set(key, { data, timestamp: Date.now(), ttl });
+    while (this.cache.size > this.maxCacheEntries) {
+      this.cache.delete(this.cache.keys().next().value!);
+    }
   }
 
   /**
@@ -102,6 +110,7 @@ class RequestManager {
    */
   invalidate(key: string): void {
     this.cache.delete(key);
+    this.pending.delete(key);
   }
 
   /**

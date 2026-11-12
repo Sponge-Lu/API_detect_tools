@@ -17,6 +17,68 @@ beforeEach(() => {
 });
 
 describe('route server controls', () => {
+  it('keeps loading until overlapping fetches settle after a save invalidates their data', async () => {
+    const resolvers: Array<(value: unknown) => void> = [];
+    window.electronAPI.route.getConfig = vi.fn(
+      () => new Promise(resolve => resolvers.push(resolve))
+    );
+    const first = useRouteStore.getState().fetchConfig();
+    const second = useRouteStore.getState().fetchConfig();
+    window.electronAPI.route.deleteGlobalModelRoute = vi.fn().mockResolvedValue({ success: true });
+    await useRouteStore.getState().deleteGlobalModelRoute('saved');
+    resolvers[0]({ success: true, data: structuredClone(DEFAULT_ROUTING_CONFIG) });
+    await first;
+    expect(useRouteStore.getState().loading).toBe(true);
+    resolvers[1]({ success: true, data: structuredClone(DEFAULT_ROUTING_CONFIG) });
+    await second;
+    expect(useRouteStore.getState().loading).toBe(false);
+  });
+  it('refreshes model registry versions without letting an older poll replace a saved disable', async () => {
+    const config = structuredClone(DEFAULT_ROUTING_CONFIG);
+    config.modelRegistry.storageVersion = {
+      generation: 'test-generation',
+      scope: 'app-config',
+      revision: 2,
+    };
+    window.electronAPI.route.getConfig = vi.fn().mockResolvedValue({ success: true, data: config });
+    await useRouteStore.getState().refreshRuntimeState();
+    expect(useRouteStore.getState().config?.modelRegistry.storageVersion).toEqual(
+      config.modelRegistry.storageVersion
+    );
+
+    let resolveRefresh!: (value: unknown) => void;
+    window.electronAPI.route.getConfig = vi.fn().mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveRefresh = resolve;
+        })
+    );
+    const refresh = useRouteStore.getState().refreshRuntimeState();
+    const item = {
+      id: 'display-1',
+      vendor: 'claude' as const,
+      canonicalName: 'claude-route',
+      sourceKeys: ['site-1:acc-1:model'],
+      mode: 'manual' as const,
+      createdAt: 1,
+      updatedAt: 2,
+      priorityConfig: { sitePriorities: {}, apiKeyPriorities: {}, disabledSiteIds: ['site-1'] },
+    };
+    const savedRegistry = {
+      ...config.modelRegistry,
+      storageVersion: { ...config.modelRegistry.storageVersion!, revision: 3 },
+      displayItems: [item],
+    };
+    window.electronAPI.route.upsertModelDisplayItem = vi.fn().mockResolvedValue({
+      success: true,
+      data: savedRegistry,
+    });
+    await useRouteStore.getState().upsertDisplayItem(item);
+    resolveRefresh({ success: true, data: config });
+    await refresh;
+    expect(useRouteStore.getState().config?.modelRegistry).toEqual(savedRegistry);
+  });
+
   it('refreshes configuration and listener status after saving LAN access', async () => {
     const config = structuredClone(DEFAULT_ROUTING_CONFIG);
     config.server.host = '0.0.0.0';

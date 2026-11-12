@@ -8,9 +8,15 @@ function modelNameWithoutProvider(model: string): string {
   return model.trim().replace(/^.*\//, '').toLowerCase();
 }
 
-// Only fold naming differences; dates, tags and capability suffixes remain distinct.
+const CLAUDE_MODEL_NAME = /^claude-(?:opus|sonnet|haiku)-\d+(?:-\d+)?$/;
+
 export function getRouteModelKey(model: string): string {
-  return modelNameWithoutProvider(model).replace(/(\d)\.(?=\d)/g, '$1-');
+  const name = modelNameWithoutProvider(model).replace(/(\d)\.(?=\d)/g, '$1-');
+  const baseName = name.replace(
+    /(?:-thinking|-\d{8}|-\d{4}-\d{2}-\d{2}|\s*\(fingerprint\s*[≈=~:]\s*[^()]+\))+$/,
+    ''
+  );
+  return CLAUDE_MODEL_NAME.test(baseName) ? baseName : name;
 }
 
 export function normalizeModelAutoCollect(
@@ -36,7 +42,7 @@ export function collectRouteOriginalModels(
 ): string[] {
   const selected = new Set(selectedModels);
   if (!autoCollect) return [...selected];
-  const keys = new Set(autoCollect.modelKeys);
+  const keys = new Set(autoCollect.modelKeys.map(getRouteModelKey));
   for (const model of availableModels) {
     if (keys.has(getRouteModelKey(model))) selected.add(model);
   }
@@ -87,7 +93,9 @@ export function buildRouteModelCandidates(sources: RouteModelSourceRef[]): Route
       const originalModels = [...new Set(group.map(source => source.originalModel))].sort();
       return {
         modelKey,
-        canonicalName: originalModels.map(modelNameWithoutProvider).sort()[0],
+        canonicalName: CLAUDE_MODEL_NAME.test(modelKey)
+          ? modelKey
+          : originalModels.map(modelNameWithoutProvider).sort()[0],
         originalModels,
         sourceKeys: [...new Set(group.map(source => source.sourceKey))],
         siteCount: new Set(group.map(source => source.siteId)).size,

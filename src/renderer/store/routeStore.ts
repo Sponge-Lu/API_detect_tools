@@ -86,6 +86,7 @@ function mergeModelRegistryIntoRouteConfig(
 
 let serverStatusRevision = 0;
 let routeQueryRevision = 0;
+let routeLoadingRequests = 0;
 
 export const useRouteStore = create<RouteState>((set, get) => ({
   config: null,
@@ -95,6 +96,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   fetchConfig: async () => {
     const epoch = currentDataEpoch();
     const query = ++routeQueryRevision;
+    routeLoadingRequests++;
     set({ loading: true });
     try {
       const res = await window.electronAPI.route?.getConfig();
@@ -103,7 +105,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
         set({ config: res.data });
       }
     } finally {
-      set({ loading: false });
+      if (--routeLoadingRequests === 0) set({ loading: false });
     }
   },
 
@@ -189,6 +191,8 @@ export const useRouteStore = create<RouteState>((set, get) => ({
               query === routeQueryRevision
                 ? res.data.globalModelRoutes
                 : state.config.globalModelRoutes,
+            modelRegistry:
+              query === routeQueryRevision ? res.data.modelRegistry : state.config.modelRegistry,
             stats: res.data.stats,
             routePathStates: res.data.routePathStates,
             routeEndpointCapabilities: res.data.routeEndpointCapabilities,
@@ -397,6 +401,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   upsertDisplayItem: async displayItem => {
     const res = await window.electronAPI.route?.upsertModelDisplayItem(displayItem);
     if (res?.success && res.data) {
+      ++routeQueryRevision;
       const needsFullConfig = !get().config;
       set(state => ({
         config: mergeModelRegistryIntoRouteConfig(state.config, res.data),

@@ -6,3 +6,4 @@
 - [model-redirection-view.ts](model-redirection-view.ts): 重定向分组、筛选、优先级及草稿纯计算
 - [ModelRedirectionParts.tsx](ModelRedirectionParts.tsx): 模型优先级列表、会话点和状态展示
 - [useModelRedirectionController.tsx](useModelRedirectionController.tsx): 模型数据加载、草稿、分组选择和提交控制
+- [ModelRedirectionEditor.tsx](ModelRedirectionEditor.tsx) 重定向名称、模型选择与自动收录编辑器。

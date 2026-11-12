@@ -1,3 +1,4 @@
+// @vitest-environment node
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -30,7 +31,7 @@ vi.mock('../main/route-state-affinity-service', () => ({
   routeStateAffinityService: { removeBySites: mocks.removeBySites },
 }));
 
-import { fetchModels } from '../main/custom-cli-model-service';
+import { fetchModels, fetchAllModels } from '../main/custom-cli-model-service';
 import {
   loadCustomCliConfigStorage,
   saveCustomCliConfigStorage,
@@ -69,6 +70,48 @@ afterEach(async () => {
 });
 
 describe('custom CLI model URL selection', () => {
+  it('benchmark bounds global and shared-origin concurrency while preserving order', async () => {
+    const configs = Array.from({ length: 6 }, (_, index) => ({
+      ...baseConfig,
+      id: `config-${index}`,
+      baseUrl: `https://origin-${index % 3}.test`,
+      apiKeys: Array.from({ length: 4 }, (_, key) => ({
+        id: `key-${key}`,
+        name: `Key ${key}`,
+        key: `synthetic-${key}`,
+        group: '',
+        groupMultiplier: 1,
+        models: [],
+      })),
+    }));
+    await saveCustomCliConfigStorage({ configs, activeConfigId: configs[0].id });
+    let active = 0;
+    let maximum = 0;
+    const byOrigin = new Map<string, number>();
+    mocks.httpGet.mockImplementation(async (url: string) => {
+      const origin = new URL(url).origin;
+      active++;
+      maximum = Math.max(maximum, active);
+      byOrigin.set(origin, (byOrigin.get(origin) || 0) + 1);
+      expect(byOrigin.get(origin)).toBeLessThanOrEqual(2);
+      await new Promise(resolve => setTimeout(resolve, 2));
+      active--;
+      byOrigin.set(origin, byOrigin.get(origin)! - 1);
+      return { status: 200, data: { data: [{ id: 'model-a' }] } };
+    });
+    const started = performance.now();
+    const results = await fetchAllModels();
+    console.log(
+      JSON.stringify({
+        benchmark: 'model-refresh-24-keys',
+        ms: performance.now() - started,
+        maximum,
+      })
+    );
+    expect(maximum).toBe(4);
+    expect(results.map(result => result.configId)).toEqual(configs.map(config => config.id));
+    expect(results.every(result => result.success)).toBe(true);
+  });
   it('does not resurrect a deleted config or drop a concurrently added config', async () => {
     await writeConfig(baseConfig);
     let finish!: (value: unknown) => void;

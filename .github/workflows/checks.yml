@@ -1,0 +1,41 @@
+name: Checks
+on:
+  pull_request:
+  push:
+    branches: ['**']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: pwsh
+jobs:
+  checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify source and storage
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory '.cache/ci-temp' -Force | Out-Null
+          $env:TEMP = Join-Path $PWD '.cache/ci-temp'
+          $env:TMP = $env:TEMP
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'Install failed' }
+          npm run check:lint
+          if ($LASTEXITCODE -ne 0) { throw 'Lint failed' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+          npm run prepare:sqlite
+          if ($LASTEXITCODE -ne 0) { throw 'Native SQLite preparation failed' }
+          npm run test:storage
+          if ($LASTEXITCODE -ne 0) { throw 'Storage failed' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+          npm run check:bundle
+          if ($LASTEXITCODE -ne 0) { throw 'Bundle budget failed' }
+          npm run check:gates
+          if ($LASTEXITCODE -ne 0) { throw 'Gate fixtures failed' }

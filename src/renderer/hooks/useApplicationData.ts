@@ -17,12 +17,16 @@ export function useApplicationData(loadCachedData: (config: Config) => Promise<v
   const cachedLoader = useRef(loadCachedData);
   cachedLoader.current = loadCachedData;
   const sequence = useRef(0);
+  const foregroundRequests = useRef(0);
   const initialized = useRef(false);
 
   const loadConfig = useCallback(
     async (options?: { background?: boolean; restored?: boolean }): Promise<Config | null> => {
       const request = ++sequence.current;
-      if (!options?.background) setLoading(true);
+      if (!options?.background) {
+        foregroundRequests.current++;
+        setLoading(true);
+      }
       try {
         const cfg = await window.electronAPI.loadConfig();
         if (request !== sequence.current) return null;
@@ -41,7 +45,7 @@ export function useApplicationData(loadCachedData: (config: Config) => Promise<v
         Logger.error('加载配置失败:', error);
         return null;
       } finally {
-        if (request === sequence.current && !options?.background) setLoading(false);
+        if (!options?.background && --foregroundRequests.current === 0) setLoading(false);
       }
     },
     [setConfig, setLoading, setSortField, setSortOrder]

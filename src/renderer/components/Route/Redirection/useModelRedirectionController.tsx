@@ -387,7 +387,9 @@ export function useModelRedirectionController({
       const selectedBoundary = selectedDisplayItem.item.priorityConfig?.affinityInvalidatedAt ?? 0;
       if (
         selectedDisplayItem.item.updatedAt > sourceDetailState.item.updatedAt ||
-        selectedBoundary > currentBoundary
+        selectedBoundary > currentBoundary ||
+        JSON.stringify(selectedDisplayItem.item.storageVersion) !==
+          JSON.stringify(sourceDetailState.item.storageVersion)
       ) {
         setSourceDetailState({
           item: selectedDisplayItem.item,
@@ -1175,11 +1177,6 @@ export function useModelRedirectionController({
           const nextDetailState = { item: savedView.item, entry: savedView.entry };
           sourceDetailStateRef.current = nextDetailState;
 
-          // A newer draft may have been queued while this save was in flight.
-          if (pendingPrioritySaveRef.current) {
-            continue;
-          }
-
           setSourceDetailState(current =>
             current &&
             (current.item.id === currentDetailState.item.id ||
@@ -1197,6 +1194,10 @@ export function useModelRedirectionController({
                 }
               : current
           );
+          // Publish the committed snapshot before processing another queued draft.
+          if (pendingPrioritySaveRef.current) {
+            continue;
+          }
           setPriorityDraft(normalizedDraft);
           toast.success('重定向优先级已更新');
         }

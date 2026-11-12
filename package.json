@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "3.1.7",
+  "version": "3.1.8",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": {
     "name": "API Hub Team",
@@ -11,6 +11,10 @@
     "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
   },
   "scripts": {
+    "check:lint": "node scripts/check-lint-baseline.cjs",
+    "check:bundle": "node scripts/check-bundle-budget.cjs",
+    "check:gates": "node --test scripts/optimization-gates.test.cjs",
+    "benchmark:project": "vitest run src/__tests__/unified-config-manager.test.ts src/__tests__/route-model-registry-service.test.ts src/__tests__/custom-cli-model-service.test.ts src/__tests__/logs-page.test.tsx -t benchmark --reporter=verbose",
     "prepare:sqlite": "pwsh -NoProfile -File scripts/prepare-sqlite.ps1",
     "test:artifacts": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node --test .cache/storage-tests/scripts/packaged-smoke-artifacts.test.js",
     "test:storage": "node scripts/run-node-module.cjs typescript/bin/tsc -p tsconfig.storage-tests.json && node .cache/storage-tests/scripts/run-storage-tests.js",
@@ -99,7 +103,7 @@
     "zustand": "^5.0.8"
   },
   "build": {
-    "buildVersion": "3.1.7",
+    "buildVersion": "3.1.8",
     "beforePack": "scripts/before-pack.cjs",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",

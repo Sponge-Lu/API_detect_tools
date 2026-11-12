@@ -409,3 +409,10 @@ it('should call IPC', async () => {
 ## 职责子模块（2026-10-24）
 
 - [storage/](storage/FOLDER_INDEX.md)
+- [request-manager.test.ts](request-manager.test.ts) 去重、失效、失败重试及容量边界。
+- [page-lifecycle.test.ts](page-lifecycle.test.ts) 页面失败关闭与幂等引用释放。
+- [request-body.test.ts](request-body.test.ts) 真实 HTTP chunked 容量边界与配置归一化。
+
+- [useApplicationData.test.tsx](useApplicationData.test.tsx) 前后台配置刷新加载状态交错回归。
+
+- [chrome-lifecycle.test.ts](chrome-lifecycle.test.ts) 槽位导航与启动失败、并发引用和幂等释放。

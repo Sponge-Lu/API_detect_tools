@@ -193,6 +193,74 @@ function buildPriorityRegistry(sitePriorities: Record<string, number>): RouteMod
 }
 
 describe('LogsPage', () => {
+  it('coalesces unknown-session queries with a trailing refresh and drops work on unmount', async () => {
+    const view = render(<LogsPage />);
+    await waitFor(() => expect(routeApi.listRouteInstances).toHaveBeenCalledTimes(1));
+    let finish!: (value: { success: true; data: RouteInstance[] }) => void;
+    vi.mocked(routeApi.listRouteInstances).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    const log = (id: string) =>
+      buildRouteLog({
+        id,
+        requestId: id,
+        cliType: 'codex',
+        attempt: 1,
+        outcome: 'success',
+        createdAt: 1,
+        routeInstanceId: id,
+      });
+    await act(async () => {
+      routeRequestLogListener?.(log('unknown-a'));
+    });
+    expect(routeApi.listRouteInstances).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      routeRequestLogListener?.(log('unknown-b'));
+    });
+    expect(routeApi.listRouteInstances).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finish({ success: true, data: [buildRouteInstance('unknown-a', 'slot-a', 1)] });
+    });
+    await waitFor(() => expect(routeApi.listRouteInstances).toHaveBeenCalledTimes(3));
+    view.unmount();
+  });
+  it('benchmark retains 200 rows and avoids session IPC for known-instance log bursts', async () => {
+    vi.mocked(routeApi.listRouteInstances).mockResolvedValue({
+      success: true,
+      data: [buildRouteInstance('instance-1', 'slot-1', 1)],
+    });
+    const view = render(<LogsPage />);
+    await waitFor(() => expect(routeApi.listRouteInstances).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(routeRequestLogListener).not.toBeNull());
+    const started = performance.now();
+    await act(async () => {
+      for (let index = 0; index < 250; index++)
+        routeRequestLogListener?.(
+          buildRouteLog({
+            id: `burst-${index}`,
+            requestId: `request-${index}`,
+            cliType: 'codex',
+            attempt: 1,
+            outcome: 'success',
+            createdAt: index,
+            routeInstanceId: 'instance-1',
+          })
+        );
+    });
+    console.log(
+      JSON.stringify({
+        benchmark: 'log-burst-250',
+        ms: performance.now() - started,
+        sessionIpc: vi.mocked(routeApi.listRouteInstances).mock.calls.length,
+      })
+    );
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(200);
+    expect(routeApi.listRouteInstances).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
   it('keeps the default Electron window wide enough for the nine-column route log', () => {
     const mainSource = readFileSync(join(process.cwd(), 'src/main/main.ts'), 'utf8');
 
